@@ -177,6 +177,28 @@
     for (let i = 0; i < 17; i++) await game.step("forward");
     await shot("08-reopened-after-save");
 
+    // Typing moves (UI-02): a key opens the entry on the board, Enter plays.
+    await game.newGame();
+    const entry = () => document.querySelector("input[aria-label='Move']");
+    const typeMove = async (text) => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: text[0], bubbles: true }));
+      await until(() => document.activeElement === entry(), "move entry open for " + text);
+      document.execCommand("insertText", false, text.slice(1));
+      await until(() => document.querySelector("#move-entry-status")?.textContent.startsWith("Enter plays"),
+        text + " recognised, got " + document.querySelector("#move-entry-status")?.textContent);
+      const before = game.view.cursorPath.length;
+      entry().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await until(() => !entry() && game.view.cursorPath.length === before + 1, text + " played");
+    };
+    for (const m of ["e4", "e5", "nf3", "Nc6", "Bc4", "Bc5", "0-0"]) await typeMove(m);
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "N", bubbles: true }));
+    await until(() => entry(), "entry open");
+    await until(() => document.querySelectorAll(".entry .candidates button").length > 1, "knight moves offered");
+    await shot("08a-typing-a-move");
+    entry().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await until(() => !entry(), "Escape closes the entry");
+    expect((await api.gamePgn(game.view.session)).includes("4. O-O *"), "typed moves recorded");
+
     // Insert replaces a move and keeps the moves after it while legal (GAME-03).
     await game.newGame();
     for (const [o, d] of [["e2", "e4"], ["e7", "e5"], ["g1", "f3"], ["b8", "c6"]]) await game.play(o, d);

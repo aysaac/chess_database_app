@@ -1,12 +1,13 @@
 use chess_core::game::{CommentSlot, Game, GameEditor, Nag, NodeId, PlayResult, Shape, VariationPolicy};
+use chess_core::notation;
 use chess_core::pgn::write_game;
 use chess_core::position;
-use chess_core::shakmaty::{Role, Square};
+use chess_core::shakmaty::{Position, Role, Square};
 use tauri::State;
 
 use crate::dto::{
-    CommentSlotDto, FenCheckDto, GameViewDto, HeadersDto, PlayResultDto, SaveModeDto, ShapeDto, StepDto,
-    VariationPolicyDto,
+    CommentSlotDto, FenCheckDto, GameViewDto, HeadersDto, LegalMoveDto, PlayResultDto, SaveModeDto, ShapeDto,
+    StepDto, VariationPolicyDto,
 };
 use crate::error::{AppError, AppResult};
 use crate::state::{AppState, Session};
@@ -140,6 +141,19 @@ pub async fn play_move(
                 PlayResultDto::Moved { view: Box::new(game_view(session, s, false)), dropped: dropped as u32 }
             }
         })
+    })
+}
+
+/// The legal moves at the cursor, for typing a move (UI-02).
+#[tauri::command]
+pub async fn legal_moves(state: State<'_, AppState>, session: u32) -> AppResult<Vec<LegalMoveDto>> {
+    state.with_session(session, |s| {
+        let pos = s.editor.game().position_at(s.editor.cursor());
+        Ok(pos
+            .legal_moves()
+            .iter()
+            .map(|&m| LegalMoveDto { san: notation::san(&pos, m), uci: notation::uci(m) })
+            .collect())
     })
 }
 

@@ -84,7 +84,7 @@ class TreeStore {
 
   /** Plays a tree move on the board (the usual variation choice applies). */
   play(uci: string) {
-    return game.play(uci.slice(0, 2), uci.slice(2, 4), uci.length > 4 ? uci[4] : null);
+    return game.playUci(uci);
   }
 }
 

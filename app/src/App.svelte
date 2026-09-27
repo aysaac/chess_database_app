@@ -8,6 +8,7 @@
   import EvalGraph from "./lib/components/EvalGraph.svelte";
   import GameHeader from "./lib/components/GameHeader.svelte";
   import GameTabs from "./lib/components/GameTabs.svelte";
+  import MoveEntry from "./lib/components/MoveEntry.svelte";
   import ListPane from "./lib/components/ListPane.svelte";
   import OpeningTree from "./lib/components/OpeningTree.svelte";
   import Notation from "./lib/components/Notation.svelte";
@@ -91,6 +92,22 @@
       game.cycleTab(e.shiftKey ? -1 : 1);
       return;
     }
+    // Typing a move (UI-02): a file or piece letter, O or a digit starts it,
+    // unless the list has focus or a picker on the board takes keys.
+    const target = e.target as HTMLElement | null;
+    const pickerOpen = game.pendingPromotion || game.pendingChoice || game.branch;
+    if (
+      !mod &&
+      !e.altKey &&
+      /^[a-hknqroKQRBNO0-9]$/.test(e.key) &&
+      game.view &&
+      !pickerOpen &&
+      !target?.closest?.(".games")
+    ) {
+      e.preventDefault();
+      game.typing = e.key;
+      return;
+    }
     const actions: Record<string, () => unknown> = mod
       ? {
           z: () => (e.shiftKey ? game.redo() : game.undo()),
@@ -144,7 +161,10 @@
     <section class="board-column" aria-label="Board">
       <div class="board-row">
         <div class="eval-bar"><EvalBar /></div>
-        <div class="board-square"><Board /></div>
+        <div class="board-square">
+          <Board />
+          {#if game.typing !== null}<MoveEntry />{/if}
+        </div>
       </div>
       <BoardNav />
     </section>

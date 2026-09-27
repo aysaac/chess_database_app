@@ -86,6 +86,8 @@ class GameStore {
   branch = $state<NotationMoveDto[] | null>(null);
   /** The highlighted entry of `branch`, previewed as an arrow on the board. */
   branchSelected = $state(0);
+  /** Text of a move being typed on the board (UI-02); null when closed. */
+  typing = $state<string | null>(null);
   /** `[%eval]` values by node id, from the notation. */
   evals = $derived.by(() => {
     const map = new Map<number, string>();
@@ -148,6 +150,7 @@ class GameStore {
     this.branch = null;
     this.pendingChoice = null;
     this.pendingPromotion = null;
+    this.typing = null;
   }
 
   /** Asks before discarding unsaved changes in `tabs` (default: the active one). True to go ahead. */
@@ -321,6 +324,11 @@ class GameStore {
       notices.error(e);
       this.boardVersion++;
     }
+  }
+
+  /** Plays a move given in UCI (typed, or from the tree); castling as `e1g1`. */
+  playUci(uci: string) {
+    return this.play(uci.slice(0, 2), uci.slice(2, 4), uci.length > 4 ? uci[4] : null);
   }
 
   async choosePromotion(role: string | null) {

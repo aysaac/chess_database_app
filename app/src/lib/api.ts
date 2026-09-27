@@ -14,6 +14,7 @@ import type { HeaderQueryDto } from "./bindings/HeaderQueryDto";
 import type { HeadersDto } from "./bindings/HeadersDto";
 import type { ImportReportDto } from "./bindings/ImportReportDto";
 import type { JobDto } from "./bindings/JobDto";
+import type { LegalMoveDto } from "./bindings/LegalMoveDto";
 import type { NameKindDto } from "./bindings/NameKindDto";
 import type { NameListDto } from "./bindings/NameListDto";
 import type { PlayResultDto } from "./bindings/PlayResultDto";
@@ -75,6 +76,7 @@ export const api = {
     promotion: string | null = null,
     policy: VariationPolicyDto | null = null,
   ) => invoke<PlayResultDto>("play_move", { session, orig, dest, promotion, policy }),
+  legalMoves: (session: number) => invoke<LegalMoveDto[]>("legal_moves", { session }),
   promoteVariation: (session: number, node: number) =>
     invoke<GameViewDto>("promote_variation", { session, node }),
   deleteVariation: (session: number, node: number) =>

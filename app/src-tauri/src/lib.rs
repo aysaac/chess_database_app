@@ -100,6 +100,7 @@ pub fn run() {
             commands::game::goto_node,
             commands::game::step,
             commands::game::play_move,
+            commands::game::legal_moves,
             commands::game::promote_variation,
             commands::game::delete_variation,
             commands::game::delete_remaining,

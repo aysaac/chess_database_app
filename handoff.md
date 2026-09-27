@@ -173,8 +173,8 @@ clocks and evals), 16-core laptop:
 - UI-01 has five board colour themes and display options (coordinates,
   legal-move dots, last move) under "Board appearance" in the nav bar, but
   only the cburnett piece set: more sets need vendored SVGs with checked
-  licences (lichess's lila repo lists them in COPYING.md). UI-02 has no
-  keyboard SAN entry; UI-03 can't collapse variations.
+  licences (lichess's lila repo lists them in COPYING.md). UI-03 can't
+  collapse variations.
 - The toolbar wraps to two rows in windows narrower than about 1,400 px, and the nav row
   (now with next/previous game) is wider than very small boards. The layout
   driver passes at all five sizes.
@@ -200,8 +200,7 @@ Recommended order:
 1. **Ask the user** about installing sway for the smoke harness (see
    Environment notes) and open question #3.
 2. **P1 polish left:**
-   - UI-01 board/piece themes, UI-02 keyboard SAN entry, UI-03 collapsing
-     variations.
+   - UI-03 collapsing variations; UI-01 piece sets (needs vendored SVGs).
 3. **Housekeeping:** GitHub, CI (Linux/Windows/macOS: fmt,
    clippy, tests, svelte-check, `tauri build`). CI needs
    `scripts/fetch-stockfish.sh <triple>` before a bundled build.

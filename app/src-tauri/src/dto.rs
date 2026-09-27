@@ -426,6 +426,17 @@ pub enum PlayResultDto {
     Illegal,
 }
 
+/// A legal move, as typed moves are matched against it (UI-02).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LegalMoveDto {
+    /// With check marks: `Nf3`, `exd8=Q+`, `O-O`.
+    pub san: String,
+    /// Castling as the king's move: `e1g1`.
+    pub uci: String,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
