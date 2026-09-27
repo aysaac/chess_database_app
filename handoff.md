@@ -26,13 +26,15 @@ read that first.
   `pacman -U` (checksums matched the sync database). If a later
   `pacman -S` gives a 404, that's the mirror again.
 - **Commits:** the user asked for a commit per finished feature. `main` has
-  the initial commit plus the feature commits; there's no remote.
+  the initial commit plus the feature commits. **Remote:** the private
+  GitHub repo `aysaac/chess_database_app` (`origin`), created and pushed on
+  2026-09-27 at the user's request. Ask before pushing again.
   `HYPRLAND-DISRUPTION-REPORT.md` is still untracked, for the user to keep
   or delete.
 - **The smoke harness doesn't touch the user's desktop.** It runs the app on
   a private headless sway (`scripts/offscreen.sh`); see
   [Environment notes](#environment-notes).
-- **Next up:** GitHub and CI once the user agrees, then catalog Phase 3
+- **Next up:** CI once the user agrees, then catalog Phase 3
   (P2). More piece sets are on hold (the user said not now).
 
 ## Decisions so far
@@ -229,12 +231,12 @@ clocks and evals), 16-core laptop:
 Recommended order:
 
 1. **Ask the user** about open question #3 (1M vs 10M+ games), and
-   whether to set up GitHub and CI.
+   whether to set up CI on the GitHub repo.
 2. **P1 polish left (on hold, the user said not now):**
    - UI-01 piece sets: vendor a few SVG sets with GPL-compatible licences
      (check lichess-org/lila's COPYING.md per set) and add a picker to
      "Board appearance".
-3. **Housekeeping:** GitHub, CI (Linux/Windows/macOS: fmt,
+3. **Housekeeping:** CI on GitHub Actions (Linux/Windows/macOS: fmt,
    clippy, tests, svelte-check, `tauri build`). CI needs
    `scripts/fetch-stockfish.sh <triple>` before a bundled build.
 4. Then catalog Phase 3 (P2): ENG-04/06/07/08/14, ANL-02/03/06, OPEN-02/03/05,
