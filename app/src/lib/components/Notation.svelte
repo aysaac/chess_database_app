@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { game } from "../stores/game.svelte";
+  import { ROOT_NODE, game } from "../stores/game.svelte";
+  import CommentEditor from "./CommentEditor.svelte";
   import MoveMenu from "./MoveMenu.svelte";
   import type { MoveTarget } from "../types";
   import NextMovePicker from "./NextMovePicker.svelte";
@@ -20,6 +21,18 @@
     );
   }
 
+  // Double-clicking a comment edits it in place (the move menu is the keyboard path).
+  $effect(() => {
+    const edit = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>("[data-comment]");
+      if (!el) return;
+      const [node, slot] = el.dataset.comment!.split(":");
+      game.editComment(Number(node), slot === "before" ? "before" : "after");
+    };
+    pane.addEventListener("dblclick", edit);
+    return () => pane.removeEventListener("dblclick", edit);
+  });
+
   // Keep the current move in view.
   $effect(() => {
     const cursor = game.view?.cursor;
@@ -32,8 +45,12 @@
 
 <div class="notation" bind:this={pane}>
   {#if game.notation}
-    {#if game.notation.rootComment}
-      <p class="intro">{game.notation.rootComment}</p>
+    {#if game.editingComment?.node === ROOT_NODE}
+      <p class="intro"><CommentEditor initial={game.notation.rootComment} /></p>
+    {:else if game.notation.rootComment}
+      <p class="intro" data-comment="{ROOT_NODE}:after" title="Double-click to edit">
+        {game.notation.rootComment}
+      </p>
     {/if}
     {#if game.notation.moves.length}
       <div class="mainline">

@@ -26,6 +26,35 @@ function moveAfter(line: NotationMoveDto[], id: number): NotationMoveDto | null 
   return undefined;
 }
 
+/** Where a comment is stored: a node and a slot, with its current text. */
+export type CommentRef = { node: number; slot: CommentSlotDto; text: string };
+
+/** The root node: its comment after is the game's intro comment. */
+export const ROOT_NODE = 0;
+
+/**
+ * Where the comment shown before move `id` lives. As in PGN, only the first
+ * move of a variation has its own; before any other move it's the previous
+ * move's comment after, or the game's intro comment before the first move.
+ */
+export function commentBefore(notation: NotationDto, id: number): CommentRef | undefined {
+  const walk = (line: NotationMoveDto[], intro: CommentRef | null): CommentRef | undefined => {
+    for (let i = 0; i < line.length; i++) {
+      const m = line[i];
+      if (m.id === id) {
+        if (i > 0) return { node: line[i - 1].id, slot: "after", text: line[i - 1].commentAfter };
+        return intro ?? { node: m.id, slot: "before", text: m.commentBefore };
+      }
+      for (const variation of m.variations) {
+        const hit = walk(variation, null);
+        if (hit) return hit;
+      }
+    }
+    return undefined;
+  };
+  return walk(notation.moves, { node: ROOT_NODE, slot: "after", text: notation.rootComment });
+}
+
 /** One open game (UI-05): its editing session and what the frontend knows of it. */
 export type GameTab = {
   session: number;

@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import type { NotationMoveDto } from "../bindings/NotationMoveDto";
   import { MOVE_NAGS, POSITION_NAGS, nagSymbol } from "../format";
-  import { game } from "../stores/game.svelte";
+  import { commentBefore, game } from "../stores/game.svelte";
   import type { MoveTarget } from "../types";
 
   let { target, onClose }: { target: MoveTarget; onClose: () => void } = $props();
@@ -22,6 +22,8 @@
 
   const move = $derived(game.notation ? find([game.notation.moves], target.id) : undefined);
   const nags = $derived(new Set(move?.nags ?? []));
+  // Before a main-line move, that's the previous move's comment (or the intro).
+  const before = $derived(game.notation ? commentBefore(game.notation, target.id) : undefined);
 
   // Keep the menu on screen.
   const left = $derived(Math.min(target.x, window.innerWidth - 260));
@@ -48,8 +50,8 @@
   <button role="menuitem" onclick={() => run(() => game.editComment(target.id, "after"))}
     >{move?.commentAfter ? "Edit" : "Add"} comment after move</button
   >
-  <button role="menuitem" onclick={() => run(() => game.editComment(target.id, "before"))}
-    >{move?.commentBefore ? "Edit" : "Add"} comment before move</button
+  <button role="menuitem" onclick={() => run(() => before && game.editComment(before.node, before.slot))}
+    >{before?.text ? "Edit" : "Add"} comment before move</button
   >
   <div class="nags" role="group" aria-label="Move assessment">
     {#each MOVE_NAGS as n (n.nag)}

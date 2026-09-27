@@ -510,6 +510,8 @@ mod tests {
         ed.set_comment(path[1], CommentSlot::Before, "  intro to e5 ");
         assert_eq!(ed.game().node(path[0]).comment_after, "intro to e5");
         assert_eq!(ed.game().node(path[1]).comment_before, "");
+        ed.set_comment(path[0], CommentSlot::Before, "Intro");
+        assert_eq!(ed.game().root().comment_after, "Intro", "before the first move is the intro");
 
         ed.to_start();
         ed.forward();

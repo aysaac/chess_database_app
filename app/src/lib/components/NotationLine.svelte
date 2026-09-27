@@ -52,7 +52,10 @@
 -->
 {#each moves as m, i (m.id)}{#if i === 0 && paren}<span class="paren open">(</span>{/if}{#if editing(m.id, "before")}<CommentEditor
       initial={m.commentBefore}
-    />{" "}{:else if m.commentBefore}<span class="comment">{m.commentBefore}</span>{" "}{/if}<button
+    />{" "}{:else if m.commentBefore}<span
+      class="comment"
+      data-comment="{m.id}:before">{m.commentBefore}</span
+    >{" "}{/if}<button
     class="move"
     class:current={game.view?.cursor === m.id}
     data-node={m.id}
@@ -66,7 +69,8 @@
   >{#each m.nags.filter((n) => !isMoveNag(n)) as nag (nag)}{" "}<span class="nag"
       >{nagSymbol(nag)}</span
     >{/each}{#if editing(m.id, "after")}{" "}<CommentEditor initial={m.commentAfter} />{:else if m.commentAfter}{" "}<span
-      class="comment">{m.commentAfter}</span
+      class="comment"
+      data-comment="{m.id}:after">{m.commentAfter}</span
     >{/if}{#if m.variations.length}{#if depth === 0}<div class="variations">
         {#each m.variations as line (line[0].id)}
           <div class="variation"><NotationLine moves={line} depth={1} {onContext} /></div>

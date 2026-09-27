@@ -174,6 +174,15 @@
     const inserted = await api.gamePgn(game.view.session);
     expect(inserted.includes("1. e4 e5 2. Nc3 Nc6 *"), "2.Nf3 replaced, 2...Nc6 kept:\n" + inserted);
 
+    // The intro comment (before the first move) is edited in place too.
+    game.editComment(0, "after");
+    await until(() => document.activeElement === editor() && editor().closest(".intro"), "intro editor");
+    document.execCommand("insertText", false, "Vienna-style.");
+    editor().blur();
+    await until(() => document.querySelector(".notation .intro")?.textContent.trim() === "Vienna-style.",
+      "intro comment shown");
+    expect((await api.gamePgn(game.view.session)).includes("{Vienna-style.} 1. e4"), "intro in the PGN");
+
     // Promotion picker and underpromotion; K+N vs K is a dead draw.
     await game.newGame("8/4P3/8/8/8/8/k7/4K3 w - - 0 1");
     await game.play("e7", "e8");
