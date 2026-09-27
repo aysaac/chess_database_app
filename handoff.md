@@ -12,22 +12,30 @@ read that first.
   and a promotion picker that fits small boards, import warnings (IO-01),
   the reference database (DB-13), board colour themes and display options
   (UI-01), typed move entry (UI-02) and folding variations (UI-03).
-- Checks run this session: fmt, clippy (`-D warnings`), 156 Rust tests
-  (+1 ignored large-data test), svelte-check, the frontend build.
-  **The smoke drivers were not run:** sway isn't installed, and fetching it
-  into a temp folder was refused this time. The new driver steps (in
-  `basic`, `layout` and `tree`) are written but unverified; run
-  `scripts/smoke/run.sh` (and the `layout` and `tree` drivers) once sway is
-  installed, and fix whatever they find first.
+- All checks pass: fmt, clippy (`-D warnings`), 156 Rust tests (+1 ignored
+  large-data test), svelte-check, the frontend build, and all six smoke
+  drivers (`basic` with its 1M-game part, `layout`, `tree`, `search`,
+  `setup`, `engine`), with the user's desktop verified unchanged. The new
+  screens (arrows, board themes, folded variations, move box, import
+  warnings, reference tree, promotion picker on a 208 px board) were
+  looked at in the screenshots.
+- **sway still isn't installed system-wide** (sudo needs the user's
+  password). For the runs, sway 1.11 and wlroots 0.19.3 were taken from the
+  Arch Linux Archive (signatures checked against the pacman keyring) and
+  unpacked into the session's temp folder, with a `sway` wrapper put first
+  on `PATH` for the harness only. That folder goes away with the session:
+  next time, ask the user to run `sudo pacman -S sway`, or repeat that
+  (the main mirrors already carry sway 1.12 for newer libraries, so use
+  archive.archlinux.org and the versions `pacman -Si sway wlroots0.19` shows).
 - **Commits:** the user asked for a commit per finished feature. `main` has
-  the initial commit plus nine feature commits; there's no remote.
+  the initial commit plus the feature commits; there's no remote.
   `HYPRLAND-DISRUPTION-REPORT.md` is still untracked, for the user to keep
   or delete.
 - **The smoke harness doesn't touch the user's desktop.** It runs the app on
   a private headless sway (`scripts/offscreen.sh`); see
   [Environment notes](#environment-notes).
-- **Next up:** install sway and run the drivers, then GitHub and CI once the
-  user agrees, then catalog Phase 3 (P2).
+- **Next up:** GitHub and CI once the user agrees, then catalog Phase 3
+  (P2). More piece sets are on hold (the user said not now).
 
 ## Decisions so far
 
@@ -209,11 +217,6 @@ clocks and evals), 16-core laptop:
   on exact whitespace), so don't run `npm run format` on everything.
 
 **Not verified yet**
-- Everything from the second session in the running app: the smoke drivers
-  couldn't run (no sway). Only unit tests, svelte-check and the build
-  cover it. The driver steps for it are written (`basic.js`: insert, intro
-  comment, arrows, board appearance, typing, folding, import warnings;
-  `layout.js`: promotion picker size; `tree.js`: reference database).
 - Real pointer and keyboard input (dragging pieces, the setup editor's
   palette and square clicks, right-click menus, shortcuts, native file
   dialogs). chessground ignores synthetic events, so the smoke drivers can't
@@ -227,15 +230,12 @@ clocks and evals), 16-core laptop:
 
 Recommended order:
 
-1. **Ask the user** to install sway (`sudo pacman -S sway`), then run
-   `scripts/smoke/run.sh` and the `layout`, `tree`, `search`, `engine` and
-   `setup` drivers; look at the screenshots of the new UI. Also open
-   question #3.
-2. **P1 polish left:**
+1. **Ask the user** about open question #3 (1M vs 10M+ games), and
+   whether to set up GitHub and CI.
+2. **P1 polish left (on hold, the user said not now):**
    - UI-01 piece sets: vendor a few SVG sets with GPL-compatible licences
      (check lichess-org/lila's COPYING.md per set) and add a picker to
-     "Board appearance". Ask the user first; fetching external files needs
-     their approval.
+     "Board appearance".
 3. **Housekeeping:** GitHub, CI (Linux/Windows/macOS: fmt,
    clippy, tests, svelte-check, `tauri build`). CI needs
    `scripts/fetch-stockfish.sh <triple>` before a bundled build.
@@ -260,9 +260,9 @@ Recommended order:
   `hyprctl keyword monitor ",preferred,auto,1.25"` brings it back.
 - **sway must be installed** (`sudo pacman -S sway`; it pulls in
   `wlroots0.19`). Without it the harness stops with exit code 2 instead of
-  opening a window on the user's screen. It was verified on 2026-09-26 with
-  sway 1.11 unpacked into a temporary folder; it wasn't installed
-  system-wide yet at that point.
+  opening a window on the user's screen. On 2026-09-26 it was still only
+  unpacked into a temporary folder (see the TL;DR): run the harness with
+  that folder's `bin/` first on `PATH`.
 - Smoke drivers must never open native dialogs: nobody can click them on
   the private display, so the driver would hang. Every driver stubs
   `game.confirmDiscard = async () => true`.

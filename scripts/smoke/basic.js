@@ -179,6 +179,8 @@
 
     // Folding variations (UI-03): a stub stands in for each; a click unfolds it.
     const stubs = () => document.querySelectorAll(".notation .stub");
+    // (Reopening an open game only switched tabs: the cursor is still in 9.g4.)
+    await game.step("start");
     const topVariations = document.querySelectorAll(".notation .variation").length;
     expect(topVariations > 0 && !game.view.inVariation, "variations, cursor on the main line");
     game.collapseAll();

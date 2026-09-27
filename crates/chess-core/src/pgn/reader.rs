@@ -11,11 +11,12 @@ use std::io::{self, Read};
 use std::ops::ControlFlow;
 
 use pgn_reader::{Nag as PgnNag, Outcome, RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
+use shakmaty::san::SanError;
 use shakmaty::{Chess, Position};
 
 use super::{comment, decode_text};
 use crate::game::{Game, GameResult, Headers, Nag, NodeId};
-use crate::position;
+use crate::{Error, position};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgnWarning {
@@ -169,14 +170,15 @@ impl Visitor for Builder {
             "FEN" => match position::from_fen(&value) {
                 Ok(pos) => tags.setup = Some(pos),
                 Err(e) => {
-                    tags.skip.get_or_insert(format!("invalid FEN tag: {e}"));
+                    let Error::InvalidFen(why) = e;
+                    tags.skip.get_or_insert(format!("The FEN tag can't be read: {why}."));
                 }
             },
             "SetUp" => {}
             "Variant" => {
                 let v = value.to_ascii_lowercase();
                 if !matches!(v.as_str(), "" | "standard" | "chess" | "normal" | "from position") {
-                    tags.skip.get_or_insert(format!("unsupported variant: {value}"));
+                    tags.skip.get_or_insert(format!("It's a {value} game, which isn't supported."));
                 }
             }
             _ => tags.headers.set(&name, &value),
@@ -229,9 +231,14 @@ impl Visitor for Builder {
             }
             Err(e) => {
                 let depth = mt.frames.len();
-                let ply = mt.game.path(mt.current).len() + 1;
                 let where_ = if depth == 0 { "main line" } else { "variation" };
-                mt.warn(format!("{where_} cut at ply {ply}: {san_plus} ({e})"));
+                let number = mt.pos.fullmoves().get();
+                let dots = if mt.pos.turn().is_white() { "." } else { "..." };
+                let why = match e {
+                    SanError::AmbiguousSan => "is ambiguous (more than one piece can make it)",
+                    _ => "isn't a legal move there",
+                };
+                mt.warn(format!("The {where_} stops at {number}{dots}{san_plus}, which {why}."));
                 mt.dead_at = Some(depth);
             }
         }
@@ -398,6 +405,10 @@ mod tests {
         let first = r.next().unwrap().unwrap();
         assert_eq!(first.game.unwrap().mainline_len(), 2);
         assert_eq!(first.warnings.len(), 1);
+        assert_eq!(
+            first.warnings[0].message,
+            "The main line stops at 2.Ke3, which isn't a legal move there."
+        );
         let second = r.next().unwrap().unwrap();
         assert_eq!(second.game.unwrap().mainline_len(), 1);
         assert!(r.next().is_none());

@@ -32,7 +32,7 @@
       <li>
         <div class="where">
           <span class="number">Game {formatCount(w.number)} in the file</span>
-          {#if w.players}<span class="soft">{w.players}</span>{/if}
+          {#if w.label}<span class="soft">{w.label}</span>{/if}
           {#if w.game !== null}
             {@const id = w.game}
             <button title="Open this game on the board" onclick={() => open(id)}>Open</button>

@@ -13,6 +13,7 @@ number: number,
  */
 game: number | null, 
 /**
- * `White – Black`, empty for a skipped game.
+ * `White – Black`, or the event when the players are unknown; empty
+ * for a skipped game.
  */
-players: string, message: string, };
+label: string, message: string, };

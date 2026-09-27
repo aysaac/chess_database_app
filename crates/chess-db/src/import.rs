@@ -27,8 +27,9 @@ pub struct ImportWarning {
     pub game_index: usize,
     /// The id the game got in the database; `None` if it was skipped.
     pub game: Option<GameId>,
-    /// `White – Black` from the game's tags; empty for a skipped game.
-    pub players: String,
+    /// `White – Black`, or the event when both players are unknown; empty
+    /// for a skipped game.
+    pub label: String,
     pub message: String,
 }
 
@@ -42,7 +43,10 @@ pub struct ImportSummary {
     pub cancelled: bool,
 }
 
-fn players(h: &Headers) -> String {
+fn label(h: &Headers) -> String {
+    if h.white.is_empty() && h.black.is_empty() {
+        return h.event.clone();
+    }
     let name = |n: &str| if n.is_empty() { "?".to_owned() } else { n.to_owned() };
     format!("{} – {}", name(&h.white), name(&h.black))
 }
@@ -107,13 +111,16 @@ pub fn import_reader<R: Read>(
         let parsed = parsed?;
         summary.warning_count += parsed.warnings.len() as u64;
         let first = summary.warnings.len();
-        let who = parsed.game.as_ref().map(|g| players(&g.headers)).unwrap_or_default();
+        let who = match (&parsed.game, parsed.warnings.is_empty()) {
+            (Some(g), false) => label(&g.headers),
+            _ => String::new(),
+        };
         for w in parsed.warnings {
             if summary.warnings.len() < MAX_WARNINGS {
                 summary.warnings.push(ImportWarning {
                     game_index: w.game_index,
                     game: None,
-                    players: who.clone(),
+                    label: who.clone(),
                     message: w.message,
                 });
             }
@@ -157,8 +164,11 @@ mod tests {
         assert_eq!(summary.warning_count, 2);
         // The illegal move is in game 0 (kept as id 0), the bad FEN in game 3 (skipped).
         let w = &summary.warnings;
-        assert_eq!((w[0].game_index, w[0].game, w[0].players.as_str()), (0, Some(0), "? – ?"));
-        assert_eq!((w[1].game_index, w[1].game, w[1].players.as_str()), (3, None, ""));
+        assert_eq!(
+            (w[0].game_index, w[0].game, w[0].label.as_str()),
+            (0, Some(0), "Illegal move in main line")
+        );
+        assert_eq!((w[1].game_index, w[1].game, w[1].label.as_str()), (3, None, ""));
         assert_eq!(db.lock().unwrap().row(0).unwrap().event, "Illegal move in main line");
         let summary = import_pgn(&db, &fixtures.join("variations.pgn"), &NoProgress).unwrap();
         assert_eq!(summary.imported, 2);

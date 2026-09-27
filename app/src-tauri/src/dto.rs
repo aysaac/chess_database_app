@@ -828,8 +828,9 @@ pub struct ImportWarningDto {
     pub number: u32,
     /// Id the game got in the database; `None` if it was skipped.
     pub game: Option<u32>,
-    /// `White – Black`, empty for a skipped game.
-    pub players: String,
+    /// `White – Black`, or the event when the players are unknown; empty
+    /// for a skipped game.
+    pub label: String,
     pub message: String,
 }
 
@@ -862,7 +863,7 @@ impl ImportReportDto {
                 .map(|w| ImportWarningDto {
                     number: w.game_index as u32 + 1,
                     game: w.game,
-                    players: w.players.clone(),
+                    label: w.label.clone(),
                     message: w.message.clone(),
                 })
                 .collect(),

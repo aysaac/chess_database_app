@@ -97,8 +97,9 @@
     expect(db.reference.info && db.reference.info.handle !== db.info.handle, "the reference stays open");
     await game.newGame();
     tree.source = "open";
-    await until(() => tree.data?.fen === game.view.fen && tree.data.total.games === 0,
-      "no game from the start in other.chessdb");
+    // setup.pgn: two games from set-up positions, one from the start.
+    await until(() => tree.data?.fen === game.view.fen && tree.data.indexed && tree.data.total.games === 1,
+      "one game from the start in other.chessdb, got " + tree.data?.total.games);
     tree.source = "reference";
     await until(() => tree.data?.total.games === 4, "4 games from the start in the reference");
     expect(document.querySelector(".tree select").selectedOptions[0].textContent.includes("(reference)"),
