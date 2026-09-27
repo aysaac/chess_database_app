@@ -4,6 +4,7 @@
   import type { Api } from "@lichess-org/chessground/api";
   import type { DrawShape } from "@lichess-org/chessground/draw";
   import type { Key } from "@lichess-org/chessground/types";
+  import type { NotationMoveDto } from "../bindings/NotationMoveDto";
   import type { ShapeDto } from "../bindings/ShapeDto";
   import { game } from "../stores/game.svelte";
   import PromotionPicker from "./PromotionPicker.svelte";
@@ -65,6 +66,22 @@
       movable: { color: turn, dests: toDests(view.dests) },
     });
     cg.setShapes(toShapes(view.shapes));
+  });
+
+  // While the next-move picker is open, its moves show as arrows (the
+  // highlighted one on top). Auto shapes aren't part of the game's drawings.
+  $effect(() => {
+    const branch = game.branch;
+    const selected = game.branchSelected;
+    if (!cg) return;
+    const arrow = (m: NotationMoveDto, brush: string): DrawShape => ({
+      orig: m.uci.slice(0, 2) as Key,
+      dest: m.uci.slice(2, 4) as Key,
+      brush,
+    });
+    const arrows = (branch ?? []).filter((_, i) => i !== selected).map((m) => arrow(m, "paleGrey"));
+    if (branch?.[selected]) arrows.push(arrow(branch[selected], "blue"));
+    cg.setAutoShapes(arrows);
   });
 </script>
 

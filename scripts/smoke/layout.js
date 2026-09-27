@@ -33,6 +33,10 @@
   try {
     await log("start");
     const app = document.getElementById("app");
+    // The promotion picker stays open through all sizes: it must fit the board.
+    await game.newGame("8/4P3/8/8/8/8/k7/4K3 w - - 0 1");
+    await game.play("e7", "e8");
+    expect(game.pendingPromotion, "promotion picker open");
     for (const [w, h, label] of sizes) {
       app.style.width = w ? w + "px" : "";
       app.style.height = h ? h + "px" : "";
@@ -57,6 +61,9 @@
       expect(nav.bottom <= work.bottom + 0.5, `${label}: nav bar inside the workspace`);
       expect(notation.width >= 320, `${label}: notation at least 320px, got ${notation.width}`);
       expect(list.bottom <= whole.bottom, `${label}: game list inside the window`);
+      const promo = rect(".board-square .picker");
+      expect(promo.left >= board.left && promo.right <= board.right && promo.top >= board.top &&
+        promo.bottom <= board.bottom, `${label}: promotion picker inside the board, got ${promo.width}px`);
       // The board should use the space it has: either the height (under the
       // nav) or the width (next to a 320px notation) is nearly used up.
       const spareY = work.bottom - nav.bottom - 4;
@@ -67,6 +74,7 @@
       await wait(1500);
     }
     app.style.width = app.style.height = "";
+    await game.choosePromotion(null);
     await log("done");
   } catch (e) {
     await log("FAILED: " + (e?.message ?? e));

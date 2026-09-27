@@ -10,7 +10,6 @@
 
   let box: HTMLDivElement;
   let pos = $state<{ left: number; top: number } | null>(null);
-  let selected = $state(0);
 
   onMount(() => {
     pos = placeUnder(anchor, box);
@@ -22,9 +21,10 @@
   // it's open: Up/Down choose, Right/Enter follow, Left/Escape close.
   function onKey(e: KeyboardEvent) {
     const n = moves.length;
+    const selected = game.branchSelected;
     const actions: Record<string, () => unknown> = {
-      ArrowDown: () => (selected = (selected + 1) % n),
-      ArrowUp: () => (selected = (selected - 1 + n) % n),
+      ArrowDown: () => (game.branchSelected = (selected + 1) % n),
+      ArrowUp: () => (game.branchSelected = (selected - 1 + n) % n),
       ArrowRight: () => game.chooseBranch(moves[selected].id),
       Enter: () => game.chooseBranch(moves[selected].id),
       ArrowLeft: () => game.chooseBranch(null),
@@ -43,7 +43,7 @@
   role="listbox"
   tabindex="-1"
   aria-label="Next move"
-  aria-activedescendant="next-move-{moves[selected].id}"
+  aria-activedescendant="next-move-{moves[game.branchSelected].id}"
   style:left="{pos?.left ?? 0}px"
   style:top="{pos?.top ?? 0}px"
   style:visibility={pos ? null : "hidden"}
@@ -58,15 +58,15 @@
       id="next-move-{m.id}"
       class="option"
       class:main={i === 0}
-      class:selected={i === selected}
+      class:selected={i === game.branchSelected}
       role="option"
-      aria-selected={i === selected}
+      aria-selected={i === game.branchSelected}
       tabindex="-1"
-      onmouseenter={() => (selected = i)}
+      onmouseenter={() => (game.branchSelected = i)}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => game.chooseBranch(m.id)}
     >
-      <span class="mark" aria-hidden="true">{i === selected ? "→" : ""}</span><span class="number"
+      <span class="mark" aria-hidden="true">{i === game.branchSelected ? "→" : ""}</span><span class="number"
         >{m.moveNumber}{m.white ? "." : "…"}</span
       >{figurine(m.san)}
     </div>

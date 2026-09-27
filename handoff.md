@@ -176,8 +176,6 @@ clocks and evals), 16-core laptop:
 - The toolbar wraps to two rows in windows narrower than about 1,400 px, and the nav row
   (now with next/previous game) is wider than very small boards. The layout
   driver passes at all five sizes.
-- The promotion picker is still wider than boards under ~400 px.
-- No arrow preview in the next-move picker (user review follow-up).
 - `CommentDialog.svelte` and now `FenDialog.svelte` are unused (the setup
   editor replaced the FEN dialog). The user hasn't approved deleting them.
 - Prettier isn't applied (the repo never was; `NotationLine.svelte` relies
@@ -200,8 +198,6 @@ Recommended order:
 1. **Ask the user** about installing sway for the smoke harness (see
    Environment notes) and open question #3.
 2. **P1 polish left:**
-   - Promotion picker size on small boards; arrow preview in the
-     next-move picker.
    - Show import warnings in the UI (they're counted in the job message and
      the first 20 are logged).
    - DB-13 reference database (use one designated database for the tree).

@@ -84,6 +84,8 @@ class GameStore {
   editingComment = $state<{ node: number; slot: CommentSlotDto } | null>(null);
   /** Next moves offered after stepping forward into a split (main line first). */
   branch = $state<NotationMoveDto[] | null>(null);
+  /** The highlighted entry of `branch`, previewed as an arrow on the board. */
+  branchSelected = $state(0);
   /** `[%eval]` values by node id, from the notation. */
   evals = $derived.by(() => {
     const map = new Map<number, string>();
@@ -274,6 +276,7 @@ class GameStore {
     const next = view?.cursorPath.length ? moveAfter(moves, view.cursor) : moves[0];
     if (next && next.variations.length) {
       this.branch = [next, ...next.variations.map((line) => line[0])];
+      this.branchSelected = 0;
     } else {
       return this.step("forward");
     }

@@ -329,6 +329,8 @@ impl TryFrom<ShapeDto> for Shape {
 pub struct NotationMoveDto {
     pub id: u32,
     pub san: String,
+    /// The move in UCI (castling as `e1g1`), for arrows on the board.
+    pub uci: String,
     pub move_number: u32,
     pub white: bool,
     pub nags: Vec<u8>,

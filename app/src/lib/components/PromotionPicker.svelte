@@ -48,11 +48,15 @@
     place-items: center;
     background: color-mix(in srgb, var(--paper) 55%, transparent);
     z-index: 10;
+    /* The picker is sized from the board, so it fits small boards too. */
+    container-type: size;
   }
 
   .picker {
+    /* Four buttons plus gaps and padding fill at most ~90% of the board. */
+    --button: min(72px, calc((90cqmin - 34px) / 4));
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, var(--button));
     gap: 6px;
     padding: 8px;
     background: var(--paper);
@@ -61,9 +65,9 @@
   }
 
   button {
-    width: 72px;
-    height: 72px;
-    padding: 6px;
+    width: var(--button);
+    height: var(--button);
+    padding: calc(var(--button) / 12);
     border-color: var(--rule);
   }
 

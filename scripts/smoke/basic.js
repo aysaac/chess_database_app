@@ -72,6 +72,7 @@
     expect(opts.length === 2 && opts[0].endsWith("h6") && opts[1].endsWith("g4"),
       "8.Bh6 then 8.g4 offered, got " + opts.join(" | "));
     await shot("04a-next-moves");
+    expect(document.querySelectorAll(".cg-shapes line").length >= 2, "the next moves drawn as arrows");
     key(picker(), "Escape");
     await until(() => !picker(), "Escape closes the picker");
     expect(game.view.cursorPath.length === 14, "Escape doesn't move");

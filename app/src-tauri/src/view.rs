@@ -30,6 +30,7 @@ fn line(game: &Game, first: NodeId, mut pos: Chess) -> Vec<NotationMoveDto> {
         out.push(NotationMoveDto {
             id: id.0,
             san: notation::san(&pos, mv),
+            uci: notation::uci(mv),
             move_number: pos.fullmoves().get(),
             white: pos.turn() == Color::White,
             nags: node.nags.iter().map(|n| n.0).collect(),
@@ -124,6 +125,7 @@ mod tests {
         let n = notation(&game);
         assert_eq!(n.moves.len(), 3);
         assert_eq!(n.moves[1].san, "e5");
+        assert_eq!(n.moves[2].uci, "g1f3");
         assert_eq!(n.moves[1].variations.len(), 1);
         let var = &n.moves[1].variations[0];
         assert_eq!(var[0].san, "c5");
