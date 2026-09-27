@@ -9,7 +9,7 @@
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   while (!window.__chessdb) await wait(100);
-  const { db, game, api, invoke } = window.__chessdb;
+  const { db, game, api, invoke, prefs } = window.__chessdb;
   // A native dialog would open on the user's screen, outside the harness's
   // hidden monitor: never ask about unsaved changes.
   game.confirmDiscard = async () => true;
@@ -83,6 +83,23 @@
     await until(() => !picker() && game.view.inVariation, "Down then Right follows 8.g4");
     expect(game.view.cursorPath.length === 15, "one move forward into the variation");
     await game.goto(at16);
+
+    // Board appearance (UI-01): five colour themes and display options.
+    document.querySelector("[aria-label='Board appearance']").click();
+    await until(() => document.querySelectorAll("[role='radiogroup'] input[type='radio']").length === 5,
+      "five board themes offered");
+    document.querySelector("[role='dialog'][aria-label='Board appearance'] .actions button").click();
+    await until(() => !document.querySelector("[role='dialog'][aria-label='Board appearance']"), "Done closes it");
+    prefs.set("boardTheme", "walnut");
+    prefs.set("boardCoordinates", false);
+    await until(() => document.documentElement.dataset.boardTheme === "walnut", "walnut theme applied");
+    const light = getComputedStyle(document.documentElement).getPropertyValue("--board-light").trim();
+    expect(["#eed7b4", "#d2bc98"].includes(light), "walnut colours, got " + light);
+    await until(() => !document.querySelector(".board-square coords"), "coordinates hidden");
+    await shot("04b-walnut-no-coordinates");
+    prefs.set("boardTheme", "tournament");
+    prefs.set("boardCoordinates", true);
+    await until(() => document.querySelector(".board-square coords"), "coordinates back");
 
     // A different move where one exists asks for a policy.
     // It's a popover under the current move that leaves the board visible.

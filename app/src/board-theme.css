@@ -87,3 +87,58 @@
 .chessboard.cg-wrap.orientation-black .files :nth-child(even) {
   color: var(--board-light);
 }
+
+/* Board colour themes (UI-01), chosen in "Board appearance". The attribute
+   sits on <html> for the boards, and on each swatch in the picker. */
+[data-board-theme="tournament"] {
+  --board-light: #e6e2c8;
+  --board-dark: #6f8f6a;
+}
+
+[data-board-theme="walnut"] {
+  --board-light: #eed7b4;
+  --board-dark: #b08462;
+}
+
+[data-board-theme="slate"] {
+  --board-light: #dfe4e8;
+  --board-dark: #7f97a8;
+}
+
+[data-board-theme="stone"] {
+  --board-light: #dcdcd6;
+  --board-dark: #94948c;
+}
+
+[data-board-theme="coral"] {
+  --board-light: #f2dfd5;
+  --board-dark: #c27c6b;
+}
+
+/* Dimmed so the board doesn't glare on a dark screen. */
+@media (prefers-color-scheme: dark) {
+  [data-board-theme="tournament"] {
+    --board-light: #cfcbb2;
+    --board-dark: #5d7a59;
+  }
+
+  [data-board-theme="walnut"] {
+    --board-light: #d2bc98;
+    --board-dark: #8f6a4d;
+  }
+
+  [data-board-theme="slate"] {
+    --board-light: #c3c9cd;
+    --board-dark: #65798a;
+  }
+
+  [data-board-theme="stone"] {
+    --board-light: #c0c0ba;
+    --board-dark: #74746d;
+  }
+
+  [data-board-theme="coral"] {
+    --board-light: #d6c2b8;
+    --board-dark: #9e6152;
+  }
+}

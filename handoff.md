@@ -170,8 +170,11 @@ clocks and evals), 16-core laptop:
 - Engine options: buttons (e.g. "Clear Hash") can't be pressed from the UI.
 
 **UI**
-- UI-01 has one board theme and piece set; UI-02 has no keyboard SAN
-  entry; UI-03 can't collapse variations.
+- UI-01 has five board colour themes and display options (coordinates,
+  legal-move dots, last move) under "Board appearance" in the nav bar, but
+  only the cburnett piece set: more sets need vendored SVGs with checked
+  licences (lichess's lila repo lists them in COPYING.md). UI-02 has no
+  keyboard SAN entry; UI-03 can't collapse variations.
 - The toolbar wraps to two rows in windows narrower than about 1,400 px, and the nav row
   (now with next/previous game) is wider than very small boards. The layout
   driver passes at all five sizes.

@@ -6,6 +6,7 @@
   import type { Key } from "@lichess-org/chessground/types";
   import type { NotationMoveDto } from "../bindings/NotationMoveDto";
   import type { ShapeDto } from "../bindings/ShapeDto";
+  import { board as boardPrefs } from "../stores/board.svelte";
   import { game } from "../stores/game.svelte";
   import PromotionPicker from "./PromotionPicker.svelte";
 
@@ -66,6 +67,16 @@
       movable: { color: turn, dests: toDests(view.dests) },
     });
     cg.setShapes(toShapes(view.shapes));
+  });
+
+  // Display options (UI-01). Coordinates are drawn once, so they need a redraw.
+  $effect(() => {
+    const coordinates = boardPrefs.coordinates;
+    const showDests = boardPrefs.legalMoves;
+    const lastMove = boardPrefs.lastMove;
+    if (!cg) return;
+    cg.set({ coordinates, movable: { showDests }, highlight: { lastMove, check: true } });
+    cg.redrawAll();
   });
 
   // While the next-move picker is open, its moves show as arrows (the

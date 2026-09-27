@@ -14,6 +14,7 @@
   import StatusBar from "./lib/components/StatusBar.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
   import { analysis } from "./lib/stores/analysis.svelte";
+  import { board as boardPrefs } from "./lib/stores/board.svelte";
   import { db } from "./lib/stores/db.svelte";
   import { game } from "./lib/stores/game.svelte";
   import { prefs } from "./lib/stores/prefs.svelte";
@@ -42,6 +43,11 @@
     // Multiples of 8 keep the square edges on whole pixels.
     boardSize = Math.max(BOARD_MIN, Math.floor(fit / 8) * 8);
   }
+
+  // The board colours (UI-01) apply to every board through <html>.
+  $effect(() => {
+    document.documentElement.dataset.boardTheme = boardPrefs.theme;
+  });
 
   onMount(() => {
     game.newGame();

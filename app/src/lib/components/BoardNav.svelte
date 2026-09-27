@@ -1,6 +1,9 @@
 <script lang="ts">
   import { db } from "../stores/db.svelte";
   import { game } from "../stores/game.svelte";
+  import BoardSettings from "./BoardSettings.svelte";
+
+  let settings = $state(false);
 
   const path = $derived(game.view?.cursorPath ?? []);
   const atStart = $derived(path.length === 0);
@@ -38,7 +41,16 @@
   </button>
   <span class="sep"></span>
   <button title="Flip board (Ctrl+F)" onclick={() => game.flip()}>Flip board</button>
+  <button aria-label="Board appearance" title="Board appearance" onclick={() => (settings = true)}>
+    <svg viewBox="0 0 16 16"
+      ><path d="M2 2h6v6H2zM8 8h6v6H8z" /><path d="M8 2h6v6H8zM2 8h6v6H2z" opacity="0.35" /></svg
+    >
+  </button>
 </div>
+
+{#if settings}
+  <BoardSettings onClose={() => (settings = false)} />
+{/if}
 
 <style>
   .nav {
