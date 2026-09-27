@@ -177,6 +177,19 @@
     for (let i = 0; i < 17; i++) await game.step("forward");
     await shot("08-reopened-after-save");
 
+    // Folding variations (UI-03): a stub stands in for each; a click unfolds it.
+    const stubs = () => document.querySelectorAll(".notation .stub");
+    const topVariations = document.querySelectorAll(".notation .variation").length;
+    expect(topVariations > 0 && !game.view.inVariation, "variations, cursor on the main line");
+    game.collapseAll();
+    await until(() => stubs().length === topVariations, "every top-level variation folded");
+    expect(!document.querySelector(".notation .variation .move"), "no variation moves shown");
+    await shot("08b-variations-folded");
+    stubs()[0].click();
+    await until(() => stubs().length === topVariations - 1, "a click unfolds one");
+    game.expandAll();
+    await until(() => stubs().length === 0, "all unfolded");
+
     // Typing moves (UI-02): a key opens the entry on the board, Enter plays.
     await game.newGame();
     const entry = () => document.querySelector("input[aria-label='Move']");

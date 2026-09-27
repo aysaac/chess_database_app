@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import type { NotationMoveDto } from "../bindings/NotationMoveDto";
   import { MOVE_NAGS, POSITION_NAGS, nagSymbol } from "../format";
-  import { commentBefore, game } from "../stores/game.svelte";
+  import { commentBefore, game, variationOf } from "../stores/game.svelte";
   import type { MoveTarget } from "../types";
 
   let { target, onClose }: { target: MoveTarget; onClose: () => void } = $props();
@@ -24,10 +24,12 @@
   const nags = $derived(new Set(move?.nags ?? []));
   // Before a main-line move, that's the previous move's comment (or the intro).
   const before = $derived(game.notation ? commentBefore(game.notation, target.id) : undefined);
+  const variation = $derived(game.notation ? variationOf(game.notation, target.id) : undefined);
+  const hasVariations = $derived(game.notation?.moves.some((m) => m.variations.length) ?? false);
 
   // Keep the menu on screen.
   const left = $derived(Math.min(target.x, window.innerWidth - 260));
-  const top = $derived(Math.min(target.y, window.innerHeight - 330));
+  const top = $derived(Math.min(target.y, window.innerHeight - 430));
 
   onMount(() => {
     const close = (e: MouseEvent) => {
@@ -84,6 +86,18 @@
   >
   <button role="menuitem" onclick={() => run(() => game.deleteRemaining(target.id))}
     >Delete moves after this one</button
+  >
+  <hr />
+  <button
+    role="menuitem"
+    disabled={variation === undefined}
+    onclick={() => run(() => variation !== undefined && game.collapse([variation]))}>Collapse this variation</button
+  >
+  <button role="menuitem" disabled={!hasVariations} onclick={() => run(() => game.collapseAll())}
+    >Collapse all variations</button
+  >
+  <button role="menuitem" disabled={!game.active?.collapsed.length} onclick={() => run(() => game.expandAll())}
+    >Expand all variations</button
   >
 </div>
 

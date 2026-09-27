@@ -55,6 +55,40 @@ export function commentBefore(notation: NotationDto, id: number): CommentRef | u
   return walk(notation.moves, { node: ROOT_NODE, slot: "after", text: notation.rootComment });
 }
 
+/**
+ * The variation of `notation` that starts with move `start`, and the node it
+ * branches off from (the move before it, or the root).
+ */
+export function branchPoint(notation: NotationDto, start: number): number | undefined {
+  const walk = (line: NotationMoveDto[], before: number): number | undefined => {
+    for (let i = 0; i < line.length; i++) {
+      const prev = i > 0 ? line[i - 1].id : before;
+      for (const variation of line[i].variations) {
+        if (variation[0].id === start) return prev;
+        const hit = walk(variation, prev);
+        if (hit !== undefined) return hit;
+      }
+    }
+    return undefined;
+  };
+  return walk(notation.moves, ROOT_NODE);
+}
+
+/** The first move of the innermost variation containing move `id`; undefined on the main line. */
+export function variationOf(notation: NotationDto, id: number): number | undefined {
+  const walk = (line: NotationMoveDto[], start: number | undefined): number | null | undefined => {
+    for (const m of line) {
+      if (m.id === id) return start ?? null;
+      for (const variation of m.variations) {
+        const hit = walk(variation, variation[0].id);
+        if (hit !== undefined) return hit;
+      }
+    }
+    return undefined;
+  };
+  return walk(notation.moves, undefined) ?? undefined;
+}
+
 /** One open game (UI-05): its editing session and what the frontend knows of it. */
 export type GameTab = {
   session: number;
@@ -62,6 +96,8 @@ export type GameTab = {
   notation: NotationDto | null;
   /** Row in the game list it was opened from (next/previous game, QOL-03). */
   listIndex: number | null;
+  /** First moves of the variations folded in the notation (UI-03). */
+  collapsed: number[];
 };
 
 /** How to show a newly loaded game. */
@@ -132,6 +168,10 @@ class GameStore {
     if (!tab) return;
     tab.view = view;
     if (view.notation) tab.notation = view.notation;
+    // Moving into a folded variation unfolds it.
+    if (tab.collapsed.some((id) => view.cursorPath.includes(id))) {
+      tab.collapsed = tab.collapsed.filter((id) => !view.cursorPath.includes(id));
+    }
   }
 
   async #run(f: (session: number) => Promise<GameViewDto>) {
@@ -178,7 +218,7 @@ class GameStore {
     if (reuse && mode === "replace" && !(await this.confirmDiscard([current]))) return false;
     try {
       const view = await load();
-      const tab: GameTab = { session: view.session, view, notation: view.notation, listIndex };
+      const tab: GameTab = { session: view.session, view, notation: view.notation, listIndex, collapsed: [] };
       if (reuse && current) {
         const old = current.session;
         this.tabs[this.tabs.indexOf(current)] = tab;
@@ -324,6 +364,39 @@ class GameStore {
       notices.error(e);
       this.boardVersion++;
     }
+  }
+
+  isCollapsed(start: number): boolean {
+    return this.active?.collapsed.includes(start) ?? false;
+  }
+
+  /**
+   * Folds the variations starting at `starts` (UI-03). If the cursor is in
+   * one, it moves to where the outermost of them branches off.
+   */
+  collapse(starts: number[]) {
+    const tab = this.active;
+    const notation = this.notation;
+    if (!tab || !notation) return;
+    tab.collapsed = [...new Set([...tab.collapsed, ...starts])];
+    const hidden = tab.view.cursorPath.find((id) => tab.collapsed.includes(id));
+    const to = hidden === undefined ? undefined : branchPoint(notation, hidden);
+    if (to !== undefined) return this.goto(to);
+  }
+
+  expand(start: number) {
+    const tab = this.active;
+    if (tab) tab.collapsed = tab.collapsed.filter((id) => id !== start);
+  }
+
+  /** Folds every variation of the main line (their sub-variations go with them). */
+  collapseAll() {
+    return this.collapse((this.notation?.moves ?? []).flatMap((m) => m.variations.map((line) => line[0].id)));
+  }
+
+  expandAll() {
+    const tab = this.active;
+    if (tab) tab.collapsed = [];
   }
 
   /** Plays a move given in UCI (typed, or from the tree); castling as `e1g1`. */

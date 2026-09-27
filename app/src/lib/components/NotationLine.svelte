@@ -39,6 +39,13 @@
   const editing = (id: number, slot: CommentSlotDto) =>
     game.editingComment?.node === id && game.editingComment.slot === slot;
 
+  // A folded variation (UI-03) shows as a stub. Depth 0 is the main line.
+  const folded = $derived(depth > 0 && game.isCollapsed(moves[0].id));
+
+  function count(line: NotationMoveDto[]): number {
+    return line.reduce((n, m) => n + 1 + m.variations.reduce((k, v) => k + count(v), 0), 0);
+  }
+
   function onMenu(e: MouseEvent, id: number) {
     e.preventDefault();
     game.goto(id);
@@ -50,7 +57,19 @@
   Spacing is explicit ({" "}) and the markup has no whitespace between nodes,
   so parentheses hug their moves: "(8...Nb6 9.Ng3)".
 -->
-{#each moves as m, i (m.id)}{#if i === 0 && paren}<span class="paren open">(</span>{/if}{#if editing(m.id, "before")}<CommentEditor
+{#if folded}<button
+    class="stub"
+    title="Show this variation ({count(moves)} {count(moves) === 1 ? 'move' : 'moves'})"
+    onclick={() => game.expand(moves[0].id)}
+    >{paren ? "(" : ""}{moves[0].moveNumber}{moves[0].white ? "." : "…"}{figurine(moves[0].san)} …{paren
+      ? ")"
+      : ""}</button
+  >{:else}{#each moves as m, i (m.id)}{#if i === 0 && paren}<button
+      class="paren open"
+      aria-label="Collapse this variation"
+      title="Collapse this variation"
+      onclick={() => game.collapse([moves[0].id])}>(</button
+    >{/if}{#if editing(m.id, "before")}<CommentEditor
       initial={m.commentBefore}
     />{" "}{:else if m.commentBefore}<span
       class="comment"
@@ -73,7 +92,14 @@
       data-comment="{m.id}:after">{m.commentAfter}</span
     >{/if}{#if m.variations.length}{#if depth === 0}<div class="variations">
         {#each m.variations as line (line[0].id)}
-          <div class="variation"><NotationLine moves={line} depth={1} {onContext} /></div>
+          <div class="variation">
+            {#if !game.isCollapsed(line[0].id)}<button
+                class="fold"
+                aria-label="Collapse this variation"
+                title="Collapse this variation"
+                onclick={() => game.collapse([line[0].id])}
+              ></button>{/if}<NotationLine moves={line} depth={1} {onContext} />
+          </div>
         {/each}
       </div>{:else}{#each m.variations as line (line[0].id)}{" "}<NotationLine
           moves={line}
@@ -81,7 +107,7 @@
           paren
           {onContext}
         />{/each}{/if}{/if}{#if i === moves.length - 1}{#if paren}<span class="paren close">)</span
-      >{/if}{:else}{" "}{/if}{/each}
+      >{/if}{:else}{" "}{/if}{/each}{/if}
 
 <style>
   .move {
@@ -136,6 +162,7 @@
   }
 
   .variation {
+    position: relative;
     font-weight: 400;
     font-size: 0.94em;
     margin: 2px 0 2px 10px;
@@ -145,6 +172,57 @@
 
   .paren {
     color: var(--ink-soft);
+  }
+
+  /* The opening parenthesis of a nested variation folds it. */
+  button.paren {
+    display: inline;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    line-height: inherit;
+    cursor: pointer;
+  }
+
+  button.paren:hover {
+    color: var(--brass);
+  }
+
+  /* The left rule of a top-level variation folds it. */
+  .fold {
+    position: absolute;
+    left: -8px;
+    top: 0;
+    bottom: 0;
+    width: 12px;
+    padding: 0;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .fold:hover {
+    background: color-mix(in srgb, var(--brass) 30%, transparent);
+  }
+
+  .stub {
+    display: inline;
+    padding: 0 4px;
+    margin: 0 1px;
+    border: 1px dashed color-mix(in srgb, var(--brass) 60%, transparent);
+    border-radius: 3px;
+    background: none;
+    font: inherit;
+    line-height: inherit;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+
+  .stub:hover {
+    background: var(--felt-soft);
   }
 
   /* Cancel the move button's side padding where a parenthesis touches it. */
