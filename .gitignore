@@ -1,0 +1,25 @@
+# Rust
+/target/
+
+# Frontend
+node_modules/
+/app/dist/
+
+# Generated Tauri schemas
+/app/src-tauri/gen/
+
+# Large test data (downloaded by scripts/fetch-testdata.sh)
+/testdata/large/
+
+# Chess databases are user data. (The dev watcher ignores them through
+# app/src-tauri/.taurignore; it doesn't read this file for that.)
+*.chessdb/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Engine binaries fetched by scripts/fetch-stockfish.sh (Tauri sidecars)
+/app/src-tauri/binaries/

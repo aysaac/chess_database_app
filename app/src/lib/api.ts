@@ -1,0 +1,133 @@
+// Typed wrappers around the Tauri commands in app/src-tauri/src/commands.
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { AnalysisDto } from "./bindings/AnalysisDto";
+import type { AnalysisStatusDto } from "./bindings/AnalysisStatusDto";
+import type { AppError } from "./bindings/AppError";
+import type { CommentSlotDto } from "./bindings/CommentSlotDto";
+import type { DbInfoDto } from "./bindings/DbInfoDto";
+import type { EngineDto } from "./bindings/EngineDto";
+import type { FenCheckDto } from "./bindings/FenCheckDto";
+import type { GamePage } from "./bindings/GamePage";
+import type { GameViewDto } from "./bindings/GameViewDto";
+import type { HeaderQueryDto } from "./bindings/HeaderQueryDto";
+import type { HeadersDto } from "./bindings/HeadersDto";
+import type { JobDto } from "./bindings/JobDto";
+import type { NameKindDto } from "./bindings/NameKindDto";
+import type { NameListDto } from "./bindings/NameListDto";
+import type { PlayResultDto } from "./bindings/PlayResultDto";
+import type { RecentDbDto } from "./bindings/RecentDbDto";
+import type { SaveModeDto } from "./bindings/SaveModeDto";
+import type { ShapeDto } from "./bindings/ShapeDto";
+import type { SortSpecDto } from "./bindings/SortSpecDto";
+import type { StepDto } from "./bindings/StepDto";
+import type { TreeDto } from "./bindings/TreeDto";
+import type { VariationPolicyDto } from "./bindings/VariationPolicyDto";
+
+export const api = {
+  createDb: (path: string) => invoke<DbInfoDto>("create_db", { path }),
+  openDb: (path: string) => invoke<DbInfoDto>("open_db", { path }),
+  closeDb: (handle: number) => invoke<void>("close_db", { handle }),
+  dbInfo: (handle: number) => invoke<DbInfoDto>("db_info", { handle }),
+  listGames: (handle: number, sort: SortSpecDto, offset: number, limit: number) =>
+    invoke<GamePage>("list_games", { handle, sort, offset, limit }),
+  sortGames: (handle: number, sort: SortSpecDto) =>
+    invoke<number | null>("sort_games", { handle, sort }),
+  importPgn: (handle: number, path: string) => invoke<number>("import_pgn", { handle, path }),
+  exportPgn: (handle: number, path: string, ids: number[] | null = null) =>
+    invoke<number>("export_pgn", { handle, path, ids }),
+  setDeleted: (handle: number, ids: number[], deleted: boolean) =>
+    invoke<void>("set_deleted", { handle, ids, deleted }),
+  searchGames: (handle: number, query: Partial<HeaderQueryDto>, within: boolean, quick: boolean) =>
+    invoke<number | null>("search_games", { handle, query, within, quick }),
+  clearFilter: (handle: number) => invoke<DbInfoDto>("clear_filter", { handle }),
+  compactDb: (handle: number) => invoke<number>("compact_db", { handle }),
+  listNames: (handle: number, kind: NameKindDto, text: string, byGames: boolean, limit: number) =>
+    invoke<NameListDto>("list_names", { handle, kind, text, byGames, limit }),
+  showNameGames: (handle: number, kind: NameKindDto, id: number) =>
+    invoke<DbInfoDto>("show_name_games", { handle, kind, id }),
+  renameName: (handle: number, kind: NameKindDto, id: number, name: string) =>
+    invoke<string>("rename_name", { handle, kind, id, name }),
+  updateIndex: (handle: number) => invoke<number | null>("update_index", { handle }),
+  openingTree: (handle: number, session: number) => invoke<TreeDto>("opening_tree", { handle, session }),
+  searchPosition: (handle: number, session: number) =>
+    invoke<DbInfoDto>("search_position", { handle, session }),
+  scanPositionGames: (handle: number, session: number) =>
+    invoke<number>("scan_position_games", { handle, session }),
+
+  openGame: (handle: number, game: number) => invoke<GameViewDto>("open_game", { handle, game }),
+  newGame: (fen: string | null = null) => invoke<GameViewDto>("new_game", { fen }),
+  closeSession: (session: number) => invoke<void>("close_session", { session }),
+  checkFen: (fen: string) => invoke<FenCheckDto>("check_fen", { fen }),
+  activateSession: (session: number) => invoke<GameViewDto>("activate_session", { session }),
+  gameView: (session: number) => invoke<GameViewDto>("game_view_cmd", { session }),
+  gotoNode: (session: number, node: number) => invoke<GameViewDto>("goto_node", { session, node }),
+  step: (session: number, dir: StepDto) => invoke<GameViewDto>("step", { session, dir }),
+  playMove: (
+    session: number,
+    orig: string,
+    dest: string,
+    promotion: string | null = null,
+    policy: VariationPolicyDto | null = null,
+  ) => invoke<PlayResultDto>("play_move", { session, orig, dest, promotion, policy }),
+  promoteVariation: (session: number, node: number) =>
+    invoke<GameViewDto>("promote_variation", { session, node }),
+  deleteVariation: (session: number, node: number) =>
+    invoke<GameViewDto>("delete_variation", { session, node }),
+  deleteRemaining: (session: number, node: number) =>
+    invoke<GameViewDto>("delete_remaining", { session, node }),
+  setComment: (session: number, node: number, slot: CommentSlotDto, text: string) =>
+    invoke<GameViewDto>("set_comment", { session, node, slot, text }),
+  toggleNag: (session: number, node: number, nag: number) =>
+    invoke<GameViewDto>("toggle_nag", { session, node, nag }),
+  setShapes: (session: number, shapes: ShapeDto[]) =>
+    invoke<GameViewDto>("set_shapes", { session, shapes }),
+  setHeaders: (session: number, headers: HeadersDto) =>
+    invoke<GameViewDto>("set_headers", { session, headers }),
+  undo: (session: number) => invoke<GameViewDto>("undo", { session }),
+  redo: (session: number) => invoke<GameViewDto>("redo", { session }),
+  saveGame: (session: number, mode: SaveModeDto, handle: number | null = null) =>
+    invoke<GameViewDto>("save_game", { session, mode, handle }),
+  gamePgn: (session: number) => invoke<string>("game_pgn", { session }),
+
+  cancelJob: (id: number) => invoke<boolean>("cancel_job", { id }),
+  listJobs: () => invoke<JobDto[]>("list_jobs"),
+
+  listEngines: () => invoke<EngineDto[]>("list_engines"),
+  detectEngines: () => invoke<EngineDto[]>("detect_engines"),
+  addEngine: (path: string) => invoke<EngineDto[]>("add_engine", { path }),
+  removeEngine: (id: string) => invoke<EngineDto[]>("remove_engine", { id }),
+  setDefaultEngine: (id: string) => invoke<EngineDto[]>("set_default_engine", { id }),
+  setEngineOptions: (id: string, options: [string, string][]) =>
+    invoke<EngineDto[]>("set_engine_options", { id, options }),
+  startAnalysis: (session: number, engine: string | null, multipv: number) =>
+    invoke<AnalysisStatusDto>("start_analysis", { session, engine, multipv }),
+  stopAnalysis: () => invoke<AnalysisStatusDto>("stop_analysis"),
+  analysisStatus: () => invoke<AnalysisStatusDto>("analysis_status"),
+  setAnalysisLines: (multipv: number) => invoke<AnalysisStatusDto>("set_analysis_lines", { multipv }),
+  addEngineLine: (session: number, moves: string[], comment: string | null, goto: boolean) =>
+    invoke<GameViewDto>("add_engine_line", { session, moves, comment, goto }),
+  blunderCheck: (session: number, engine: string | null, movetimeMs: number) =>
+    invoke<number>("blunder_check", { session, engine, movetimeMs }),
+
+  recentDatabases: () => invoke<RecentDbDto[]>("recent_databases"),
+  forgetRecentDatabase: (path: string) => invoke<void>("forget_recent_database", { path }),
+  uiPrefs: () => invoke<Record<string, unknown>>("ui_prefs"),
+  setUiPref: (key: string, value: unknown) => invoke<void>("set_ui_pref", { key, value }),
+};
+
+export function onAnalysis(cb: (update: AnalysisDto) => void): Promise<UnlistenFn> {
+  return listen<AnalysisDto>("analysis", (e) => cb(e.payload));
+}
+
+export function onJob(cb: (job: JobDto) => void): Promise<UnlistenFn> {
+  return listen<JobDto>("job", (e) => cb(e.payload));
+}
+
+export function isAppError(e: unknown): e is AppError {
+  return typeof e === "object" && e !== null && "code" in e && "message" in e;
+}
+
+export function errorMessage(e: unknown): string {
+  return isAppError(e) ? e.message : String(e);
+}

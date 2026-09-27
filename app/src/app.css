@@ -1,0 +1,136 @@
+/* Design tokens. Palette drawn from the tournament hall: buff-and-green
+   vinyl boards, felt tables, brass clock fittings, scoresheet paper. */
+:root {
+  --paper: #f2f4f1;
+  --panel: #e8ece7;
+  --ink: #1d2a2c;
+  --ink-soft: #55635f;
+  --rule: #cfd7d1;
+  --felt: #2e5c4f;
+  --felt-soft: #d5e4dc;
+  --brass: #9a6f1c;
+  --brass-soft: #f1e3c2;
+  --danger: #a23a2c;
+
+  --board-light: #e6e2c8;
+  --board-dark: #6f8f6a;
+
+  /* Evaluation bar and graph: White's share is light, Black's dark, in
+     both themes (like the pieces). */
+  --eval-white: #f3f0e4;
+  --eval-white-ink: #1d2a2c;
+  --eval-black: #33403d;
+  --eval-black-ink: #eef0ea;
+
+  --font-book: "Source Serif 4 Variable", "Source Serif 4", Georgia, serif;
+  --font-ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-figurine: "DejaVu Sans", "Noto Sans Symbols 2", "Segoe UI Symbol", sans-serif;
+
+  --radius: 4px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #182022;
+    --panel: #1f2a2c;
+    --ink: #dfe6e1;
+    --ink-soft: #95a39d;
+    --rule: #33413f;
+    --felt: #6fb59c;
+    --felt-soft: #25443b;
+    --brass: #d9ad55;
+    --brass-soft: #3d3420;
+    --danger: #e27b69;
+    --board-light: #cfcbb2;
+    --board-dark: #5d7a59;
+    --eval-white: #d9d6c8;
+    --eval-white-ink: #182022;
+    --eval-black: #0e1415;
+    --eval-black-ink: #dfe6e1;
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px/1.4 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button:hover:not(:disabled) {
+  background: var(--felt-soft);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--felt);
+  color: var(--paper);
+}
+
+button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--felt) 85%, var(--ink));
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  user-select: text;
+}
+
+textarea {
+  font-family: var(--font-book);
+  font-size: 15px;
+  resize: vertical;
+}
+
+:focus-visible {
+  outline: 2px solid var(--felt);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

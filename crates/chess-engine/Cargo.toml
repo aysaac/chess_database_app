@@ -1,0 +1,20 @@
+[package]
+name = "chess-engine"
+description = "UCI engine host: engine processes, protocol parsing, analysis driver, blunder check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chess-core.workspace = true
+log.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+# A tiny deterministic UCI engine (2-ply material search) used by the tests.
+[[bin]]
+name = "fake-uci"
+path = "src/bin/fake_uci.rs"
+test = false
+doc = false

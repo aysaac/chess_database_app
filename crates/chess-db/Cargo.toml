@@ -1,0 +1,18 @@
+[package]
+name = "chess-db"
+description = "Native chess database storage: format, import/export, sorting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chess-core.workspace = true
+chess-jobs.workspace = true
+shakmaty.workspace = true
+thiserror.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true

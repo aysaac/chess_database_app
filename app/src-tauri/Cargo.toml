@@ -1,0 +1,31 @@
+[package]
+name = "chess-app"
+description = "Desktop chess database application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "chess_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+chess-core.workspace = true
+chess-jobs.workspace = true
+chess-db.workspace = true
+chess-engine.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-log = "2"
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+thiserror.workspace = true
+ts-rs = "12"
+
+[dev-dependencies]
+tempfile.workspace = true

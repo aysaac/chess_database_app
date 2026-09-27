@@ -1,0 +1,89 @@
+/* Board theme shared by every chessground board (the main board and the
+   position editor): green-and-buff squares, highlights and coordinates.
+   chessground puts cg-wrap and orientation-* on the element it's given. */
+
+/* Green-and-buff tournament board drawn as a repeating 2×2 tile. */
+.chessboard.cg-wrap cg-board {
+  background-color: var(--board-light);
+  background-image: conic-gradient(
+    var(--board-dark) 0 90deg,
+    var(--board-light) 0 180deg,
+    var(--board-dark) 0 270deg,
+    var(--board-light) 0
+  );
+  background-size: 25% 25%;
+}
+
+.chessboard.cg-wrap cg-board square.last-move {
+  background-color: color-mix(in srgb, var(--brass) 42%, transparent);
+}
+
+.chessboard.cg-wrap cg-board square.selected {
+  background-color: color-mix(in srgb, var(--felt) 55%, transparent);
+}
+
+.chessboard.cg-wrap cg-board square.move-dest {
+  background: radial-gradient(rgba(20, 40, 30, 0.35) 19%, transparent 20%);
+}
+
+.chessboard.cg-wrap cg-board square.oc.move-dest {
+  background: radial-gradient(transparent 0%, transparent 78%, rgba(20, 40, 30, 0.3) 80%);
+}
+
+.chessboard.cg-wrap cg-board square.check {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(200, 40, 20, 0.9) 0%,
+    rgba(200, 40, 20, 0.5) 30%,
+    transparent 70%
+  );
+}
+
+.chessboard.cg-wrap coords {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 1;
+}
+
+/* Keep labels inside their squares at any board size: ranks top-left,
+   files bottom-right (chessground's defaults assume a large board). */
+.chessboard.cg-wrap coords.ranks {
+  top: 0;
+  left: 3px;
+}
+
+.chessboard.cg-wrap coords.ranks coord {
+  transform: none;
+  padding-top: 1px;
+}
+
+.chessboard.cg-wrap coords.files {
+  left: 0;
+  bottom: 1px;
+  height: 14px;
+  line-height: 14px;
+}
+
+.chessboard.cg-wrap coords.files coord {
+  text-align: right;
+  padding-right: 3px;
+}
+
+/* Each label takes the colour of the opposite square. Labels sit in their
+   own square (see above): a1 is dark, so with White at the bottom odd ranks
+   and a/c/e/g files are on dark squares; flipped, the left column is the
+   h-file and the parity of the ranks swaps. */
+.chessboard.cg-wrap.orientation-white .ranks :nth-child(even),
+.chessboard.cg-wrap.orientation-white .files :nth-child(even),
+.chessboard.cg-wrap.orientation-black .ranks :nth-child(odd),
+.chessboard.cg-wrap.orientation-black .files :nth-child(odd) {
+  color: color-mix(in srgb, var(--board-dark) 80%, black);
+}
+
+.chessboard.cg-wrap.orientation-white .ranks :nth-child(odd),
+.chessboard.cg-wrap.orientation-white .files :nth-child(odd),
+.chessboard.cg-wrap.orientation-black .ranks :nth-child(even),
+.chessboard.cg-wrap.orientation-black .files :nth-child(even) {
+  color: var(--board-light);
+}

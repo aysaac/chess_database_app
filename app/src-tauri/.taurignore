@@ -1,0 +1,4 @@
+# Files `tauri dev` must not treat as source changes (see AGENTS.md).
+# Saving into a database kept under src-tauri/ would restart the app.
+*.chessdb/
+binaries/

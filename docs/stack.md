@@ -1,0 +1,102 @@
+# Tech Stack
+
+Status: **decided 2026-09-25** (frontend, license and platform policy added the same day, before the first prototype). Covers open questions #1 and #5 in [feature-catalog.md](feature-catalog.md#6-open-questions-for-the-build-spec).
+
+## Decisions
+
+| Area | Choice | Why |
+|---|---|---|
+| Back end / core logic | **Rust** | Speed for PGN import, the position index, search over millions of games, and engine process management |
+| Desktop shell / UI | **Tauri 2** | Uses the OS webview instead of bundling Chromium like Electron does: small binaries (~10 MB), low RAM, Rust back end built in |
+| Frontend | **Svelte 5 + TypeScript** on plain Vite (no SvelteKit) | Lightest runtime; fine-grained reactivity suits streaming updates; a desktop app needs no router |
+| License | **GPL-3.0-or-later** | Lets us build on the best chess libraries: `shakmaty`, `pgn-reader` and `@lichess-org/chessground` (all GPL-3) |
+| Platforms | **Linux first**, following the [cross-platform rules](#cross-platform-rules) | One codebase. Windows/macOS CI gets added once the repo is on GitHub |
+| Programmatic access (CLI, local API, remote control of the running app, MCP) | **Deferred** | Not needed for now; see [Deferred](#deferred-programmatic-access) |
+
+## Versions in use
+
+| Piece | Version |
+|---|---|
+| Rust | 1.94 (edition 2024, MSRV 1.89 for `File::try_lock`) |
+| Tauri | 2.11 (3.0 is alpha only) |
+| shakmaty / pgn-reader | 0.30 / 0.29 |
+| Svelte / Vite / TypeScript | 5.57 / 8.3 / 6.0 (svelte-check doesn't support TS 7 yet) |
+| Board | `@lichess-org/chessground` 10.2 (the old `chessground` npm package is deprecated) |
+| Rust → TypeScript types | `ts-rs` 12, generated into `app/src/lib/bindings/` by `npm run bindings` |
+
+## How Tauri splits the work
+
+```
+┌───────────────────────── Tauri app ──────────────────────────┐
+│  Frontend (webview: HTML/CSS/TS)                             │
+│   board · notation pane · game list · panels                 │
+│        │  invoke("command", args)        ▲ events (stream)   │
+│        ▼                                  │                  │
+│  Rust side                                                   │
+│   #[tauri::command] handlers  ──►  core crates               │
+│                                    (rules, db, search,       │
+│                                     engine, analysis)        │
+└──────────────────────────────────────────────────────────────┘
+```
+
+- **Rust owns all state and logic**: databases, search, engines, analysis. The frontend only renders and sends user intents.
+- **Commands** (`invoke`) cover request/response calls such as open DB, fetch game, run search, and fetch a page of the game list.
+- **Events** cover streaming data: engine info lines, import/search progress, batch-analysis progress.
+- **Large data stays in Rust.** The game list (DB-03, 10M+ rows) is virtualized, and the frontend asks only for the visible row window. Full result sets never go over IPC.
+
+## Guiding rule: keep the core UI-agnostic
+
+Programmatic access is deferred, but the core crates must not depend on Tauri. That keeps the door open for a CLI or local API later at almost no cost now, and makes the core testable headless (Phase 0 of the catalog).
+
+Cargo workspace:
+
+```
+crates/
+  chess-core/  rules glue, notation, game tree, editor, PGN I/O   (no Tauri)
+  chess-jobs/  background jobs with progress and cancellation     (no Tauri)
+  chess-db/    storage format, import/export, sorting, search,
+               position index, compaction                         (no Tauri)
+  chess-engine/ UCI host, analysis driver, blunder check           (no Tauri)
+app/
+  src-tauri/   Tauri commands/events wrapping the crates above
+  src/         Svelte frontend
+```
+
+## Known trade-offs of Tauri
+
+- **Linux webview = WebKitGTK.** It's slower and quirkier than Chromium (rendering performance, some CSS/JS gaps). Test the heavy views (notation pane, game list) on Linux early.
+- **Different engine per OS**: WebView2 (Chromium) on Windows, WKWebView on macOS, WebKitGTK on Linux. The UI must be tested on each target.
+- **IPC cost**: commands serialize through JSON by default. Fine for UI traffic; keep bulk data paged, as described above.
+- **Engines run as child processes** spawned by the Rust side (never from the webview). Stockfish ships as a separate binary: `scripts/fetch-stockfish.sh` downloads the official release for a target (checksum pinned) to `app/src-tauri/binaries/stockfish-<triple>`, and `npm run tauri build -- --config src-tauri/tauri.stockfish.json` bundles it as a sidecar next to the app binary, where the app looks for it first. The binary is never committed.
+
+## Cross-platform rules
+
+We develop and test on Linux; these rules keep Windows and macOS builds a
+matter of running the build, not porting:
+
+- Use `Path`/`PathBuf` only, never paths built from strings. Use Tauri's path API for app directories. No hardcoded `/tmp` or `~`.
+- Write whole files as temp file + rename. Close (and later unmap) files before renaming or deleting them: Windows refuses otherwise.
+- Lock files with `std::fs::File::try_lock`. Do positional I/O through `crates/chess-db/src/io.rs`, which picks `read_at`/`seek_read` per OS.
+- File formats use explicit little-endian encoding. PGN input accepts CRLF; PGN output uses `\n`.
+- Define shortcuts as Ctrl-or-Cmd. Use only standard CSS (no WebKit-only features).
+- No Linux-only crates in the `crates/` dependency tree.
+
+## Storage
+
+Decided while building DB-01: custom files, no SQLite (yet). See
+[file-format.md](file-format.md): fixed 64-byte index records, append-only
+game blobs, normalized name tables, crash-safe commits. There is no
+memory-mapping in the prototype; positional reads were fast enough (see the
+benchmarks there).
+
+## Deferred: programmatic access
+
+Discussed and parked. Recorded here so the design isn't lost:
+
+1. **Library**: other programs link the core crates (optionally Python bindings via PyO3).
+2. **Headless CLI** (`chessdb import/search/analyze …`) that runs without the GUI.
+3. **Remote control of the running app** over a local socket (like VS Code's `code` command or `nvim --remote`). The CLI forwards commands to the GUI when it's running.
+4. **Single writer per database** (lock file), so the GUI and the CLI never write the same DB at once.
+5. **MCP server** exposing the same API to AI agents.
+
+The only thing this requires today is the rule above: core crates stay free of Tauri dependencies.

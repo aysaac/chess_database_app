@@ -1,0 +1,426 @@
+import { ask } from "@tauri-apps/plugin-dialog";
+import { api } from "../api";
+import type { CommentSlotDto } from "../bindings/CommentSlotDto";
+import type { GameViewDto } from "../bindings/GameViewDto";
+import type { HeadersDto } from "../bindings/HeadersDto";
+import type { NotationDto } from "../bindings/NotationDto";
+import type { NotationMoveDto } from "../bindings/NotationMoveDto";
+import type { ShapeDto } from "../bindings/ShapeDto";
+import type { StepDto } from "../bindings/StepDto";
+import type { VariationPolicyDto } from "../bindings/VariationPolicyDto";
+import { db } from "./db.svelte";
+import { notices } from "./notify.svelte";
+import { prefs } from "./prefs.svelte";
+
+export type PendingMove = { orig: string; dest: string; promotion: string | null };
+
+/** The move after `id` in the line that contains it: null at a line's end, undefined if not found. */
+function moveAfter(line: NotationMoveDto[], id: number): NotationMoveDto | null | undefined {
+  for (let i = 0; i < line.length; i++) {
+    if (line[i].id === id) return line[i + 1] ?? null;
+    for (const variation of line[i].variations) {
+      const hit = moveAfter(variation, id);
+      if (hit !== undefined) return hit;
+    }
+  }
+  return undefined;
+}
+
+/** One open game (UI-05): its editing session and what the frontend knows of it. */
+export type GameTab = {
+  session: number;
+  view: GameViewDto;
+  notation: NotationDto | null;
+  /** Row in the game list it was opened from (next/previous game, QOL-03). */
+  listIndex: number | null;
+};
+
+/** How to show a newly loaded game. */
+type OpenMode = "auto" | "tab" | "replace";
+
+class GameStore {
+  /** Open games, in tab order. The store's `view`, `notation` and `listIndex` are the active tab's. */
+  tabs = $state<GameTab[]>([]);
+  activeSession = $state<number | null>(null);
+  orientation = $state<"white" | "black">("white");
+  /** A move waiting for the variation dialog. */
+  pendingChoice = $state<PendingMove | null>(null);
+  /** A pawn move waiting for the promotion picker. */
+  pendingPromotion = $state<{ orig: string; dest: string; color: "white" | "black" } | null>(
+    null,
+  );
+  /** Bumped to force the board to resync with the view (after a cancelled move). */
+  boardVersion = $state(0);
+  /** The comment being typed inline in the notation. */
+  editingComment = $state<{ node: number; slot: CommentSlotDto } | null>(null);
+  /** Next moves offered after stepping forward into a split (main line first). */
+  branch = $state<NotationMoveDto[] | null>(null);
+  /** `[%eval]` values by node id, from the notation. */
+  evals = $derived.by(() => {
+    const map = new Map<number, string>();
+    const walk = (line: NotationMoveDto[]) => {
+      for (const m of line) {
+        if (m.eval) map.set(m.id, m.eval);
+        m.variations.forEach(walk);
+      }
+    };
+    walk(this.notation?.moves ?? []);
+    return map;
+  });
+
+  get active(): GameTab | undefined {
+    return this.tabs.find((t) => t.session === this.activeSession);
+  }
+
+  get view(): GameViewDto | null {
+    return this.active?.view ?? null;
+  }
+
+  get notation(): NotationDto | null {
+    return this.active?.notation ?? null;
+  }
+
+  get listIndex(): number | null {
+    return this.active?.listIndex ?? null;
+  }
+
+  set listIndex(index: number | null) {
+    const tab = this.active;
+    if (tab) tab.listIndex = index;
+  }
+
+  get session(): number | null {
+    return this.activeSession;
+  }
+
+  /** Stores a view in the tab it belongs to (the user may have switched tabs meanwhile). */
+  #apply(view: GameViewDto) {
+    const tab = this.tabs.find((t) => t.session === view.session);
+    if (!tab) return;
+    tab.view = view;
+    if (view.notation) tab.notation = view.notation;
+  }
+
+  async #run(f: (session: number) => Promise<GameViewDto>) {
+    const session = this.session;
+    if (session === null) return;
+    try {
+      this.#apply(await f(session));
+    } catch (e) {
+      notices.error(e);
+      this.boardVersion++;
+    }
+  }
+
+  #resetTransient() {
+    this.editingComment = null;
+    this.branch = null;
+    this.pendingChoice = null;
+    this.pendingPromotion = null;
+  }
+
+  /** Asks before discarding unsaved changes in `tabs` (default: the active one). True to go ahead. */
+  async confirmDiscard(tabs: GameTab[] = this.active ? [this.active] : []): Promise<boolean> {
+    const dirty = tabs.filter((t) => t.view.dirty);
+    if (!dirty.length) return true;
+    const what = dirty.length === 1 ? "This game has" : `${dirty.length} open games have`;
+    return ask(`${what} unsaved changes. Discard them?`, {
+      title: "Unsaved changes",
+      kind: "warning",
+      okLabel: "Discard changes",
+      cancelLabel: "Keep editing",
+    });
+  }
+
+  /**
+   * Shows a newly loaded game. `auto` reuses the active tab unless it has
+   * unsaved changes (then it opens a new tab), `tab` always opens a new one,
+   * `replace` reuses the active tab after asking to discard changes.
+   * Resolves false if the user kept editing or loading failed.
+   */
+  async #show(load: () => Promise<GameViewDto>, mode: OpenMode, listIndex: number | null): Promise<boolean> {
+    const current = this.active;
+    const reuse = current && (mode === "replace" || (mode === "auto" && !current.view.dirty));
+    if (reuse && mode === "replace" && !(await this.confirmDiscard([current]))) return false;
+    try {
+      const view = await load();
+      const tab: GameTab = { session: view.session, view, notation: view.notation, listIndex };
+      if (reuse && current) {
+        const old = current.session;
+        this.tabs[this.tabs.indexOf(current)] = tab;
+        api.closeSession(old).catch(() => {});
+      } else {
+        this.tabs.push(tab);
+      }
+      this.activeSession = view.session;
+      this.#resetTransient();
+      return true;
+    } catch (e) {
+      notices.error(e);
+      return false;
+    }
+  }
+
+  /** Opens a game; `listIndex` is its row in the game list, if opened from there. */
+  async open(handle: number, game: number, listIndex: number | null = null, mode: OpenMode = "auto") {
+    const already = this.tabs.find((t) => t.view.source?.db === handle && t.view.source.game === game);
+    if (already && mode !== "tab") {
+      already.listIndex = listIndex ?? already.listIndex;
+      return this.activate(already.session);
+    }
+    await this.#show(() => api.openGame(handle, game), mode, listIndex);
+  }
+
+  newGame(fen: string | null = null, mode: OpenMode = "auto") {
+    return this.#show(() => api.newGame(fen), mode, null);
+  }
+
+  /** Switches to another open game; a running analysis follows it. */
+  async activate(session: number) {
+    if (session === this.activeSession || !this.tabs.some((t) => t.session === session)) return;
+    this.activeSession = session;
+    this.#resetTransient();
+    try {
+      this.#apply(await api.activateSession(session));
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  /** Closes a tab (asking about unsaved changes); the last tab is replaced by a new game. */
+  async closeTab(session: number) {
+    const tab = this.tabs.find((t) => t.session === session);
+    if (!tab || !(await this.confirmDiscard([tab]))) return;
+    const i = this.tabs.indexOf(tab);
+    if (this.tabs.length === 1) {
+      await this.#show(() => api.newGame(null), "tab", null);
+    }
+    this.tabs = this.tabs.filter((t) => t.session !== session);
+    api.closeSession(session).catch(() => {});
+    if (this.activeSession === session) {
+      const next = this.tabs[Math.min(i, this.tabs.length - 1)];
+      this.activeSession = null;
+      if (next) await this.activate(next.session);
+    }
+  }
+
+  /** Reloads every tab's view (after a compaction renumbered their games). */
+  async refreshAll() {
+    for (const t of this.tabs) {
+      try {
+        this.#apply(await api.gameView(t.session));
+      } catch (e) {
+        notices.error(e);
+      }
+    }
+  }
+
+  /** Cycles through the tabs (Ctrl+Tab / Ctrl+Shift+Tab). */
+  cycleTab(step: number) {
+    const i = this.tabs.findIndex((t) => t.session === this.activeSession);
+    const next = this.tabs[(i + step + this.tabs.length) % this.tabs.length];
+    if (next) return this.activate(next.session);
+  }
+
+  /** Opens the next (`+1`) or previous (`-1`) game of the list in this tab (QOL-03). */
+  async openAdjacent(delta: number) {
+    const index = this.listIndex;
+    if (index === null || !db.info) return;
+    const row = await db.rowAt(index + delta);
+    if (row) await this.open(db.info.handle, row.id, index + delta, "replace");
+  }
+
+  step(dir: StepDto) {
+    return this.#run((s) => api.step(s, dir));
+  }
+
+  goto(node: number) {
+    return this.#run((s) => api.gotoNode(s, node));
+  }
+
+  /** Steps forward, or offers the next moves when the game splits here. */
+  forward() {
+    const view = this.view;
+    const moves = this.notation?.moves ?? [];
+    const next = view?.cursorPath.length ? moveAfter(moves, view.cursor) : moves[0];
+    if (next && next.variations.length) {
+      this.branch = [next, ...next.variations.map((line) => line[0])];
+    } else {
+      return this.step("forward");
+    }
+  }
+
+  /** Closes the next-move picker, going to `node` unless it's null. */
+  chooseBranch(node: number | null) {
+    if (!this.branch) return;
+    this.branch = null;
+    if (node !== null) return this.goto(node);
+  }
+
+  async play(
+    orig: string,
+    dest: string,
+    promotion: string | null = null,
+    policy: VariationPolicyDto | null = null,
+  ) {
+    const session = this.session;
+    if (session === null) return;
+    try {
+      const result = await api.playMove(session, orig, dest, promotion, policy);
+      switch (result.kind) {
+        case "moved":
+          this.#apply(result.view);
+          break;
+        case "needsChoice":
+          this.pendingChoice = { orig, dest, promotion };
+          break;
+        case "needsPromotion":
+          this.pendingPromotion = { orig, dest, color: this.view?.turn === "black" ? "black" : "white" };
+          break;
+        case "illegal":
+          this.boardVersion++;
+          break;
+      }
+    } catch (e) {
+      notices.error(e);
+      this.boardVersion++;
+    }
+  }
+
+  async choosePromotion(role: string | null) {
+    const p = this.pendingPromotion;
+    this.pendingPromotion = null;
+    if (!p || !role) {
+      this.boardVersion++;
+      return;
+    }
+    await this.play(p.orig, p.dest, role);
+  }
+
+  async chooseVariation(policy: VariationPolicyDto | null) {
+    const p = this.pendingChoice;
+    this.pendingChoice = null;
+    if (!p || !policy) {
+      this.boardVersion++;
+      return;
+    }
+    await this.play(p.orig, p.dest, p.promotion, policy);
+  }
+
+  /** Adds engine moves (UCI) from the cursor; see `add_engine_line`. */
+  addEngineLine(moves: string[], comment: string | null, goto: boolean) {
+    return this.#run((s) => api.addEngineLine(s, moves, comment, goto));
+  }
+
+  /** Reloads the view, notation included (after a background job changed the game). */
+  refresh() {
+    return this.#run((s) => api.gameView(s));
+  }
+
+  promoteVariation(node: number) {
+    return this.#run((s) => api.promoteVariation(s, node));
+  }
+
+  deleteVariation(node: number) {
+    return this.#run((s) => api.deleteVariation(s, node));
+  }
+
+  deleteRemaining(node: number) {
+    return this.#run((s) => api.deleteRemaining(s, node));
+  }
+
+  setComment(node: number, slot: CommentSlotDto, text: string) {
+    return this.#run((s) => api.setComment(s, node, slot, text));
+  }
+
+  /** Opens an inline editor for a move's comment in the notation. */
+  editComment(node: number, slot: CommentSlotDto) {
+    this.editingComment = { node, slot };
+  }
+
+  /** Closes the inline editor, saving `text` unless it's null (cancelled). */
+  finishComment(text: string | null) {
+    const editing = this.editingComment;
+    this.editingComment = null;
+    if (editing && text !== null) return this.setComment(editing.node, editing.slot, text);
+  }
+
+  toggleNag(node: number, nag: number) {
+    return this.#run((s) => api.toggleNag(s, node, nag));
+  }
+
+  setShapes(shapes: ShapeDto[]) {
+    return this.#run((s) => api.setShapes(s, shapes));
+  }
+
+  setHeaders(headers: HeadersDto) {
+    return this.#run((s) => api.setHeaders(s, headers));
+  }
+
+  undo() {
+    if (this.view?.canUndo) return this.#run((s) => api.undo(s));
+  }
+
+  redo() {
+    if (this.view?.canRedo) return this.#run((s) => api.redo(s));
+  }
+
+  flip() {
+    this.orientation = this.orientation === "white" ? "black" : "white";
+    prefs.set("orientation", this.orientation);
+  }
+
+  /** Saves over the game it came from, or into the open database if new. */
+  async save() {
+    const view = this.view;
+    if (!view) return;
+    if (view.source && view.source.db === db.info?.handle) {
+      await this.#saveAs("replace");
+    } else {
+      await this.saveAsNew();
+    }
+  }
+
+  async saveAsNew() {
+    if (!db.info) {
+      notices.show("Open or create a database first, then save the game into it.", "error");
+      return;
+    }
+    await this.#saveAs("new");
+  }
+
+  async #saveAs(mode: "replace" | "new") {
+    const session = this.session;
+    if (session === null) return;
+    try {
+      this.#apply(await api.saveGame(session, mode, db.info?.handle ?? null));
+      await db.refresh();
+      notices.show(mode === "replace" ? "Saved changes" : "Saved as a new game");
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  async copyPgn() {
+    const session = this.session;
+    if (session === null) return;
+    try {
+      await navigator.clipboard.writeText(await api.gamePgn(session));
+      notices.show("Copied the game as PGN");
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  async copyFen() {
+    if (!this.view) return;
+    try {
+      await navigator.clipboard.writeText(this.view.fen);
+      notices.show("Copied the position as FEN");
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+}
+
+export const game = new GameStore();

@@ -1,0 +1,20 @@
+[Event "Illegal move in main line"]
+[Result "*"]
+
+1. e4 e5 2. Ke3 Nc6 3. Nf3 *
+
+[Event "Garbage tokens and unmatched parens"]
+[Result "1-0"]
+
+1. e4 xyz e5 )) 2. Nf3 ((( 1-0
+
+[Event "No result token"]
+
+1. d4 d5 2. c4
+
+[Event "Bad FEN"]
+[FEN "this is not a fen"]
+
+1. e4 *
+
+1. c4 e5 *

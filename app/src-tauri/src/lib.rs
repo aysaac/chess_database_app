@@ -1,0 +1,133 @@
+//! Tauri shell: a thin command/event layer over the `chess-*` crates.
+//! All state and logic live in Rust; the webview renders views and sends
+//! user intents.
+
+mod commands;
+mod dto;
+mod engines;
+mod error;
+mod settings;
+mod state;
+mod view;
+
+use tauri::webview::PageLoadEvent;
+use tauri::{Emitter, Manager};
+
+use crate::dto::JobDto;
+use crate::state::AppState;
+
+/// Event carrying a [`JobDto`] whenever a background job changes.
+pub const JOB_EVENT: &str = "job";
+
+/// Lets smoke-test scripts report progress to the terminal.
+#[tauri::command]
+async fn dev_log(message: String) {
+    log::info!("[smoke] {message}");
+}
+
+/// Debug builds only: evaluates the script named by `CHESSDB_SMOKE` once the
+/// page has loaded, so the UI can be driven end to end without input tools.
+fn run_smoke_script<R: tauri::Runtime>(webview: &tauri::Webview<R>) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let Some(path) = std::env::var_os("CHESSDB_SMOKE") else { return };
+    match std::fs::read_to_string(&path) {
+        Ok(script) => {
+            if let Err(e) = webview.eval(&script) {
+                log::warn!("smoke script failed to start: {e}");
+            }
+        }
+        Err(e) => log::warn!("cannot read smoke script {}: {e}", path.to_string_lossy()),
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new().level(log::LevelFilter::Info).build())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState::default())
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                run_smoke_script(webview);
+            }
+        })
+        .setup(|app| {
+            let config_dir = match std::env::var_os("CHESSDB_CONFIG_DIR") {
+                Some(dir) => std::path::PathBuf::from(dir),
+                None => app.path().app_config_dir()?,
+            };
+            log::info!("settings in {}", config_dir.display());
+            app.state::<AppState>().init_settings(config_dir);
+            let handle = app.handle().clone();
+            app.state::<AppState>().jobs.set_listener(move |status| {
+                if let Err(e) = handle.emit(JOB_EVENT, JobDto::from(status)) {
+                    log::warn!("failed to emit job event: {e}");
+                }
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::db::create_db,
+            commands::db::open_db,
+            commands::db::close_db,
+            commands::db::db_info,
+            commands::db::list_games,
+            commands::db::sort_games,
+            commands::db::import_pgn,
+            commands::db::export_pgn,
+            commands::db::set_deleted,
+            commands::db::search_games,
+            commands::db::clear_filter,
+            commands::db::compact_db,
+            commands::names::list_names,
+            commands::names::show_name_games,
+            commands::names::rename_name,
+            commands::tree::update_index,
+            commands::tree::opening_tree,
+            commands::tree::search_position,
+            commands::tree::scan_position_games,
+            commands::game::open_game,
+            commands::game::new_game,
+            commands::game::close_session,
+            commands::game::activate_session,
+            commands::game::check_fen,
+            commands::game::game_view_cmd,
+            commands::game::goto_node,
+            commands::game::step,
+            commands::game::play_move,
+            commands::game::promote_variation,
+            commands::game::delete_variation,
+            commands::game::delete_remaining,
+            commands::game::set_comment,
+            commands::game::toggle_nag,
+            commands::game::set_shapes,
+            commands::game::set_headers,
+            commands::game::undo,
+            commands::game::redo,
+            commands::game::save_game,
+            commands::game::game_pgn,
+            commands::jobs::cancel_job,
+            commands::jobs::list_jobs,
+            commands::engine::list_engines,
+            commands::engine::detect_engines,
+            commands::engine::add_engine,
+            commands::engine::remove_engine,
+            commands::engine::set_default_engine,
+            commands::engine::set_engine_options,
+            commands::engine::start_analysis,
+            commands::engine::stop_analysis,
+            commands::engine::analysis_status,
+            commands::engine::set_analysis_lines,
+            commands::engine::add_engine_line,
+            commands::engine::blunder_check,
+            commands::settings::recent_databases,
+            commands::settings::forget_recent_database,
+            commands::settings::ui_prefs,
+            commands::settings::set_ui_pref,
+            dev_log,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

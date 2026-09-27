@@ -1,0 +1,19 @@
+[Event "Promotion and castling"]
+[White "?"]
+[Black "?"]
+[Result "1-0"]
+[SetUp "1"]
+[FEN "r3k2r/1P6/8/8/8/8/6p1/R3K2R w KQkq - 0 30"]
+
+30. bxa8=Q+ Ke7 31. O-O-O gxh1=Q 32. Rxh1 1-0
+
+[Event "En passant, black to move"]
+[Result "*"]
+[FEN "4k3/8/8/8/4Pp2/8/8/4K3 b - e3 0 40"]
+
+40... fxe3 41. Kf1 e2+ 42. Kxe2 *
+
+[Event "Castling long both sides"]
+[Result "*"]
+
+1. d4 d5 2. Nc3 Nc6 3. Bf4 Bf5 4. Qd2 Qd7 5. O-O-O O-O-O *
