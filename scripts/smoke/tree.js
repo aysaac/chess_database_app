@@ -87,6 +87,29 @@
     expect(db.info.filter?.count === 0, "full search finds nothing");
     await db.clearFilter();
 
+    // Reference database (DB-13): tree.chessdb becomes the reference, and the
+    // tree keeps reading it while another database is open in the list.
+    const refPath = db.info.path;
+    await db.setReference(refPath);
+    expect(db.reference?.info?.handle === db.info.handle, "the open database is the reference, one handle");
+    await db.createAt(OUT + "/other.chessdb");
+    await db.importFrom(ROOT + "/testdata/pgn/setup.pgn");
+    expect(db.reference.info && db.reference.info.handle !== db.info.handle, "the reference stays open");
+    await game.newGame();
+    tree.source = "open";
+    await until(() => tree.data?.fen === game.view.fen && tree.data.total.games === 0,
+      "no game from the start in other.chessdb");
+    tree.source = "reference";
+    await until(() => tree.data?.total.games === 4, "4 games from the start in the reference");
+    expect(document.querySelector(".tree select").selectedOptions[0].textContent.includes("(reference)"),
+      "the picker shows the reference");
+    await shot("t04-reference-tree");
+    await tree.findGames();
+    expect(db.info.path === db.reference.info.path && db.info.filter?.count === 4,
+      "Find games opened the reference in the list, with 4 games");
+    await db.setReference(null);
+    expect(!db.reference && tree.target?.handle === db.info.handle, "back to the open database");
+
     if (BIG) {
       await db.createAt(OUT + "/big.chessdb");
       await db.importFrom(ROOT + "/testdata/large/lichess_1m.pgn");
@@ -104,7 +127,7 @@
       t = performance.now();
       await db.searchPosition(game.view.session);
       await log(`position search: ${db.info.filter.count} games, ${Math.round(performance.now() - t)} ms`);
-      await shot("t04-big-tree");
+      await shot("t05-big-tree");
     }
 
     await log("done");

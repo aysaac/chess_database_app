@@ -36,6 +36,8 @@ pub struct Settings {
     pub default_engine: Option<String>,
     /// Database folders, most recently opened first.
     pub recent_databases: Vec<PathBuf>,
+    /// The reference database (DB-13) the opening tree can use.
+    pub reference_database: Option<PathBuf>,
     /// Preferences owned by the frontend (board orientation, pane sizes…).
     pub ui: serde_json::Map<String, serde_json::Value>,
 }

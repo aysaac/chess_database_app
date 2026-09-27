@@ -48,6 +48,7 @@ first.
 | **Opening names** (new) | lichess-org/chess-openings (CC0) vendored as `crates/chess-core/data/openings.tsv` (commit c67912b), keyed by position hash; classified in the index build and stored in `openings.idx` | `crates/chess-core/src/openings.rs` |
 | **Settings** (new) | `settings.json` in the app config dir (engines, default engine, recent databases, frontend prefs). `CHESSDB_CONFIG_DIR` overrides the folder; the smoke harness uses its own | `app/src-tauri/src/settings.rs` |
 | **Tabs** (new) | Opening a game reuses the current tab if it has no unsaved changes, else opens a new tab (no discard prompt). Next/previous game replaces the tab (with the prompt). Analysis follows the active tab | `app/src/lib/stores/game.svelte.ts` |
+| **Reference database** (DB-13) | A path in settings (`referenceDatabase`). The backend opens it on its own handle, shared with the list when it's the same folder (`DbUse` flags in `AppState`: a database closes when neither the list nor the reference uses it). The tree picks its source (open or reference); "Find games" on the reference opens it in the list | `app/src-tauri/src/state.rs` |
 | **Compaction** (new) | Rewrites into `*.new` files, commits with a `compact.commit` marker, renames; open finishes or rolls back. Game ids change; open tabs are remapped; the position index is rebuilt | `crates/chess-db/src/database.rs` |
 
 Still open (catalog §6): how important ChessBase `.cbh` import is (#2), the
@@ -71,8 +72,6 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   - DB-07: recent databases (toolbar menu, empty-list shortcuts), close,
     size and deleted count in the status bar. No library window, folders or
     favourites.
-  - DB-13 (reference database): the tree and position search use the open
-    database; there's no separate "reference" database yet.
   - GAME-08: clocks show as tooltips; no time graph.
   - ENG-01: engines can be added, removed, made default and configured
     (common options plus "show all"), but there are no per-engine profiles.
@@ -198,7 +197,6 @@ Recommended order:
 1. **Ask the user** about installing sway for the smoke harness (see
    Environment notes) and open question #3.
 2. **P1 polish left:**
-   - DB-13 reference database (use one designated database for the tree).
    - UI-01 board/piece themes, UI-02 keyboard SAN entry, UI-03 collapsing
      variations.
 3. **Housekeeping:** GitHub, CI (Linux/Windows/macOS: fmt,

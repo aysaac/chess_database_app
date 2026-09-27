@@ -57,6 +57,7 @@
       listShare = prefs.get("listShare", listShare);
       game.orientation = prefs.get<string>("orientation", "white") === "black" ? "black" : "white";
       await db.reopenLast();
+      void db.loadReference();
       await analysis.loadEngines();
     })();
     return () => {

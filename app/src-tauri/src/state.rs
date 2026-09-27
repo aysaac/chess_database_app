@@ -17,6 +17,28 @@ pub type SharedDb = Arc<Mutex<Database>>;
 pub struct OpenDb {
     pub db: SharedDb,
     pub path: PathBuf,
+    /// Shown in the game list (until `close_db`).
+    pub listed: bool,
+    /// The reference database (DB-13), until another one is chosen.
+    pub reference: bool,
+}
+
+/// What a database is open for. It stays open while anything uses it: the
+/// reference database is often the one in the list too, and a folder can
+/// only be opened once (it's locked).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DbUse {
+    List,
+    Reference,
+}
+
+impl OpenDb {
+    fn flag(&mut self, usage: DbUse) -> &mut bool {
+        match usage {
+            DbUse::List => &mut self.listed,
+            DbUse::Reference => &mut self.reference,
+        }
+    }
 }
 
 /// Search results the game list is limited to (SRCH-14).
@@ -116,18 +138,54 @@ impl AppState {
         dbs.iter().find(|(_, o)| o.path == path).map(|(&h, _)| h)
     }
 
-    pub fn add_db(&self, db: Database) -> u32 {
+    /// Adds an opened database for `usage`. Databases opened for the list
+    /// become the most recent one.
+    pub fn add_db(&self, db: Database, usage: DbUse) -> u32 {
         let handle = self.next_db.fetch_add(1, Ordering::Relaxed) + 1;
-        let path = db.path().to_path_buf();
-        self.update_settings(|s| s.note_recent(&path));
-        self.dbs.lock().expect("dbs lock").insert(handle, OpenDb { db: Arc::new(Mutex::new(db)), path });
+        // Canonical, as `find_db` is given: a folder can only be opened once.
+        let path = db.path().canonicalize().unwrap_or_else(|_| db.path().to_path_buf());
+        if usage == DbUse::List {
+            self.update_settings(|s| s.note_recent(&path));
+        }
+        let mut open = OpenDb { db: Arc::new(Mutex::new(db)), path, listed: false, reference: false };
+        *open.flag(usage) = true;
+        self.dbs.lock().expect("dbs lock").insert(handle, open);
         handle
     }
 
-    pub fn remove_db(&self, handle: u32) -> bool {
-        self.filters.lock().expect("filters lock").remove(&handle);
-        self.import_reports.lock().expect("import reports lock").remove(&handle);
-        self.dbs.lock().expect("dbs lock").remove(&handle).is_some()
+    /// Marks an open database as used for `usage` as well.
+    pub fn claim_db(&self, handle: u32, usage: DbUse) {
+        let path = {
+            let mut dbs = self.dbs.lock().expect("dbs lock");
+            let Some(open) = dbs.get_mut(&handle) else { return };
+            *open.flag(usage) = true;
+            open.path.clone()
+        };
+        if usage == DbUse::List {
+            self.update_settings(|s| s.note_recent(&path));
+        }
+    }
+
+    /// Stops using a database for `usage`; it's closed once nothing uses it.
+    /// Leaving the list drops its filter and import report either way.
+    /// False if `handle` isn't open.
+    pub fn release_db(&self, handle: u32, usage: DbUse) -> bool {
+        if usage == DbUse::List {
+            self.filters.lock().expect("filters lock").remove(&handle);
+            self.import_reports.lock().expect("import reports lock").remove(&handle);
+        }
+        let mut dbs = self.dbs.lock().expect("dbs lock");
+        let Some(open) = dbs.get_mut(&handle) else { return false };
+        *open.flag(usage) = false;
+        if !open.listed && !open.reference {
+            dbs.remove(&handle);
+        }
+        true
+    }
+
+    /// Handle of the open reference database.
+    pub fn reference_db(&self) -> Option<u32> {
+        self.dbs.lock().expect("dbs lock").iter().find(|(_, o)| o.reference).map(|(&h, _)| h)
     }
 
     /// Adds a session. The newest session is the one on screen, so a running
@@ -173,5 +231,33 @@ impl AppState {
             a.follow(id, session);
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_database_stays_open_while_anything_uses_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let db = Database::create(&dir.path().join("Ref")).unwrap();
+        let path = db.path().to_path_buf();
+        let handle = state.add_db(db, DbUse::List);
+        state.claim_db(handle, DbUse::Reference);
+        assert_eq!(state.reference_db(), Some(handle));
+
+        // Leaving the list keeps the reference open, without the list's filter.
+        state.filters.lock().unwrap().insert(handle, ActiveFilter::new(vec![0], "f".into()));
+        assert!(state.release_db(handle, DbUse::List));
+        assert!(state.db(handle).is_ok());
+        assert!(state.filters.lock().unwrap().is_empty());
+
+        assert!(state.release_db(handle, DbUse::Reference));
+        assert!(state.db(handle).is_err(), "closed once nothing uses it");
+        assert!(!state.release_db(handle, DbUse::List));
+        // The folder isn't locked any more.
+        Database::open(&path).unwrap();
     }
 }

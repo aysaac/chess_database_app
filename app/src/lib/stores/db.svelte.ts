@@ -7,6 +7,7 @@ import type { HeaderQueryDto } from "../bindings/HeaderQueryDto";
 import type { ImportReportDto } from "../bindings/ImportReportDto";
 import type { NameKindDto } from "../bindings/NameKindDto";
 import type { RecentDbDto } from "../bindings/RecentDbDto";
+import type { ReferenceDbDto } from "../bindings/ReferenceDbDto";
 import type { SortKeyDto } from "../bindings/SortKeyDto";
 import type { SortSpecDto } from "../bindings/SortSpecDto";
 import { formatCount } from "../format";
@@ -45,6 +46,8 @@ class DbStore {
   /** The last header search, to start the search dialog from. */
   lastQuery = $state<Partial<HeaderQueryDto>>({});
   searching = $state(false);
+  /** The reference database (DB-13) the opening tree can use, if one is set. */
+  reference = $state<ReferenceDbDto | null>(null);
   /** Warnings of the last import into the open database, until dismissed. */
   importReport = $state<ImportReportDto | null>(null);
 
@@ -100,30 +103,87 @@ class DbStore {
     await this.loadRecent();
   }
 
-  #indexing: number | null = null;
+  /** Databases whose position index is being brought up to date. */
+  #indexing = new Set<number>();
 
   /**
-   * Brings the position index up to date in the background (after opening
-   * and importing), then refreshes the list for the opening column.
+   * Brings the position index of `handle` up to date in the background.
+   * `after` runs after each round and says whether to go on (false once the
+   * database is no longer used).
    */
-  async ensureIndex() {
-    const info = this.info;
-    if (!info || this.#indexing !== null) return;
+  async #index(handle: number, after: () => Promise<boolean>) {
+    if (this.#indexing.has(handle)) return;
+    this.#indexing.add(handle);
     try {
       // Games imported while it ran need another round.
       for (;;) {
-        const job = await api.updateIndex(info.handle);
+        const job = await api.updateIndex(handle);
         if (job === null) break;
-        this.#indexing = job;
         const done = await jobs.waitFor(job);
-        if (this.info?.handle === info.handle) await this.refresh();
-        if (done.state !== "done" || this.info?.handle !== info.handle) break;
+        if (!(await after()) || done.state !== "done") break;
       }
     } catch (e) {
       notices.error(e);
     } finally {
-      this.#indexing = null;
+      this.#indexing.delete(handle);
     }
+  }
+
+  /**
+   * Indexes the open database (after opening and importing), then refreshes
+   * the list for the opening column.
+   */
+  async ensureIndex() {
+    const handle = this.info?.handle;
+    if (handle === undefined) return;
+    await this.#index(handle, async () => {
+      if (this.info?.handle !== handle) return false;
+      await this.refresh();
+      return true;
+    });
+  }
+
+  /** Loads the reference database from the settings (opening it), and indexes it. */
+  async loadReference() {
+    try {
+      this.#setReference(await api.referenceDb());
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  #setReference(reference: ReferenceDbDto | null) {
+    this.reference = reference;
+    if (reference?.error) notices.show(`Reference database: ${reference.error}`, "error");
+    const handle = reference?.info?.handle;
+    if (handle === undefined) return;
+    void this.#index(handle, async () => {
+      if (this.reference?.info?.handle !== handle) return false;
+      const info = await api.dbInfo(handle);
+      const current = this.reference;
+      if (current?.info?.handle !== handle) return false;
+      current.info = info;
+      return true;
+    });
+  }
+
+  /** Makes `path` the reference database (DB-13), or stops using one (null). */
+  async setReference(path: string | null) {
+    try {
+      this.#setReference(await api.setReferenceDb(path));
+      if (this.reference?.info) notices.show(`${this.reference.name} is now the reference database`);
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  async chooseReference() {
+    const path = await open({
+      directory: true,
+      title: "Choose the reference database (.chessdb folder)",
+      defaultPath: await inDocuments(),
+    });
+    if (typeof path === "string") await this.setReference(path);
   }
 
   /** Limits the list to the games of one player, event, site or annotator (DB-04). */

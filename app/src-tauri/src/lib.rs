@@ -72,6 +72,8 @@ pub fn run() {
             commands::db::create_db,
             commands::db::open_db,
             commands::db::close_db,
+            commands::db::reference_db,
+            commands::db::set_reference_db,
             commands::db::db_info,
             commands::db::list_games,
             commands::db::sort_games,

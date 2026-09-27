@@ -12,6 +12,8 @@
     void db.info?.handle;
     void db.info?.index.covered;
     void db.info?.games;
+    void db.reference?.info?.index.covered;
+    void tree.target?.handle;
     void tree.visible;
     const t = setTimeout(() => tree.refresh(), 60);
     return () => clearTimeout(t);
@@ -19,6 +21,28 @@
 
   const data = $derived(tree.data?.fen === game.view?.fen ? tree.data : null);
   const pct = (n: number, of: number) => (of ? Math.round((n / of) * 100) : 0);
+
+  // The source picker: the open database, the reference database, and
+  // actions that set the reference (they don't stay selected).
+  const sourceValue = $derived(tree.target?.reference ? "reference" : "open");
+
+  async function onSource(e: Event) {
+    const select = e.currentTarget as HTMLSelectElement;
+    const value = select.value;
+    select.value = sourceValue;
+    if (value === "open" || value === "reference") {
+      tree.source = value;
+    } else if (value === "choose") {
+      await db.chooseReference();
+      if (db.reference?.info) tree.source = "reference";
+    } else if (value === "use-open" && db.info) {
+      await db.setReference(db.info.path);
+      if (db.reference?.info) tree.source = "reference";
+    } else if (value === "clear") {
+      await db.setReference(null);
+      tree.source = "open";
+    }
+  }
 
   function scoreTitle(r: TreeRowDto) {
     return `White won ${formatCount(r.whiteWins)}, drew ${formatCount(r.draws)}, Black won ${formatCount(r.blackWins)}`;
@@ -31,31 +55,51 @@
     <span class="name">
       {#if data?.opening}{data.opening.eco} {data.opening.name}{/if}
     </span>
+    <select
+      aria-label="Database the tree reads"
+      title="The database the tree reads: the open one, or your reference database"
+      value={sourceValue}
+      onchange={onSource}
+    >
+      <option value="open" disabled={!db.info}>{db.info?.name ?? "No database open"}</option>
+      {#if db.reference?.info}
+        <option value="reference">{db.reference.name} (reference)</option>
+      {/if}
+      <option value="choose">Choose reference database…</option>
+      {#if db.info && db.reference?.info?.handle !== db.info.handle}
+        <option value="use-open">Use {db.info.name} as reference</option>
+      {/if}
+      {#if db.reference}
+        <option value="clear">Stop using a reference database</option>
+      {/if}
+    </select>
     <button
-      disabled={!db.info || !game.view || db.searching}
-      title="Show the games that reach this position in the game list"
-      onclick={() => game.view && db.searchPosition(game.view.session)}>Find games</button
+      disabled={!tree.target || !game.view || db.searching}
+      title={tree.target?.reference && tree.target.handle !== db.info?.handle
+        ? `Open ${tree.target.name} in the game list with the games that reach this position`
+        : "Show the games that reach this position in the game list"}
+      onclick={() => tree.findGames()}>Find games</button
     >
     <button aria-label="Close the opening tree" title="Close" onclick={() => (tree.visible = false)}
       >×</button
     >
   </header>
 
-  {#if !db.info}
-    <p class="note">Open a database to see which moves were played here.</p>
+  {#if !tree.target}
+    <p class="note">
+      Open a database, or choose a reference database above, to see which moves were played here.
+    </p>
   {:else if data && !data.indexed}
     <p class="note">
       The database's positions are being indexed; the tree fills in when that's done.
     </p>
   {:else if data && data.total.games === 0}
     <p class="note">
-      No game in {db.info.name} reaches this position{data.beyondIndex
+      No game in {tree.target.name} reaches this position{data.beyondIndex
         ? ` within the first ${data.maxPly / 2} moves (the indexed part of each game)`
         : ""}.
       {#if data.beyondIndex && game.view}
-        <button class="link" onclick={() => db.searchPosition(game.view!.session, true)}
-          >Search every move of every game</button
-        >
+        <button class="link" onclick={() => tree.findGames(true)}>Search every move of every game</button>
       {/if}
     </p>
   {:else if data}
@@ -160,6 +204,12 @@
   header button {
     padding: 1px 9px;
     border-color: var(--rule);
+  }
+
+  header select {
+    max-width: 16em;
+    min-width: 0;
+    padding: 1px 4px;
   }
 
   .scroll {

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chess_db::{
     Database, EloMode, GameSet, HeaderQuery, ResultFilter, SortSpec, build_sort, export_pgn as export_db,
@@ -8,10 +8,11 @@ use chess_jobs::JobError;
 use tauri::{AppHandle, Manager, State};
 
 use crate::dto::{
-    DbInfoDto, FilterDto, GamePage, GameRowDto, HeaderQueryDto, ImportReportDto, IndexStatusDto, SortSpecDto,
+    DbInfoDto, FilterDto, GamePage, GameRowDto, HeaderQueryDto, ImportReportDto, IndexStatusDto,
+    ReferenceDbDto, SortSpecDto,
 };
 use crate::error::{AppError, AppResult};
-use crate::state::{ActiveFilter, AppState};
+use crate::state::{ActiveFilter, AppState, DbUse};
 
 const MAX_PAGE: u32 = 1000;
 
@@ -57,26 +58,76 @@ pub fn index_status(db: &Database) -> IndexStatusDto {
 pub async fn create_db(state: State<'_, AppState>, path: String) -> AppResult<DbInfoDto> {
     let db = Database::create(&PathBuf::from(path))?;
     log::info!("created database {}", db.path().display());
-    let handle = state.add_db(db);
+    let handle = state.add_db(db, DbUse::List);
     info(&state, handle)
+}
+
+/// The handle of `path` for `usage`: the open database if it's open
+/// already (a folder can only be opened once), else it's opened.
+fn open_for(state: &AppState, path: &Path, usage: DbUse) -> AppResult<u32> {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if let Some(handle) = state.find_db(&path) {
+        state.claim_db(handle, usage);
+        return Ok(handle);
+    }
+    let db = Database::open(&path)?;
+    log::info!("opened database {} ({} games)", path.display(), db.count());
+    Ok(state.add_db(db, usage))
 }
 
 #[tauri::command]
 pub async fn open_db(state: State<'_, AppState>, path: String) -> AppResult<DbInfoDto> {
-    let path = PathBuf::from(path);
-    let path = path.canonicalize().unwrap_or(path);
-    if let Some(handle) = state.find_db(&path) {
-        return info(&state, handle);
-    }
-    let db = Database::open(&path)?;
-    log::info!("opened database {} ({} games)", path.display(), db.count());
-    let handle = state.add_db(db);
+    let handle = open_for(&state, Path::new(&path), DbUse::List)?;
     info(&state, handle)
 }
 
+/// Removes a database from the game list. It stays open while it's the
+/// reference database.
 #[tauri::command]
 pub async fn close_db(state: State<'_, AppState>, handle: u32) -> AppResult<()> {
-    if state.remove_db(handle) { Ok(()) } else { Err(AppError::not_found(format!("database {handle}"))) }
+    if state.release_db(handle, DbUse::List) {
+        Ok(())
+    } else {
+        Err(AppError::not_found(format!("database {handle}")))
+    }
+}
+
+fn reference(state: &AppState) -> Option<ReferenceDbDto> {
+    let path = state.settings.lock().expect("settings lock").reference_database.clone()?;
+    let name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let opened = match state.reference_db() {
+        Some(handle) => Ok(handle),
+        None => open_for(state, &path, DbUse::Reference),
+    }
+    .and_then(|handle| info(state, handle));
+    let (info, error) = match opened {
+        Ok(info) => (Some(info), None),
+        Err(e) => (None, Some(format!("{name} couldn't be opened: {}", e.message))),
+    };
+    Some(ReferenceDbDto { path: path.to_string_lossy().into_owned(), name, info, error })
+}
+
+/// The reference database (DB-13), opened on first use; `None` if none is set.
+#[tauri::command]
+pub async fn reference_db(state: State<'_, AppState>) -> AppResult<Option<ReferenceDbDto>> {
+    Ok(reference(&state))
+}
+
+/// Makes `path` the reference database, or stops using one (`None`).
+#[tauri::command]
+pub async fn set_reference_db(
+    state: State<'_, AppState>,
+    path: Option<String>,
+) -> AppResult<Option<ReferenceDbDto>> {
+    if let Some(old) = state.reference_db() {
+        state.release_db(old, DbUse::Reference);
+    }
+    let path = path.map(|p| {
+        let p = PathBuf::from(p);
+        p.canonicalize().unwrap_or(p)
+    });
+    state.update_settings(|s| s.reference_database = path);
+    Ok(reference(&state))
 }
 
 #[tauri::command]

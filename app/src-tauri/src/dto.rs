@@ -31,6 +31,18 @@ pub struct DbInfoDto {
     pub deleted: u32,
 }
 
+/// The reference database (DB-13) from the settings.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReferenceDbDto {
+    pub path: String,
+    pub name: String,
+    /// `None` when it couldn't be opened (see `error`).
+    pub info: Option<DbInfoDto>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

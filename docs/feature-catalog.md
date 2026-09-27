@@ -359,9 +359,9 @@ Two sides of one program:
 ## 4. Suggested build phases (derived from tiers + dependencies)
 
 > **Status (2026-09-26):** every P0 item, and of P1: UI-01/02/03/05/07/09/16,
-> GAME-03…07/16/17, DB-02…06 (DB-04 and DB-07 in part), SRCH-01…04/14, OPEN-01/11,
+> GAME-03…07/16/17, DB-02…06 (DB-04 and DB-07 in part), DB-13, SRCH-01…04/14, OPEN-01/11,
 > ENG-01/02/03/05/09, ANL-01/04, IO-08/11/12, INF-02/03/04, QOL-01/02/03/05.
-> Open P1 work: DB-13, parts of UI-01/02/03. See handoff.md.
+> Open P1 work: parts of UI-01/02/03. See handoff.md.
 
 
 | Phase | Goal | Contents |

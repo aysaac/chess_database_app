@@ -18,6 +18,7 @@ import type { NameKindDto } from "./bindings/NameKindDto";
 import type { NameListDto } from "./bindings/NameListDto";
 import type { PlayResultDto } from "./bindings/PlayResultDto";
 import type { RecentDbDto } from "./bindings/RecentDbDto";
+import type { ReferenceDbDto } from "./bindings/ReferenceDbDto";
 import type { SaveModeDto } from "./bindings/SaveModeDto";
 import type { ShapeDto } from "./bindings/ShapeDto";
 import type { SortSpecDto } from "./bindings/SortSpecDto";
@@ -29,6 +30,8 @@ export const api = {
   createDb: (path: string) => invoke<DbInfoDto>("create_db", { path }),
   openDb: (path: string) => invoke<DbInfoDto>("open_db", { path }),
   closeDb: (handle: number) => invoke<void>("close_db", { handle }),
+  referenceDb: () => invoke<ReferenceDbDto | null>("reference_db"),
+  setReferenceDb: (path: string | null) => invoke<ReferenceDbDto | null>("set_reference_db", { path }),
   dbInfo: (handle: number) => invoke<DbInfoDto>("db_info", { handle }),
   listGames: (handle: number, sort: SortSpecDto, offset: number, limit: number) =>
     invoke<GamePage>("list_games", { handle, sort, offset, limit }),
