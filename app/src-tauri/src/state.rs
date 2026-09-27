@@ -7,6 +7,7 @@ use chess_core::game::GameEditor;
 use chess_db::{Database, GameId, SortSpec, sorted_subset};
 use chess_jobs::JobManager;
 
+use crate::dto::ImportReportDto;
 use crate::engines::Analysis;
 use crate::error::{AppError, AppResult};
 use crate::settings::Settings;
@@ -78,6 +79,8 @@ pub struct AppState {
     pub settings: Mutex<Settings>,
     config_dir: OnceLock<PathBuf>,
     pub analysis: Mutex<Option<Analysis>>,
+    /// The last import into each database (by handle), while it had warnings.
+    pub import_reports: Mutex<HashMap<u32, ImportReportDto>>,
 }
 
 impl AppState {
@@ -123,6 +126,7 @@ impl AppState {
 
     pub fn remove_db(&self, handle: u32) -> bool {
         self.filters.lock().expect("filters lock").remove(&handle);
+        self.import_reports.lock().expect("import reports lock").remove(&handle);
         self.dbs.lock().expect("dbs lock").remove(&handle).is_some()
     }
 
@@ -141,9 +145,15 @@ impl AppState {
         self.sessions.lock().expect("sessions lock").remove(&id);
     }
 
-    /// After a compaction renumbered the games of `handle`: sessions follow
-    /// their game's new id; a game that was removed becomes unsaved.
+    /// After a compaction renumbered the games of `handle`: sessions and
+    /// import warnings follow their game's new id; a game that was removed
+    /// becomes unsaved.
     pub fn remap_sources(&self, handle: u32, mapping: &[Option<GameId>]) {
+        if let Some(report) = self.import_reports.lock().expect("import reports lock").get_mut(&handle) {
+            for w in &mut report.warnings {
+                w.game = w.game.and_then(|id| mapping.get(id as usize).copied().flatten());
+            }
+        }
         for session in self.sessions.lock().expect("sessions lock").values_mut() {
             if let Some((h, id)) = session.source
                 && h == handle

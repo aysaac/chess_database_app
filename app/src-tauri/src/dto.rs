@@ -795,3 +795,54 @@ pub struct FenCheckDto {
     pub fen: String,
     pub error: Option<String>,
 }
+
+/// A problem found in one game while importing.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ImportWarningDto {
+    /// One-based number of the game in the file.
+    pub number: u32,
+    /// Id the game got in the database; `None` if it was skipped.
+    pub game: Option<u32>,
+    /// `White – Black`, empty for a skipped game.
+    pub players: String,
+    pub message: String,
+}
+
+/// The last import into a database, for the import warnings dialog.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ImportReportDto {
+    pub file: String,
+    #[ts(type = "number")]
+    pub imported: u64,
+    #[ts(type = "number")]
+    pub skipped: u64,
+    #[ts(type = "number")]
+    pub warning_count: u64,
+    /// The first warnings (up to 200 of `warning_count`).
+    pub warnings: Vec<ImportWarningDto>,
+}
+
+impl ImportReportDto {
+    pub fn new(file: String, s: &chess_db::ImportSummary) -> ImportReportDto {
+        ImportReportDto {
+            file,
+            imported: s.imported,
+            skipped: s.skipped,
+            warning_count: s.warning_count,
+            warnings: s
+                .warnings
+                .iter()
+                .map(|w| ImportWarningDto {
+                    number: w.game_index as u32 + 1,
+                    game: w.game,
+                    players: w.players.clone(),
+                    message: w.message.clone(),
+                })
+                .collect(),
+        }
+    }
+}

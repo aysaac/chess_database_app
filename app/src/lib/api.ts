@@ -12,6 +12,7 @@ import type { GamePage } from "./bindings/GamePage";
 import type { GameViewDto } from "./bindings/GameViewDto";
 import type { HeaderQueryDto } from "./bindings/HeaderQueryDto";
 import type { HeadersDto } from "./bindings/HeadersDto";
+import type { ImportReportDto } from "./bindings/ImportReportDto";
 import type { JobDto } from "./bindings/JobDto";
 import type { NameKindDto } from "./bindings/NameKindDto";
 import type { NameListDto } from "./bindings/NameListDto";
@@ -34,6 +35,7 @@ export const api = {
   sortGames: (handle: number, sort: SortSpecDto) =>
     invoke<number | null>("sort_games", { handle, sort }),
   importPgn: (handle: number, path: string) => invoke<number>("import_pgn", { handle, path }),
+  importReport: (handle: number) => invoke<ImportReportDto | null>("import_report", { handle }),
   exportPgn: (handle: number, path: string, ids: number[] | null = null) =>
     invoke<number>("export_pgn", { handle, path, ids }),
   setDeleted: (handle: number, ids: number[], deleted: boolean) =>

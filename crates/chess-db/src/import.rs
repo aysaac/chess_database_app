@@ -10,22 +10,41 @@ use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use chess_core::pgn::{PgnReader, PgnWarning};
+use chess_core::game::Headers;
+use chess_core::pgn::PgnReader;
 
-use crate::{Database, DbError, PreparedGame, Progress};
+use crate::{Database, DbError, GameId, PreparedGame, Progress};
 
 const MAX_BATCH: usize = 10_000;
 const MAX_BATCH_AGE: Duration = Duration::from_millis(300);
 /// Warnings kept in the summary (the total is still counted).
 const MAX_WARNINGS: usize = 200;
 
+/// A problem found in one game of the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportWarning {
+    /// Zero-based index of the game in the file.
+    pub game_index: usize,
+    /// The id the game got in the database; `None` if it was skipped.
+    pub game: Option<GameId>,
+    /// `White – Black` from the game's tags; empty for a skipped game.
+    pub players: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ImportSummary {
     pub imported: u64,
     pub skipped: u64,
     pub warning_count: u64,
-    pub warnings: Vec<PgnWarning>,
+    /// The first warnings (up to 200).
+    pub warnings: Vec<ImportWarning>,
     pub cancelled: bool,
+}
+
+fn players(h: &Headers) -> String {
+    let name = |n: &str| if n.is_empty() { "?".to_owned() } else { n.to_owned() };
+    format!("{} – {}", name(&h.white), name(&h.black))
 }
 
 struct CountingReader<R> {
@@ -66,10 +85,18 @@ pub fn import_reader<R: Read>(
     let mut summary = ImportSummary::default();
     let mut batch: Vec<PreparedGame> = Vec::with_capacity(1024);
     let mut batch_started = Instant::now();
+    // Warnings of games in `batch`: (position in the batch, index in `summary.warnings`).
+    let mut unplaced: Vec<(usize, usize)> = Vec::new();
 
-    let commit = |batch: &mut Vec<PreparedGame>, summary: &mut ImportSummary| -> Result<(), DbError> {
+    let commit = |batch: &mut Vec<PreparedGame>,
+                  unplaced: &mut Vec<(usize, usize)>,
+                  summary: &mut ImportSummary|
+     -> Result<(), DbError> {
         if !batch.is_empty() {
-            db.lock().expect("db lock").append_prepared(batch)?;
+            let ids = db.lock().expect("db lock").append_prepared(batch)?;
+            for (pos, i) in unplaced.drain(..) {
+                summary.warnings[i].game = Some(ids.start + pos as GameId);
+            }
             summary.imported += batch.len() as u64;
             batch.clear();
         }
@@ -79,18 +106,28 @@ pub fn import_reader<R: Read>(
     for parsed in PgnReader::new(input) {
         let parsed = parsed?;
         summary.warning_count += parsed.warnings.len() as u64;
+        let first = summary.warnings.len();
+        let who = parsed.game.as_ref().map(|g| players(&g.headers)).unwrap_or_default();
         for w in parsed.warnings {
             if summary.warnings.len() < MAX_WARNINGS {
-                summary.warnings.push(w);
+                summary.warnings.push(ImportWarning {
+                    game_index: w.game_index,
+                    game: None,
+                    players: who.clone(),
+                    message: w.message,
+                });
             }
         }
         match parsed.game {
-            Some(game) => batch.push(PreparedGame::new(&game)),
+            Some(game) => {
+                unplaced.extend((first..summary.warnings.len()).map(|i| (batch.len(), i)));
+                batch.push(PreparedGame::new(&game));
+            }
             None => summary.skipped += 1,
         }
 
         if batch.len() >= MAX_BATCH || batch_started.elapsed() >= MAX_BATCH_AGE {
-            commit(&mut batch, &mut summary)?;
+            commit(&mut batch, &mut unplaced, &mut summary)?;
             batch_started = Instant::now();
             progress.report(position(), total);
             if progress.is_cancelled() {
@@ -99,7 +136,7 @@ pub fn import_reader<R: Read>(
             }
         }
     }
-    commit(&mut batch, &mut summary)?;
+    commit(&mut batch, &mut unplaced, &mut summary)?;
     progress.report(total, total);
     Ok(summary)
 }
@@ -118,6 +155,11 @@ mod tests {
         assert_eq!(summary.imported, 4);
         assert_eq!(summary.skipped, 1);
         assert_eq!(summary.warning_count, 2);
+        // The illegal move is in game 0 (kept as id 0), the bad FEN in game 3 (skipped).
+        let w = &summary.warnings;
+        assert_eq!((w[0].game_index, w[0].game, w[0].players.as_str()), (0, Some(0), "? – ?"));
+        assert_eq!((w[1].game_index, w[1].game, w[1].players.as_str()), (3, None, ""));
+        assert_eq!(db.lock().unwrap().row(0).unwrap().event, "Illegal move in main line");
         let summary = import_pgn(&db, &fixtures.join("variations.pgn"), &NoProgress).unwrap();
         assert_eq!(summary.imported, 2);
         let db = db.lock().unwrap();

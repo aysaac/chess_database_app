@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 pub use database::{CompactSummary, Database, DbInfo, EXTENSION, GameRow, GameStat, NameKind, PreparedGame};
 pub use export::export_pgn;
-pub use import::{ImportSummary, import_pgn, import_reader};
+pub use import::{ImportSummary, ImportWarning, import_pgn, import_reader};
 pub use names::NameTable;
 pub use positions::{
     IndexPlan, IndexSummary, PositionIndex, PositionTree, TreeStats, find_position, position_tree,

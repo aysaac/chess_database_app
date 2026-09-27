@@ -7,7 +7,9 @@ use chess_db::{
 use chess_jobs::JobError;
 use tauri::{AppHandle, Manager, State};
 
-use crate::dto::{DbInfoDto, FilterDto, GamePage, GameRowDto, HeaderQueryDto, IndexStatusDto, SortSpecDto};
+use crate::dto::{
+    DbInfoDto, FilterDto, GamePage, GameRowDto, HeaderQueryDto, ImportReportDto, IndexStatusDto, SortSpecDto,
+};
 use crate::error::{AppError, AppResult};
 use crate::state::{ActiveFilter, AppState};
 
@@ -139,15 +141,31 @@ fn file_label(path: &std::path::Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// Imports a PGN file as a job. When it had warnings, `import_report`
+/// returns them afterwards.
 #[tauri::command]
-pub async fn import_pgn(state: State<'_, AppState>, handle: u32, path: String) -> AppResult<u64> {
+pub async fn import_pgn(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    handle: u32,
+    path: String,
+) -> AppResult<u64> {
     let db = state.db(handle)?;
     let path = PathBuf::from(path);
     let label = format!("Importing {}", file_label(&path));
+    state.import_reports.lock().expect("import reports lock").remove(&handle);
     Ok(state.jobs.spawn("import", label, move |ctx| {
         let summary = import_db(&db, &path, ctx).map_err(to_job_error)?;
         for w in summary.warnings.iter().take(20) {
             log::warn!("{}: game {}: {}", path.display(), w.game_index + 1, w.message);
+        }
+        if summary.warning_count > 0 {
+            let report = ImportReportDto::new(file_label(&path), &summary);
+            app.state::<AppState>()
+                .import_reports
+                .lock()
+                .expect("import reports lock")
+                .insert(handle, report);
         }
         if summary.cancelled {
             log::info!("import of {} cancelled after {} games", path.display(), summary.imported);
@@ -166,6 +184,12 @@ pub async fn import_pgn(state: State<'_, AppState>, handle: u32, path: String) -
         }
         Ok(msg)
     }))
+}
+
+/// Warnings of the last import into `handle`, if it had any.
+#[tauri::command]
+pub async fn import_report(state: State<'_, AppState>, handle: u32) -> AppResult<Option<ImportReportDto>> {
+    Ok(state.import_reports.lock().expect("import reports lock").get(&handle).cloned())
 }
 
 /// A short description of a search, for the filter bar.

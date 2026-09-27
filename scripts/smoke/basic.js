@@ -193,6 +193,21 @@
     expect(game.view.fen.startsWith("4N3/"), "knight on e8");
     expect(game.view.status === "insufficientMaterial", "insufficient material");
 
+    // Import warnings are listed with the games they're about, which open from there.
+    await db.createAt(OUT + "/warnings.chessdb");
+    await db.importFrom(ROOT + "/testdata/pgn/malformed.pgn");
+    expect(db.importReport?.warningCount === 2, "2 import warnings, got " + db.importReport?.warningCount);
+    const warnings = [...document.querySelectorAll("footer button")]
+      .find((b) => b.textContent.includes("import warnings"));
+    expect(warnings, "an import warnings button in the status bar");
+    warnings.click();
+    const dialog = () => document.querySelector("[role='dialog'][aria-label^='Import warnings']");
+    await until(() => dialog()?.querySelectorAll("li").length === 2, "both warnings listed");
+    await shot("09a-import-warnings");
+    dialog().querySelector("li button").click();
+    await until(() => !dialog() && game.view?.headers.event === "Illegal move in main line",
+      "the first warning's game opened");
+
     if (BIG) {
       await db.createAt(OUT + "/big.chessdb");
       const importing = db.importFrom(ROOT + "/testdata/large/lichess_1m.pgn");

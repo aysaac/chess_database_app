@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { DbInfoDto } from "../bindings/DbInfoDto";
 import type { GameRowDto } from "../bindings/GameRowDto";
 import type { HeaderQueryDto } from "../bindings/HeaderQueryDto";
+import type { ImportReportDto } from "../bindings/ImportReportDto";
 import type { NameKindDto } from "../bindings/NameKindDto";
 import type { RecentDbDto } from "../bindings/RecentDbDto";
 import type { SortKeyDto } from "../bindings/SortKeyDto";
@@ -44,6 +45,8 @@ class DbStore {
   /** The last header search, to start the search dialog from. */
   lastQuery = $state<Partial<HeaderQueryDto>>({});
   searching = $state(false);
+  /** Warnings of the last import into the open database, until dismissed. */
+  importReport = $state<ImportReportDto | null>(null);
 
   /** Rows in the list: the filtered games when a filter is active. */
   get listTotal(): number {
@@ -179,6 +182,7 @@ class DbStore {
       await api.closeDb(this.info.handle).catch(() => {});
     }
     this.info = info;
+    this.importReport = null;
     this.sort = { key: "id", descending: false };
     this.quickText = "";
     this.filterVersion++;
@@ -202,6 +206,8 @@ class DbStore {
       this.filterVersion++;
       this.listVersion++;
       await game.refreshAll();
+      // The warnings' game ids were renumbered too.
+      if (this.importReport) this.importReport = await api.importReport(info.handle);
       if (done.state === "done") void this.ensureIndex();
     } catch (e) {
       notices.error(e);
@@ -218,6 +224,7 @@ class DbStore {
       notices.error(e);
     }
     this.info = null;
+    this.importReport = null;
     this.quickText = "";
     this.filterVersion++;
     this.listVersion++;
@@ -268,11 +275,14 @@ class DbStore {
   /** Imports a PGN file into the open database; resolves when done. */
   async importFrom(path: string) {
     if (!this.info) return;
+    const handle = this.info.handle;
     try {
-      const id = await api.importPgn(this.info.handle, path);
+      this.importReport = null;
+      const id = await api.importPgn(handle, path);
       this.#importJobs.add(id);
       await jobs.waitFor(id);
       this.#importJobs.delete(id);
+      if (this.info?.handle === handle) this.importReport = await api.importReport(handle);
       await this.refresh();
       if (this.sort.key !== "id") await this.setSort(this.sort, true);
       void this.ensureIndex();

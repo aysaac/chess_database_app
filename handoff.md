@@ -162,7 +162,7 @@ clocks and evals), 16-core laptop:
 **PGN** (unchanged)
 - Line breaks inside comments are exported as spaces; a "comment before" on
   a main-line move becomes the previous move's comment; localized piece
-  letters aren't accepted on import; import warnings aren't listed in the UI.
+  letters aren't accepted on import.
 
 **Engines**
 - One analysis at a time (ENG-04 is P2). The blunder check uses the default
@@ -198,8 +198,6 @@ Recommended order:
 1. **Ask the user** about installing sway for the smoke harness (see
    Environment notes) and open question #3.
 2. **P1 polish left:**
-   - Show import warnings in the UI (they're counted in the job message and
-     the first 20 are logged).
    - DB-13 reference database (use one designated database for the tree).
    - UI-01 board/piece themes, UI-02 keyboard SAN entry, UI-03 collapsing
      variations.

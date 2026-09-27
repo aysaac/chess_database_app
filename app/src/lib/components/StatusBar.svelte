@@ -3,9 +3,11 @@
   import { db } from "../stores/db.svelte";
   import { jobs } from "../stores/jobs.svelte";
   import { notices } from "../stores/notify.svelte";
+  import ImportWarnings from "./ImportWarnings.svelte";
   import Modal from "./Modal.svelte";
 
   let confirmCompact = $state(false);
+  let showWarnings = $state(false);
 
   function percent(done: number, total: number) {
     return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
@@ -20,6 +22,16 @@
       <span class="soft">{formatBytes(db.info.sizeBytes)}</span>
       {#if db.info.deleted}
         <span class="soft">{formatCount(db.info.deleted)} deleted</span>
+      {/if}
+      {#if db.importReport}
+        <button
+          class="close warn"
+          title="Problems found while importing {db.importReport.file}"
+          onclick={() => (showWarnings = true)}
+          >{formatCount(db.importReport.warningCount)} import {db.importReport.warningCount === 1
+            ? "warning"
+            : "warnings"}</button
+        >
       {/if}
       <button class="close" title="Remove deleted games for good and reclaim space" onclick={() => (confirmCompact = true)}
         >Compact…</button
@@ -45,6 +57,10 @@
     {notices.current?.text ?? ""}
   </span>
 </footer>
+
+{#if showWarnings && db.importReport}
+  <ImportWarnings report={db.importReport} onClose={() => (showWarnings = false)} />
+{/if}
 
 {#if confirmCompact && db.info}
   <Modal title="Compact {db.info.name}" onClose={() => (confirmCompact = false)} width="480px">
@@ -111,6 +127,10 @@
   .close {
     padding: 0 8px;
     color: var(--ink-soft);
+  }
+
+  .close.warn {
+    color: var(--brass);
   }
 
   .job button {
