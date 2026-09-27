@@ -19,14 +19,12 @@ read that first.
   screens (arrows, board themes, folded variations, move box, import
   warnings, reference tree, promotion picker on a 208 px board) were
   looked at in the screenshots.
-- **sway still isn't installed system-wide** (sudo needs the user's
-  password). For the runs, sway 1.11 and wlroots 0.19.3 were taken from the
-  Arch Linux Archive (signatures checked against the pacman keyring) and
-  unpacked into the session's temp folder, with a `sway` wrapper put first
-  on `PATH` for the harness only. That folder goes away with the session:
-  next time, ask the user to run `sudo pacman -S sway`, or repeat that
-  (the main mirrors already carry sway 1.12 for newer libraries, so use
-  archive.archlinux.org and the versions `pacman -Si sway wlroots0.19` shows).
+- **sway 1.11 is installed system-wide** (2026-09-26), so
+  `scripts/smoke/run.sh` works as is. `pacman -S sway` got a 404 from
+  stable-mirror.omarchy.org (its package list was ahead of its files), so
+  the user installed the same versions from archive.archlinux.org with
+  `pacman -U` (checksums matched the sync database). If a later
+  `pacman -S` gives a 404, that's the mirror again.
 - **Commits:** the user asked for a commit per finished feature. `main` has
   the initial commit plus the feature commits; there's no remote.
   `HYPRLAND-DISRUPTION-REPORT.md` is still untracked, for the user to keep
@@ -247,7 +245,7 @@ Recommended order:
 - The user's machine: Arch Linux with Omarchy, Hyprland 0.54.3 (Wayland),
   2560×1600 at 1.25 scale, dark theme. Rust 1.94 (Arch package), Node 25,
   npm 11. `grim` and `hyprctl` are available; Xvfb, xdotool and ydotool
-  aren't, and sway has to be installed for the smoke harness.
+  aren't; sway is installed for the smoke harness.
   **Stockfish 19** is now in `app/src-tauri/binaries/` (fetched,
   git-ignored), not installed system-wide.
 - **Windows for testing go on a private headless display**
@@ -258,11 +256,9 @@ Recommended order:
   to x=22048 while it ran; Hyprland 0.54.3 then left the cursor off screen
   and waybar and windows seemed to vanish. If the cursor is ever gone,
   `hyprctl keyword monitor ",preferred,auto,1.25"` brings it back.
-- **sway must be installed** (`sudo pacman -S sway`; it pulls in
-  `wlroots0.19`). Without it the harness stops with exit code 2 instead of
-  opening a window on the user's screen. On 2026-09-26 it was still only
-  unpacked into a temporary folder (see the TL;DR): run the harness with
-  that folder's `bin/` first on `PATH`.
+- **sway is installed** (1.11, with `wlroots0.19`); the harness needs it.
+  Without it the harness stops with exit code 2 instead of opening a
+  window on the user's screen.
 - Smoke drivers must never open native dialogs: nobody can click them on
   the private display, so the driver would hang. Every driver stubs
   `game.confirmDiscard = async () => true`.
