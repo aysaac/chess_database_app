@@ -75,19 +75,22 @@ desktop, so it's safe to run while they work.
   stores exactly as the UI does and reports through the `dev_log` command
   as `[smoke] …` lines.
 - **Default driver:** `scripts/smoke/basic.js`. It imports the fixtures, sorts, opens a
-  game, picks a branch in the next-move picker, adds a variation through the
-  popover, types comments inline, promotes the variation, undoes, saves,
-  reopens and promotes a pawn, asserting each step. With `testdata/large/lichess_1m.pgn`
+  game, picks a branch in the next-move picker (with its arrows), changes
+  the board appearance, adds a variation through the popover, types
+  comments inline, promotes the variation, undoes, saves, reopens, folds
+  variations, types moves, inserts a move, edits the intro comment,
+  promotes a pawn and lists import warnings, asserting each step. With `testdata/large/lichess_1m.pgn`
   present it also imports 1M games and checks scrolling and sorting
   (`SMOKE_BIG=0` skips that).
 - **Layout driver:** `scripts/smoke/layout.js` resizes `#app` to several window
   sizes (tiled, full screen, narrow, short) and checks the board stays square,
-  inside its column and clear of the notation. Run it after layout changes.
+  inside its column and clear of the notation, with the promotion picker
+  inside the board. Run it after layout changes.
 - **Feature drivers:** `engine.js` (analysis, lines, blunder check; needs
   `scripts/fetch-stockfish.sh`), `search.js` (filters, header search, tabs,
   name lists, compaction, recent databases), `tree.js` (position index,
-  opening tree, position search, opening names), `setup.js` (position
-  editor). `search.js` and `tree.js` time the 1M-game database when `__BIG__`.
+  opening tree, position search, opening names, reference database),
+  `setup.js` (position editor). `search.js` and `tree.js` time the 1M-game database when `__BIG__`.
 - **Never open native dialogs from a driver:** nobody can click them on the
   private display, so the driver hangs until it times out. Every driver
   starts with `game.confirmDiscard = async () => true`.

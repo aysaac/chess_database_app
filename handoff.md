@@ -1,34 +1,33 @@
 # Handoff
 
-State of the project as of **2026-09-26 (evening)**, for the next agent.
-Conventions, commands and utilities are in [AGENTS.md](AGENTS.md); read that
-first.
+State of the project as of **2026-09-26 (late evening)**, for the next
+agent. Conventions, commands and utilities are in [AGENTS.md](AGENTS.md);
+read that first.
 
 ## TL;DR
 
-- **Most P1 items are now in.** On top of the first prototype, this session
-  added engines and analysis (ENG-01/02/03/05/09, ANL-01/04), the position
-  index with opening tree, position search and opening names
-  (SRCH-03/04, OPEN-01/11), header search, quick filter and filtered lists
-  (SRCH-01/02/14, IO-11, QOL-03), settings and recent databases
-  (INF-02, DB-07, QOL-01), player/event lists with rename and merge (DB-04),
-  a position setup editor (UI-07), tabs (UI-05) and compaction (DB-06).
-- All checks pass: fmt, clippy (`-D warnings`), 149 Rust tests (+1 ignored
-  large-data test), svelte-check, the frontend build, and six smoke drivers
-  (`basic`, `engine`, `search`, `tree`, `setup`, `layout`), with the 1M-game
-  parts of `search` and `tree` too.
-- **Everything so far is in the first commit on `main`** (2026-09-26, at
-  the user's request). There's no remote yet. Ask before committing again
-  or pushing. `HYPRLAND-DISRUPTION-REPORT.md` was left out, untracked, for
-  the user to keep or delete.
-- **The smoke harness no longer touches the user's desktop.** It used to
-  add a headless output to the user's Hyprland, which moved their monitor
-  and lost the cursor (`HYPRLAND-DISRUPTION-REPORT.md`). Now the app runs
-  on a private headless sway (`scripts/offscreen.sh`), and `basic` and
-  `layout` pass there with the desktop verified unchanged. It needs
-  `sway` installed (see [Environment notes](#environment-notes)).
-- **Next up:** the remaining P1 polish (see [Next steps](#next-steps)), then
-  GitHub and CI once the user agrees.
+- **Every P1 item is in**, except more piece sets (UI-01). The second
+  session of 2026-09-26 added, one commit each: GAME-03 "Insert", intro
+  comment editing (plus a fix for "comment before move"), next-move arrows
+  and a promotion picker that fits small boards, import warnings (IO-01),
+  the reference database (DB-13), board colour themes and display options
+  (UI-01), typed move entry (UI-02) and folding variations (UI-03).
+- Checks run this session: fmt, clippy (`-D warnings`), 156 Rust tests
+  (+1 ignored large-data test), svelte-check, the frontend build.
+  **The smoke drivers were not run:** sway isn't installed, and fetching it
+  into a temp folder was refused this time. The new driver steps (in
+  `basic`, `layout` and `tree`) are written but unverified; run
+  `scripts/smoke/run.sh` (and the `layout` and `tree` drivers) once sway is
+  installed, and fix whatever they find first.
+- **Commits:** the user asked for a commit per finished feature. `main` has
+  the initial commit plus nine feature commits; there's no remote.
+  `HYPRLAND-DISRUPTION-REPORT.md` is still untracked, for the user to keep
+  or delete.
+- **The smoke harness doesn't touch the user's desktop.** It runs the app on
+  a private headless sway (`scripts/offscreen.sh`); see
+  [Environment notes](#environment-notes).
+- **Next up:** install sway and run the drivers, then GitHub and CI once the
+  user agrees, then catalog Phase 3 (P2).
 
 ## Decisions so far
 
@@ -61,7 +60,7 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
 
 ### Features (by catalog ID)
 - **Delivered:** INF-01…04 · CORE-01…04 · GAME-01…07, 16, 17 ·
-  IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06 · SRCH-01…04, 14 · OPEN-01, 11 ·
+  IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11 ·
   ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16 ·
   QOL-01 (reopens the last database and remembers orientation, pane size,
   tree visibility, analysis lines), 02, 03, 05.
@@ -75,6 +74,33 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   - GAME-08: clocks show as tooltips; no time graph.
   - ENG-01: engines can be added, removed, made default and configured
     (common options plus "show all"), but there are no per-engine profiles.
+  - UI-01: five board colour themes, but one piece set (cburnett).
+
+### New in the second session (2026-09-26, late)
+- **Insert** in the variation dialog: the new move replaces the recorded
+  one and the moves after it are replayed (by piece and squares) as far as
+  they stay legal; a notice says how many were removed.
+- **Comments:** the intro comment (before the first move) is edited in
+  place; double-clicking any comment edits it; "comment before move" on a
+  main-line move now edits the comment where PGN keeps it (the previous
+  move's), prefilled, instead of silently overwriting it.
+- **Next-move picker** draws its moves as arrows on the board (the
+  highlighted one in blue). The **promotion picker** scales with the board.
+- **Import warnings:** after an import with problems the status bar shows
+  "N import warnings"; the dialog lists game number, players and problem,
+  with Open for imported games.
+- **Reference database** (DB-13): the opening tree's source picker chooses
+  the open database or the reference, or sets the reference ("Choose
+  reference database…", "Use <open> as reference"). "Find games" on the
+  reference opens it in the list.
+- **Board appearance** (nav bar): five colour themes, coordinates,
+  legal-move dots and last-move highlight.
+- **Typing moves** (UI-02): type `e4`, `Nf3`, `nf3`, `exd5`, `e8=Q`, `0-0`
+  or `g1f3` with the board or notation focused; a box on the board lists
+  matches and Enter plays.
+- **Folding variations** (UI-03): click a top-level variation's left rule
+  or a nested one's "(" to fold it into a stub; the move menu has collapse
+  this / all and expand all.
 
 ### What the user can do now (new this session)
 - **Analyze** (toolbar, Ctrl+Shift+A): Stockfish runs with 1–5 lines, depth,
@@ -183,6 +209,11 @@ clocks and evals), 16-core laptop:
   on exact whitespace), so don't run `npm run format` on everything.
 
 **Not verified yet**
+- Everything from the second session in the running app: the smoke drivers
+  couldn't run (no sway). Only unit tests, svelte-check and the build
+  cover it. The driver steps for it are written (`basic.js`: insert, intro
+  comment, arrows, board appearance, typing, folding, import warnings;
+  `layout.js`: promotion picker size; `tree.js`: reference database).
 - Real pointer and keyboard input (dragging pieces, the setup editor's
   palette and square clicks, right-click menus, shortcuts, native file
   dialogs). chessground ignores synthetic events, so the smoke drivers can't
@@ -196,10 +227,15 @@ clocks and evals), 16-core laptop:
 
 Recommended order:
 
-1. **Ask the user** about installing sway for the smoke harness (see
-   Environment notes) and open question #3.
+1. **Ask the user** to install sway (`sudo pacman -S sway`), then run
+   `scripts/smoke/run.sh` and the `layout`, `tree`, `search`, `engine` and
+   `setup` drivers; look at the screenshots of the new UI. Also open
+   question #3.
 2. **P1 polish left:**
-   - UI-01 piece sets (needs vendored SVGs with checked licences).
+   - UI-01 piece sets: vendor a few SVG sets with GPL-compatible licences
+     (check lichess-org/lila's COPYING.md per set) and add a picker to
+     "Board appearance". Ask the user first; fetching external files needs
+     their approval.
 3. **Housekeeping:** GitHub, CI (Linux/Windows/macOS: fmt,
    clippy, tests, svelte-check, `tauri build`). CI needs
    `scripts/fetch-stockfish.sh <triple>` before a bundled build.
