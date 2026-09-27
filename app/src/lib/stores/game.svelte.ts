@@ -270,6 +270,10 @@ class GameStore {
       switch (result.kind) {
         case "moved":
           this.#apply(result.view);
+          if (result.dropped > 0) {
+            const moves = result.dropped === 1 ? "1 later move was" : `${result.dropped} later moves were`;
+            notices.show(`Inserted the move; ${moves} no longer legal and removed. Undo brings them back.`);
+          }
           break;
         case "needsChoice":
           this.pendingChoice = { orig, dest, promotion };

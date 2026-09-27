@@ -73,7 +73,6 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
     favourites.
   - DB-13 (reference database): the tree and position search use the open
     database; there's no separate "reference" database yet.
-  - GAME-03: the variation dialog still has no "Insert" choice.
   - GAME-08: clocks show as tooltips; no time graph.
   - ENG-01: engines can be added, removed, made default and configured
     (common options plus "show all"), but there are no per-engine profiles.
@@ -178,8 +177,8 @@ clocks and evals), 16-core laptop:
   (now with next/previous game) is wider than very small boards. The layout
   driver passes at all five sizes.
 - The promotion picker is still wider than boards under ~400 px.
-- The root comment can't be edited; no "Insert" in the variation dialog; no
-  arrow preview in the next-move picker (user review follow-ups).
+- The root comment can't be edited; no arrow preview in the next-move
+  picker (user review follow-ups).
 - `CommentDialog.svelte` and now `FenDialog.svelte` are unused (the setup
   editor replaced the FEN dialog). The user hasn't approved deleting them.
 - Prettier isn't applied (the repo never was; `NotationLine.svelte` relies
@@ -202,8 +201,6 @@ Recommended order:
 1. **Ask the user** about installing sway for the smoke harness (see
    Environment notes) and open question #3.
 2. **P1 polish left:**
-   - GAME-03 "Insert" in the variation dialog (keep following moves where
-     they stay legal).
    - Editing the root comment; promotion picker size on small boards;
      arrow preview in the next-move picker.
    - Show import warnings in the UI (they're counted in the job message and

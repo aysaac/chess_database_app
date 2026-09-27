@@ -16,12 +16,16 @@ pub enum VariationPolicy {
     NewMainLine,
     /// Replace the main continuation (and everything after it).
     Overwrite,
+    /// Replace the main continuation's move but keep the moves after it,
+    /// as far as they stay legal (GAME-03).
+    Insert,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayResult {
     /// Cursor moved to `node`; `created` is false if the move already existed.
-    Moved { node: NodeId, created: bool },
+    /// `dropped` counts moves an insert removed because they became illegal.
+    Moved { node: NodeId, created: bool, dropped: usize },
     /// A different continuation exists and no policy was given.
     NeedsChoice,
 }
@@ -150,7 +154,7 @@ impl GameEditor {
         let at = self.cursor;
         if let Some(existing) = self.game.find_child(at, mv) {
             self.cursor = existing;
-            return PlayResult::Moved { node: existing, created: false };
+            return PlayResult::Moved { node: existing, created: false, dropped: 0 };
         }
         let has_continuation = !self.game.node(at).children.is_empty();
         let policy = match (has_continuation, policy) {
@@ -161,6 +165,8 @@ impl GameEditor {
         self.checkpoint();
         let node = self.game.add_child(at, mv);
         let children = &mut self.game.node_mut(at).children;
+        let replaced = children[0];
+        let mut dropped = 0;
         match policy {
             VariationPolicy::NewVariation => {}
             VariationPolicy::NewMainLine => {
@@ -171,9 +177,14 @@ impl GameEditor {
                 children.pop();
                 children[0] = node;
             }
+            VariationPolicy::Insert => {
+                children.pop();
+                children[0] = node;
+                dropped = self.game.replay_below(replaced, node);
+            }
         }
         self.cursor = node;
-        PlayResult::Moved { node, created: true }
+        PlayResult::Moved { node, created: true, dropped }
     }
 
     /// Makes the variation containing `node` the main continuation at its
@@ -408,6 +419,58 @@ mod tests {
         play(&mut ed, "c7c5", Some(VariationPolicy::Overwrite));
         assert_eq!(mainline(&ed), ["e2e4", "c7c5"]);
         assert_eq!(ed.game().node(ed.game().path(ed.cursor())[0]).children.len(), 1);
+    }
+
+    #[test]
+    fn insert_keeps_following_moves_while_legal() {
+        // 1.e4 e5 2.Nf3 Nc6 3.Bb5 (3.Bc4 Bc5) a6: insert 2.Nc3 for 2.Nf3.
+        let mut ed = GameEditor::new(Game::default());
+        for m in ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6"] {
+            play(&mut ed, m, None);
+        }
+        let path = ed.game().path(ed.cursor());
+        ed.goto(path[3]);
+        play(&mut ed, "f1c4", Some(VariationPolicy::NewVariation));
+        play(&mut ed, "f8c5", None);
+        ed.toggle_nag(path[4], Nag(1));
+        ed.set_comment(path[5], CommentSlot::After, "Morphy");
+        let rev = ed.revision();
+
+        ed.goto(path[1]);
+        let r = play(&mut ed, "b1c3", Some(VariationPolicy::Insert));
+        assert!(matches!(r, PlayResult::Moved { created: true, dropped: 0, .. }));
+        assert_eq!(mainline(&ed), ["e2e4", "e7e5", "b1c3", "b8c6", "f1b5", "a7a6"]);
+        let new = ed.game().path(ed.game().line_end(ed.cursor()));
+        assert_eq!(ed.game().node(new[4]).nags, vec![Nag(1)]);
+        assert_eq!(ed.game().node(new[5]).comment_after, "Morphy");
+        assert_eq!(ed.game().node(new[3]).children.len(), 2, "the Bc4 variation survives");
+
+        // 1...d5 for 1...e5: the main line stays, but in the 3.Bc4 variation
+        // 3...Bc5 is dropped (the e7 pawn now blocks the bishop).
+        ed.goto(NodeId::ROOT);
+        ed.forward();
+        let r = play(&mut ed, "d7d5", Some(VariationPolicy::Insert));
+        assert!(matches!(r, PlayResult::Moved { dropped: 1, .. }), "{r:?}");
+        assert_eq!(mainline(&ed), ["e2e4", "d7d5", "b1c3", "b8c6", "f1b5", "a7a6"]);
+
+        ed.undo();
+        ed.undo();
+        assert_eq!(ed.revision(), rev, "each insert is one undo step");
+    }
+
+    #[test]
+    fn insert_stops_a_line_at_its_first_illegal_move() {
+        let mut ed = editor_with_mainline();
+        ed.to_start();
+        // 1.d4 for 1.e4: 1...e5 is still legal, 2.Nf3 too.
+        let r = play(&mut ed, "d2d4", Some(VariationPolicy::Insert));
+        assert!(matches!(r, PlayResult::Moved { dropped: 0, .. }));
+        assert_eq!(mainline(&ed), ["d2d4", "e7e5", "g1f3"]);
+        ed.undo();
+        // 1.Nf3 for 1.e4: 1...e5 is legal, but 2.Nf3 isn't (the knight left g1).
+        let r = play(&mut ed, "g1f3", Some(VariationPolicy::Insert));
+        assert!(matches!(r, PlayResult::Moved { dropped: 1, .. }));
+        assert_eq!(mainline(&ed), ["g1f3", "e7e5"]);
     }
 
     #[test]

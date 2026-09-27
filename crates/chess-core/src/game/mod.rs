@@ -202,6 +202,53 @@ impl Game {
         cur
     }
 
+    /// Copies the tree below `src` under `dst`, replaying every move by its
+    /// piece, squares and promotion in the position at `dst` (GAME-03
+    /// "insert"). A line stops at its first move that is no longer legal.
+    /// Annotations are copied along. Returns how many moves were dropped.
+    pub fn replay_below(&mut self, src: NodeId, dst: NodeId) -> usize {
+        let mut dropped = 0;
+        let mut stack = vec![(src, dst, self.position_at(dst))];
+        while let Some((from, to, pos)) = stack.pop() {
+            for child in self.node(from).children.clone() {
+                let old = self.node(child).mv.expect("non-root node has a move");
+                let replayed = pos.legal_moves().into_iter().find(|m| {
+                    m.role() == old.role()
+                        && m.from() == old.from()
+                        && m.to() == old.to()
+                        && m.promotion() == old.promotion()
+                });
+                let Some(mv) = replayed else {
+                    dropped += self.subtree_len(child);
+                    continue;
+                };
+                let copy = self.add_child(to, mv);
+                let source = self.node(child).clone();
+                let target = self.node_mut(copy);
+                target.comment_before = source.comment_before;
+                target.comment_after = source.comment_after;
+                target.nags = source.nags;
+                target.shapes = source.shapes;
+                target.commands = source.commands;
+                let mut next = pos.clone();
+                next.play_unchecked(mv);
+                stack.push((child, copy, next));
+            }
+        }
+        dropped
+    }
+
+    /// Number of moves in the subtree starting at `id` (`id` included).
+    fn subtree_len(&self, id: NodeId) -> usize {
+        let mut n = 0;
+        let mut stack = vec![id];
+        while let Some(cur) = stack.pop() {
+            n += 1;
+            stack.extend(&self.node(cur).children);
+        }
+        n
+    }
+
     /// Nodes from the first move to `id` (root excluded).
     pub fn path(&self, id: NodeId) -> Vec<NodeId> {
         let mut path = Vec::new();

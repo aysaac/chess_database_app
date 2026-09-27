@@ -402,7 +402,11 @@ pub struct GameViewDto {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export)]
 pub enum PlayResultDto {
-    Moved { view: Box<GameViewDto> },
+    /// `dropped`: moves an insert removed because they were no longer legal.
+    Moved {
+        view: Box<GameViewDto>,
+        dropped: u32,
+    },
     NeedsChoice,
     NeedsPromotion,
     Illegal,
@@ -415,6 +419,7 @@ pub enum VariationPolicyDto {
     NewVariation,
     NewMainLine,
     Overwrite,
+    Insert,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, TS)]

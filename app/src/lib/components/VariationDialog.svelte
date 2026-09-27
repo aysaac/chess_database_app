@@ -19,6 +19,11 @@
       hint: "Make this move the main line; the old one becomes a variation.",
     },
     { policy: "overwrite", label: "Overwrite", hint: "Replace the recorded move and everything after it." },
+    {
+      policy: "insert",
+      label: "Insert",
+      hint: "Replace the recorded move but keep the moves after it, as far as they're still legal.",
+    },
   ];
 
   let box: HTMLDivElement;

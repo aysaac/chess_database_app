@@ -132,10 +132,13 @@ pub async fn play_move(
             VariationPolicyDto::NewVariation => VariationPolicy::NewVariation,
             VariationPolicyDto::NewMainLine => VariationPolicy::NewMainLine,
             VariationPolicyDto::Overwrite => VariationPolicy::Overwrite,
+            VariationPolicyDto::Insert => VariationPolicy::Insert,
         });
         Ok(match s.editor.play(mv, policy) {
             PlayResult::NeedsChoice => PlayResultDto::NeedsChoice,
-            PlayResult::Moved { .. } => PlayResultDto::Moved { view: Box::new(game_view(session, s, false)) },
+            PlayResult::Moved { dropped, .. } => {
+                PlayResultDto::Moved { view: Box::new(game_view(session, s, false)), dropped: dropped as u32 }
+            }
         })
     })
 }

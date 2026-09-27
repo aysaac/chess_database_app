@@ -159,6 +159,21 @@
     for (let i = 0; i < 17; i++) await game.step("forward");
     await shot("08-reopened-after-save");
 
+    // Insert replaces a move and keeps the moves after it while legal (GAME-03).
+    await game.newGame();
+    for (const [o, d] of [["e2", "e4"], ["e7", "e5"], ["g1", "f3"], ["b8", "c6"]]) await game.play(o, d);
+    await game.step("back");
+    await game.step("back");
+    await game.play("b1", "c3");
+    expect(game.pendingChoice?.dest === "c3", "variation dialog for 2.Nc3");
+    await wait(100);
+    const choices = [...document.querySelectorAll("[role='dialog'][aria-modal='true'] button")]
+      .map((b) => b.textContent);
+    expect(choices.includes("Insert"), "Insert offered, got " + choices.join(" | "));
+    await game.chooseVariation("insert");
+    const inserted = await api.gamePgn(game.view.session);
+    expect(inserted.includes("1. e4 e5 2. Nc3 Nc6 *"), "2.Nf3 replaced, 2...Nc6 kept:\n" + inserted);
+
     // Promotion picker and underpromotion; K+N vs K is a dead draw.
     await game.newGame("8/4P3/8/8/8/8/k7/4K3 w - - 0 1");
     await game.play("e7", "e8");
