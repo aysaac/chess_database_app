@@ -251,8 +251,8 @@ before a big change.
 ### B1. The installed app
 
 - [x] NSIS installer (2026-09-28): everything below works.
-- [ ] MSI installer: built, not installed. The UAC prompt was declined
-  (`msiexec` exit 1602) because nobody was at the PC; needs the user.
+- [x] MSI installer (2026-09-28, with the user clicking the UAC prompts):
+  everything below works, but see the install folder.
 
 Results (NSIS, Windows 10 22H2, driven through UI Automation and posted
 window messages, not the real mouse):
@@ -277,6 +277,21 @@ window messages, not the real mouse):
   the database, `%APPDATA%\dev.chessdb.desktop\settings.json` and
   `%LOCALAPPDATA%\dev.chessdb.desktop\` (WebView2 data, logs) stay. The
   "delete app data" checkbox of an interactive uninstall wasn't seen.
+
+Results (MSI, `msiexec /passive`, same checks as NSIS):
+- **It installed into `%LOCALAPPDATA%\Chess Database\`, not Program
+  Files,** while its shortcuts went to all users (`ProgramData` Start
+  menu, Public desktop). The NSIS uninstall had left
+  `HKCU\Software\chessdb\Chess Database` with its install path, and
+  Tauri's WiX template reads that key to reuse an earlier folder. Only
+  users who switch installers hit it; it matters for "which installer to
+  ship" below. The MSI uninstall leaves the key's default value too.
+- Title, Stockfish from the install folder, analysis, dialogs in
+  Documents, 11 games imported, sort, open, edit, save, restart with the
+  edit kept, blunder check in 90 s: all as with NSIS.
+- Uninstall needs the UAC prompt again (without it, error 1730 and a
+  rollback); then the files, shortcuts and uninstall entry go, and the
+  database and settings stay.
 
 Build from `app/`:
 `npm run tauri build -- --config src-tauri/tauri.stockfish.json`. The
