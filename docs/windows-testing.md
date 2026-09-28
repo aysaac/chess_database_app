@@ -203,6 +203,45 @@ debug builds; if so, apply it in release builds only.
 
 **Verify:** B3 again, and the app's own shortcuts from B2 still work.
 
+### A5. Closing a database while a job uses it blocks reopening it
+
+- [ ] Done
+
+**Problem** (found in B4, not Windows-specific). `release_db` (`state.rs`)
+drops the database from the open list, but a running job (the position
+index after an import or compaction) still holds its `Arc`, so the
+database and its `.lock` stay open. Opening it again before the job ends
+opens it a second time and fails: "database is open in another process".
+Seen with TWIC: compact, close, then open from Recent at once.
+
+**Fix, proposed:** keep a `Weak` to databases that were released while
+still in use, keyed by canonical path; `open_for` upgrades it and gives
+the same `Database` a new handle instead of opening the folder again.
+
+**Verify:** a driver that imports TWIC, compacts, closes and reopens at
+once passes, on Windows and Linux. B4 did this with a throwaway driver;
+it could become part of `search.js`.
+
+### A6. Compacting while the position index builds
+
+- [ ] Done
+
+**Problem** (found in B4, not Windows-specific). `update_position_index`
+(`positions.rs`) plans under the database lock, builds without it, then
+installs under it. `Database::compact` renumbers the games and deletes
+every `positions*` / `openings*` file, including the build's
+`positions.runN.tmp`. So a build running across a compaction either fails
+("Indexing positions failed: … cannot find the file specified", shown to
+the user) or, when it had no run file on disk yet, installs an index of
+the **old** game ids, which makes position search and the opening tree
+wrong until the next rebuild. The UI starts both jobs itself: import
+starts the index build, and Compact… can be clicked while it runs.
+
+**Fix, proposed:** a counter in `Database` that `compact` bumps; the build
+reads it with the plan and, at install, drops its files and ends without
+an error when it changed (the frontend already starts a new build after a
+compaction). A unit test runs a compaction between the two phases.
+
 ## Part B: checks on the real PC
 
 Record every result, including "works". Something that fails and isn't
@@ -211,8 +250,33 @@ before a big change.
 
 ### B1. The installed app
 
-- [ ] NSIS installer
-- [ ] MSI installer
+- [x] NSIS installer (2026-09-28): everything below works.
+- [ ] MSI installer: built, not installed. The UAC prompt was declined
+  (`msiexec` exit 1602) because nobody was at the PC; needs the user.
+
+Results (NSIS, Windows 10 22H2, driven through UI Automation and posted
+window messages, not the real mouse):
+- Built with both bundles. Installed silently (`/S`): no SmartScreen
+  prompt, since a locally built file has no mark of the web; a downloaded
+  copy would still warn (not checked).
+- Installs per user in `%LOCALAPPDATA%\Chess Database\` with `chess-app.exe`,
+  `stockfish.exe` and `uninstall.exe`; Start menu and desktop shortcuts;
+  "Apps & features" publisher shows as `chessdb`.
+- Title "Chess Database", board icon on the window and the exe.
+- Stockfish 19 detected from the install folder (path saved with `\\?\`
+  until A2 is merged). Analyze: 3 lines at depth 24 and the eval bar.
+  Blunder check on the 44-move sample: done in 90 s (0 blunders, 1 mistake,
+  2 inaccuracies).
+- New database and Import PGN dialogs start in Documents; Import shows the
+  "PGN games" filter. The 5 fixtures import as 11 games (malformed.pgn:
+  1 skipped, 2 warnings); Latin-1 names show right. Sort, open (arrow keys
+  and Enter in the list), edit details, save. Closed and restarted from
+  the Start menu: it reopened the database with the edit. No Stockfish
+  process left after closing.
+- Silent uninstall: install folder, shortcuts and uninstall entry gone;
+  the database, `%APPDATA%\dev.chessdb.desktop\settings.json` and
+  `%LOCALAPPDATA%\dev.chessdb.desktop\` (WebView2 data, logs) stay. The
+  "delete app data" checkbox of an interactive uninstall wasn't seen.
 
 Build from `app/`:
 `npm run tauri build -- --config src-tauri/tauri.stockfish.json`. The
@@ -281,20 +345,29 @@ Anything else goes to A4.
 
 ### B4. Unusual paths
 
-- [ ] Done
+- [x] Done (2026-09-28), with a throwaway dev-build driver. Every path
+  works; the run found two bugs, now A5 and A6.
 
 For each case, create a database, import TWIC (`testdata\large\twic1600.pgn`),
 sort, open a game, save an edit, run Compact…, close it and reopen it from
 Recent:
-- [ ] a folder with spaces and accents, for example
-  `Documents\Partidas de ajedrez ñ`;
-- [ ] a path longer than 260 characters (note whether the dialog or the app
-  refuses it, and the message);
-- [ ] another drive, and a network share, if the PC has them.
+- [x] a folder with spaces and accents, for example
+  `Documents\Partidas de ajedrez ñ`: works (`Mis partidas é.chessdb`).
+- [x] a path longer than 260 characters: a 353-character path works
+  (`LongPathsEnabled` is 1 on this PC). Created through the API, so the
+  file dialog's limit wasn't tried.
+- [x] another drive, and a network share: `D:\` works, and so does the
+  UNC path `\\localhost\C$\…` (no other share on this PC).
+
+Each case took about 0.9 s for TWIC (8,895 games) in a dev build.
+Closing and reopening at once failed until the driver waited for the
+position index (A5). The first database of a session failed its compaction
+with the index still building (A6), whatever its path.
 
 ### B5. OneDrive
 
-- [ ] Done / Documents isn't on OneDrive
+- [x] Documents isn't on OneDrive (2026-09-28): `Personal` is
+  `C:\Users\isaac\Documents`. Not tested.
 
 File dialogs start in Documents, which OneDrive often syncs. Check with
 `Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders' -Name Personal`.
@@ -314,7 +387,13 @@ commits (see `docs/file-format.md`).
 
 ### B6. Display scaling and themes
 
-- [ ] Done
+- [ ] Partly done (2026-09-28). This PC has one 3440×1440 monitor at
+  *custom* scaling 120% (`LogPixels` 115), which greys out the Scale
+  setting and needs a sign-out to change, so only 120% was tried:
+  `layout.js` passes with no strip. Other ratios were covered through the
+  webview zoom for A3. Windows is in light mode; the installed app
+  follows it with a light title bar (screenshots in the A3/B1 runs). Dark
+  mode needs the user's setting changed and wasn't tried.
 
 - [ ] At 100%, 125%, 150% and 175%: `layout.js` passes, the screenshots
   show no strip beside the board, and text is sharp.
@@ -326,7 +405,25 @@ commits (see `docs/file-format.md`).
 
 ### B7. Performance
 
-- [ ] Done
+- [x] Done (2026-09-28). AMD Ryzen 5 5600X (6 cores, 12 threads), 16 GB,
+  repo on a SATA SSD (Kingston SA400), Windows 10 22H2, Defender real-time
+  protection on (exclusions not readable without admin; not changed).
+
+| | Windows | Linux |
+|---|---|---|
+| Import 1M Lichess games | 80.3 s (12.5k games/s) | 48.9 s (20k games/s) |
+| Open | 510 ms | 478 ms warm |
+| Sort by White | 186 ms | 117–430 ms |
+| Read a game | 86 µs | ~65 µs warm |
+| Header search | 37 ms | 42–58 ms |
+| Position index build | 15.9 s | 12.3 s |
+| TWIC import (8,895 games) | 0.45 s | |
+
+The import is 1.6× slower, about what 6 cores against 16 predict; the
+rest is close. Peak RSS isn't printed on Windows (`peak_rss_mb` is
+Linux-only). Smoke, dev build, 1M games: index ready 19 s after the
+import, start tree 112 ms, tree after 1.e4 105 ms, position search 32 ms,
+quick filter 500 ms, header search 113 ms, sorting the filter 155 ms.
 
 Release build, from the repo root:
 
@@ -362,7 +459,11 @@ If a Windows 11 PC is available: the baseline checks, B1 and B3.
 
 ### B9. The one-off test failure
 
-- [ ] Done
+- [x] Done (2026-09-28): 20 runs of `cargo test --workspace` in 2 minutes,
+  all passed, `analyzer_reports_engine_failure` included (20 of 20). Not
+  reproduced; if it comes back, keep the log. Note that `Select-String` is
+  case-insensitive, so the command below also lists every "0 failed"
+  line; look for `run N failed` instead.
 
 In PR #2, one `cargo test` run on Windows had a single failure that
 16 reruns didn't reproduce, and its name wasn't captured. Run the suite
