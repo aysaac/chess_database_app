@@ -139,7 +139,14 @@ show `\\?\C:\…`. Opening still works. Names are fine (they come from
 
 ### A3. Refit the board when the display scale changes
 
-- [ ] Done
+- [x] Done (2026-09-28): a `resolution` media query refits on ratio
+  changes. Tested by changing the webview zoom (1.25, 1.5, 1.75, 1, 1.1)
+  with `.workspace` pinned to a fixed CSS size: on `main` the ratio
+  changes with no resize left a 1.95 px strip at 1.1; with the fix every
+  gap is below 0.5 px. Unpinned, the workspace height moves by a fraction
+  of a pixel with the ratio, so the ResizeObserver usually refits anyway.
+  The PC uses custom scaling (120%), which greys out the Scale setting, so
+  the real Settings > Display change wasn't tried.
 
 **Problem.** `fitBoard()` in `app/src/App.svelte` snaps the board to
 multiples of 8 device pixels (PR #2), but it only runs when the workspace
