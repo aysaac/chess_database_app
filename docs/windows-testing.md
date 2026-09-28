@@ -173,7 +173,11 @@ board. That was checked in zoomed screenshots and isn't visible.
 
 ### A4. WebView2 browser shortcuts (only if B3 finds a problem)
 
-- [ ] Not needed / done
+- [ ] **Needed** (B3, 2026-09-28): F5, Ctrl+R and Ctrl+Shift+R reload the
+  page (unsaved edits on screen are lost), Ctrl+P opens print preview,
+  with the board focused and in a text field; Ctrl+F in a text field
+  opens the find bar. Zoom keys, Ctrl+wheel and Alt+arrows do nothing; the
+  release build opens no inspector.
 
 **Background.** WebView2 has its own browser shortcuts (find, reload,
 print…) that Linux and macOS don't have. Tauri 2.11 has no setting for
@@ -233,6 +237,22 @@ starts the index build, and Compact… can be clicked while it runs.
 reads it with the plan and, at install, drops its files and ends without
 an error when it changed (the frontend already starts a new build after a
 compaction). A unit test runs a compaction between the two phases.
+
+### A7. Small bugs from B2 (every platform)
+
+- [ ] Done
+
+1. **The game list's right-click menu ignores Escape**
+   (`GameList.svelte`); it only closes on a click elsewhere. The
+   notation's menu (`MoveMenu.svelte`) handles Escape.
+2. **Ctrl+Up/Down do nothing while the game list has focus.** The list's
+   `onKey` treats them as plain arrows (moves the selection) and stops the
+   event. Focus stays on the list after opening a game from it, so the
+   usual path (double-click or Enter, then Ctrl+Down) moves the selection
+   instead of opening the next game. With focus elsewhere they work.
+3. **Add engine… doesn't start in Documents** (`EngineDialog.svelte` has no
+   `defaultPath`); Windows opens the last folder used. The other four
+   dialogs start in Documents.
 
 ## Part B: checks on the real PC
 
@@ -307,34 +327,54 @@ For each installer:
 
 ### B2. Real mouse and keyboard
 
-- [ ] Done
+- [x] Done (2026-09-28) with real input (`SendInput`: mouse moves,
+  clicks, drags, key presses) into `npm run tauri dev`, the user away
+  from the PC; a throwaway driver logged the app's state after each
+  step. Everything below works except three small bugs, now **A7**.
+  Dragging *feel* (smoothness) wasn't judged.
 
 The smoke drivers can't do any of this (chessground ignores synthetic
 events). In the installed app or `npm run tauri dev`:
-- [ ] Dragging pieces: a legal move, an illegal one (the piece goes back),
-  a promotion by drag (the picker opens), dropping off the board.
-- [ ] Clicking pieces: click-click moves, the next-move picker and its
-  arrows.
-- [ ] Right-click menus in the notation and the game list.
-- [ ] Typing moves with the board focused: `e4`, `Nf3`, `exd5`, `0-0`,
-  `e8=Q`, `g1f3`, and Enter to play.
-- [ ] Shortcuts, each doing its job: Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z,
-  Ctrl+S, Ctrl+Shift+S, Ctrl+F (flip), Ctrl+T, Ctrl+W, Ctrl+Tab,
-  Ctrl+Shift+Tab, Ctrl+Up/Down (previous/next game), Ctrl+Shift+A
-  (analysis), arrows, Home, End; F2 renames in the Players/Events lists;
-  middle-click closes a tab; Ctrl+double-click opens a game in a new tab.
-- [ ] Comments with characters typed through AltGr on the user's keyboard
-  layout (for example `@`, `{`, `[`, `€`): they type normally and trigger
-  no shortcut.
-- [ ] Native dialogs: Open database, New database, Import PGN (the PGN
-  filter), Export PGN, Add engine by file. They start in Documents and
-  return to the app.
-- [ ] The setup editor (Set up position…): palette, move and remove tools,
-  square clicks, dragging pieces off the board.
+- [x] Dragging pieces: 1.e4 by drag; Qd8-h4 through a pawn goes back;
+  e7-e8 opens the promotion picker and clicking the queen promotes;
+  a knight dropped off the board goes back.
+- [x] Clicking pieces: b8 then c6 plays Nc6. Right arrow at a split opens
+  the next-move picker; Down and Enter pick the variation.
+- [x] Right-click menus in the notation and the game list open. Escape
+  closes the notation's menu but not the list's (A7).
+- [x] Typing moves: `e4`, `d5`, `exd5`, `Nf6`, `g1f3`, `Nxd5`, `Bc4`, `e6`,
+  `0-0`, each with Enter, and `e8=Q`.
+- [x] Shortcuts: all work, except Ctrl+Up/Down while the list has focus
+  (A7).
+- [x] AltGr, on the user's layouts: Spanish `@{[€ñ]`, Latin American
+  `@{[\]}ñ`, US-International `€ñ¿é` (the user's own layout); exact text,
+  saved, no shortcut fired. The page sees AltGr as `AltGraph` without
+  `ctrlKey`, so AltGr letters can't trigger Ctrl shortcuts.
+- [x] Native dialogs from real clicks: Open database, New database, Import
+  PGN, Export PGN start in Documents; Add engine… starts in the last
+  folder used (A7). Escape cancels each and the app gets focus back.
+- [x] The setup editor: palette + square click, remove tool, move tool
+  drag, dragging a piece off the board removes it; an illegal position
+  (too many pieces) disables "Start a game from here" with a clear
+  message; a legal one starts the game.
 
 ### B3. WebView2 browser shortcuts
 
-- [ ] Done
+- [x] Done (2026-09-28), real key presses, dev build plus the installed
+  release build for the inspector keys. Results; the failures are A4:
+
+| Key | Board focused | Typing a comment |
+|---|---|---|
+| Ctrl+F | flips, no find bar ✅ | **find bar opens** (a WebView2 popup) |
+| F5, Ctrl+R, Ctrl+Shift+R | **page reloads** | **page reloads**, unsaved edits on screen lost |
+| Ctrl+P | **print preview opens** | **print preview opens** |
+| Ctrl+plus/minus/0, Ctrl+wheel | nothing ✅ | nothing ✅ |
+| Alt+Left, Alt+Right | nothing ✅ | nothing ✅ |
+| F12, Ctrl+Shift+I, Ctrl+Shift+J | release build: nothing ✅ (dev: DevTools, expected) | same |
+
+Also seen: the silent NSIS install closed the running *dev* build (same
+exe name, `chess-app.exe`), most likely the installer's "app is running"
+check. Not proven; it matters only for developers.
 
 With the board focused (not a text field), then again with a comment being
 edited, press each key and note what happens:
@@ -394,7 +434,8 @@ commits (see `docs/file-format.md`).
 
 ### B6. Display scaling and themes
 
-- [ ] Partly done (2026-09-28). This PC has one 3440×1440 monitor at
+- [ ] Partly done (2026-09-28). Dark mode: Windows was switched to dark
+  during B2 and the running app followed it, title bar included. This PC has one 3440×1440 monitor at
   *custom* scaling 120% (`LogPixels` 115), which greys out the Scale
   setting and needs a sign-out to change, so only 120% was tried:
   `layout.js` passes with no strip. Other ratios were covered through the
