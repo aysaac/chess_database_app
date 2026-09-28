@@ -1,6 +1,6 @@
 # Handoff
 
-State of the project as of **2026-09-27**, for the next agent.
+State of the project as of **2026-09-28**, for the next agent.
 Conventions, commands and utilities are in [AGENTS.md](AGENTS.md); read
 that first.
 
@@ -63,7 +63,9 @@ that first.
   and `.gitattributes` pinning LF (the Windows checkout had turned every file
   into CRLF). One `cargo test` run on Windows had a single failure that 16
   reruns didn't reproduce; its name wasn't captured.
-  The user allows visible windows on that PC.
+  The user allows visible windows on that PC. Merged as PR #2
+  (2026-09-28). **What's left for Windows** (code fixes and checks on the
+  PC) is in [docs/windows-testing.md](docs/windows-testing.md).
 - **Next up:** CI once the user agrees, then catalog Phase 3
   (P2). More piece sets are on hold (the user said not now).
 
@@ -273,7 +275,10 @@ Recommended order:
 3. **Housekeeping:** CI on GitHub Actions (Linux/Windows/macOS: fmt,
    clippy, tests, svelte-check, `tauri build`). CI needs
    `scripts/fetch-stockfish.sh <triple>` before a bundled build.
-4. Then catalog Phase 3 (P2): ENG-04/06/07/08/14, ANL-02/03/06, OPEN-02/03/05,
+4. **Windows:** the agent on the Windows PC works through
+   [docs/windows-testing.md](docs/windows-testing.md) and sends PRs; they
+   are reviewed here with the Linux smoke harness before merging.
+5. Then catalog Phase 3 (P2): ENG-04/06/07/08/14, ANL-02/03/06, OPEN-02/03/05,
    REF-01/02, NET-01/07, SRCH-05/06/08/12…
 
 ## Environment notes
@@ -332,3 +337,13 @@ Recommended order:
   1M import ~42 s, index ready 7 s after it, tree 103 ms at the start and
   101 ms after 1.e4, position search 16 ms, quick filter 217 ms, header
   search 18 ms, sort by Black Elo 58 ms.
+
+### Windows
+
+- Windows 10 PC; PR #2 ran the Windows toolchain from WSL2 through
+  `cmd.exe`. The user allows visible windows there (no private display).
+- Settings live in `%APPDATA%\dev.chessdb.desktop\settings.json`.
+- The to-do list, how to work (fresh `main`, one PR per fix) and how to
+  verify each item: [docs/windows-testing.md](docs/windows-testing.md).
+  Windows notes for the next agent go under this heading, not in the
+  TL;DR, so Mac and Windows PRs don't conflict.

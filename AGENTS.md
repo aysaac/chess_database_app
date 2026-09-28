@@ -21,6 +21,7 @@ Windows and macOS.
 | `docs/feature-catalog.md` | Every ChessBase/Fritz feature, with IDs (`DB-01`, `ENG-02`…), priority tiers P0–P5 and dependencies. **Features are referred to by these IDs** |
 | `docs/stack.md` | Stack decisions and the cross-platform rules |
 | `docs/file-format.md` | On-disk database format spec and benchmark numbers |
+| `docs/windows-testing.md` | Windows to-do list: code fixes and checks for the agent on the Windows PC, with how to verify each |
 | `testdata/pgn/` | Small edge-case PGN fixtures (committed) |
 | `testdata/large/` | Big real-world PGNs (git-ignored; see `scripts/fetch-testdata.sh`) |
 | `scripts/smoke/` | End-to-end smoke test harness for the running app |
