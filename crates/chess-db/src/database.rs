@@ -606,7 +606,7 @@ impl Database {
         }
         let mut buf = vec![0u8; (end - start) as usize * RECORD_SIZE];
         read_exact_at(&self.idx, &mut buf, IDX_HEADER + u64::from(start) * RECORD_SIZE as u64)?;
-        Ok(buf.chunks_exact(RECORD_SIZE).map(IndexRecord::decode).collect())
+        Ok(buf.as_chunks::<RECORD_SIZE>().0.iter().map(|c| IndexRecord::decode(c)).collect())
     }
 
     /// Number of (non-deleted) games per id of a name table; for players,

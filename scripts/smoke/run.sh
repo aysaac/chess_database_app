@@ -26,6 +26,11 @@
 # 1.25, the user's laptop screen).
 # SMOKE_VISIBLE=1: open the window on your own desktop instead, to watch it
 # (it takes a tile and focus there; no screenshots).
+#
+# macOS has no private display: the window opens on the desktop (it takes
+# focus), and screenshots are `screencapture` of that window alone, which
+# needs Screen Recording permission for the terminal. Runs on the stock
+# bash 3.2.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -45,6 +50,8 @@ if (exec 3<>"/dev/tcp/localhost/$PORT") 2>/dev/null; then
 fi
 
 mkdir -p "$OUT/shots"
+# Absolute: the app is started from app/.
+OUT="$(cd "$OUT" && pwd)"
 # The harness window gets its own title, to tell it from a normal `tauri dev`
 # window in logs and window lists.
 TITLE="Chess Database smoke $PORT"
@@ -64,8 +71,12 @@ sed -e "s|__ROOT__|$ROOT|g" -e "s|__OUT__|$OUT|g" -e "s|__BIG__|$BIG|g" "$DRIVER
 LOG="$OUT/dev.log"
 : >"$LOG"
 
-# shellcheck source=scripts/offscreen.sh
-source "$ROOT/scripts/offscreen.sh"
+MACOS=0
+[[ "$(uname -s)" == Darwin ]] && MACOS=1
+if ((!MACOS)); then
+  # shellcheck source=scripts/offscreen.sh
+  source "$ROOT/scripts/offscreen.sh"
+fi
 APP_PID=""
 cleanup() {
   if [[ -n "$APP_PID" ]]; then
@@ -73,30 +84,63 @@ cleanup() {
     sleep 1
     kill -KILL -- "-$APP_PID" 2>/dev/null || true
   fi
-  offscreen_stop
+  ((MACOS)) || offscreen_stop
 }
 trap cleanup EXIT
 
 # The app gets a private headless display. It never falls back to the user's
 # desktop: without sway the run stops here and says so.
-launch=()
+launch=(env)
 can_shoot=0
-if [[ -n "${SMOKE_VISIBLE:-}" ]]; then
+if ((MACOS)); then
+  if screencapture -x "$OUT/shots/.probe.png" 2>/dev/null; then
+    can_shoot=1
+  else
+    echo "smoke: no screenshots: give the terminal Screen Recording permission (System Settings > Privacy & Security)"
+  fi
+  rm -f "$OUT/shots/.probe.png"
+  echo "smoke: macOS: the app window opens on your desktop"
+elif [[ -n "${SMOKE_VISIBLE:-}" ]]; then
   echo "smoke: SMOKE_VISIBLE=1: the app window opens on your desktop"
 else
   if ! offscreen_start "$OUT/sway.log"; then
     echo "smoke: no private display, so no run (SMOKE_VISIBLE=1 runs it on your desktop instead)" >&2
     exit 2
   fi
-  launch=("${OFFSCREEN_RUN[@]}")
+  launch=(env "${OFFSCREEN_RUN[@]}")
   command -v grim >/dev/null && can_shoot=1
   echo "smoke: app on a private headless display ($OFFSCREEN_SIZE at scale $OFFSCREEN_SCALE); your desktop isn't touched"
 fi
 
+# macOS: the CoreGraphics id of the harness window, found by its title.
+mac_window_id() {
+  osascript -l JavaScript - "$TITLE" <<'JXA'
+ObjC.import("CoreGraphics");
+function run(argv) {
+  const list = ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, 0));
+  for (let i = 0; i < list.count; i++) {
+    const w = list.objectAtIndex(i);
+    if (ObjC.unwrap(w.objectForKey("kCGWindowName")) === argv[0]) {
+      return String(ObjC.unwrap(w.objectForKey("kCGWindowNumber")));
+    }
+  }
+  return "";
+}
+JXA
+}
+
 shoot() {
-  local name
+  local name id
   name=$(printf '%s' "$1" | tr -cd 'a-zA-Z0-9_-')
   ((can_shoot)) || return 0
+  if ((MACOS)); then
+    id=$(mac_window_id)
+    # -o: no window shadow.
+    if [[ -n "$id" ]] && screencapture -x -o -l "$id" "$OUT/shots/$name.png"; then
+      echo "    screenshot: $OUT/shots/$name.png"
+    fi
+    return 0
+  fi
   # The whole display: sway tiles the only window over all of it, with no
   # borders or bar.
   if offscreen_shot "$OUT/shots/$name.png"; then
@@ -107,25 +151,37 @@ shoot() {
 # Own session, so npm, vite, cargo, the app and its private bus can be
 # stopped together. Settings go to the output folder, so the user's own
 # settings stay untouched.
-setsid "${launch[@]}" bash -c "cd '$ROOT/app' && CHESSDB_SMOKE='$OUT/driver.js' CHESSDB_CONFIG_DIR='$OUT/config' exec npm run tauri dev -- --config '$OUT/tauri.smoke.json'" >"$LOG" 2>&1 &
+# macOS has no setsid; job control gives the background job its own process
+# group instead.
+if command -v setsid >/dev/null; then
+  launch=(setsid "${launch[@]}")
+else
+  set -m
+fi
+"${launch[@]}" bash -c "cd '$ROOT/app' && CHESSDB_SMOKE='$OUT/driver.js' CHESSDB_CONFIG_DIR='$OUT/config' exec npm run tauri dev -- --config '$OUT/tauri.smoke.json'" >"$LOG" 2>&1 &
 APP_PID=$!
+# Without job control's "Terminated" line when cleanup stops it.
+((MACOS)) && disown
 
 echo "smoke: driver $DRIVER, output $OUT (1M-game part: $BIG)"
 status=1
 seen=0
 start=$SECONDS
 while ((SECONDS - start < TIMEOUT)); do
-  mapfile -t lines < <(sed 's/\x1b\[[0-9;]*m//g' "$LOG" | grep -F '[smoke]' || true)
-  for ((i = seen; i < ${#lines[@]}; i++)); do
-    msg="${lines[$i]#*\[smoke\] }"
+  # No mapfile: macOS ships bash 3.2.
+  count=0
+  while IFS= read -r line; do
+    count=$((count + 1))
+    ((count > seen)) || continue
+    msg="${line#*\[smoke\] }"
     echo "  $msg"
     case "$msg" in
       shot:*) shoot "${msg#shot:}" ;;
       done) status=0; break 2 ;;
       FAILED*) break 2 ;;
     esac
-  done
-  seen=${#lines[@]}
+  done < <(perl -pe 's/\e\[[0-9;]*m//g' "$LOG" | grep -F '[smoke]' || true)
+  seen=$count
   if ! kill -0 "$APP_PID" 2>/dev/null; then
     echo "smoke: the app exited before the driver finished"
     break

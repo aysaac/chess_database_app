@@ -1,11 +1,28 @@
 # Handoff
 
-State of the project as of **2026-09-26 (late evening)**, for the next
-agent. Conventions, commands and utilities are in [AGENTS.md](AGENTS.md);
-read that first.
+State of the project as of **2026-09-27**, for the next agent.
+Conventions, commands and utilities are in [AGENTS.md](AGENTS.md); read
+that first.
 
 ## TL;DR
 
+- **macOS (2026-09-27):** the project now also lives on the user's Mac
+  (Apple Silicon, macOS 26.5, see [Environment notes](#macos)). Everything
+  passes there: fmt, clippy, 156 tests plus the ignored TWIC round trip,
+  svelte-check, the build, and all six smoke drivers including the
+  1M-game parts. Changes that session (uncommitted until the user says):
+  - Clippy 1.98 flags `chunks_exact` with a constant size and one
+    `sort_by`; fixed with `as_chunks` / `sort_by_key` (stable since 1.88,
+    so fine on the Linux box's 1.94 and the MSRV).
+  - `scripts/smoke/run.sh` runs on macOS: stock bash 3.2 (no `mapfile`),
+    no `setsid` (job control instead), `perl` instead of GNU `sed`, and
+    `screencapture` of the app window for shots. It also takes a relative
+    out-dir now (it broke because the app starts from `app/`).
+  - **First bundled build:** `tauri build --config
+    src-tauri/tauri.stockfish.json` makes `Chess Database.app` with
+    `stockfish` next to `chess-app` (where `engines.rs` looks) and an
+    87 MB DMG. The DMG step needs `CI=true` here (see below). The app is
+    only ad-hoc signed.
 - **Every P1 item is in**, except more piece sets (UI-01). The second
   session of 2026-09-26 added, one commit each: GAME-03 "Insert", intro
   comment editing (plus a fix for "comment before move"), next-move arrows
@@ -221,9 +238,11 @@ clocks and evals), 16-core laptop:
   palette and square clicks, right-click menus, shortcuts, native file
   dialogs). chessground ignores synthetic events, so the smoke drivers can't
   click the board.
-- `tauri build` with `tauri.stockfish.json` (bundling the sidecar) was never
-  run. Windows and macOS were never built.
-- Light mode was never screenshotted.
+- Real input could now be tested on the Mac (`cliclick`), once the
+  terminal has Accessibility permission.
+- Windows was never built. On macOS the bundle was built but the app from
+  it was never launched and clicked through.
+- Light mode was never screenshotted (the Mac can, once screenshots work).
 - The cursor repair in `scripts/smoke/run.sh` (see below).
 
 ## Next steps
@@ -277,3 +296,24 @@ Recommended order:
   destructive or outside this repository.
 - The user may be running `npm run tauri dev` themselves (port 1420). The
   smoke harness uses port 1430. Don't kill processes you didn't start.
+
+### macOS
+
+- Apple Silicon (arm64), macOS 26.5, terminal Ghostty. Rust 1.98 via
+  rustup (`source ~/.cargo/env` in each shell; installed 2026-09-27),
+  Node 25 from Homebrew, Xcode command line tools. Stockfish 19
+  (`stockfish-aarch64-apple-darwin`, universal) and `testdata/large/` are
+  fetched.
+- **No private display on macOS:** the smoke window opens on the user's
+  desktop and takes focus. The user allowed this ("you have permission to
+  control my screen for smoke test").
+- **Permissions Ghostty lacks** (the user grants them in System Settings >
+  Privacy & Security, then restarts Ghostty): Screen Recording, so
+  `screencapture` works (the harness says "no screenshots" and runs
+  without them until then); Automation of Finder, which the DMG's
+  AppleScript window layout needs; it times out with -1712 otherwise.
+  `CI=true npm run tauri build …` skips that step.
+- Measured in the smoke drivers (debug `tauri dev`, 1M Lichess games):
+  1M import ~42 s, index ready 7 s after it, tree 103 ms at the start and
+  101 ms after 1.e4, position search 16 ms, quick filter 217 ms, header
+  search 18 ms, sort by Black Elo 58 ms.

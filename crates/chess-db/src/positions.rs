@@ -113,7 +113,7 @@ impl Segment {
         }
         let mut buf = vec![0u8; blocks as usize * 8];
         read_exact_at(&file, &mut buf, fence_at)?;
-        let fences = buf.chunks_exact(8).map(|c| u64_at(c, 0)).collect();
+        let fences = buf.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
         Ok(Segment { path: path.to_path_buf(), file, generation, first, end, count, max_ply, fences })
     }
 
@@ -126,7 +126,7 @@ impl Segment {
         let (from, to) = (start * BLOCK, (stop * BLOCK).min(self.count));
         let mut buf = vec![0u8; (to - from) as usize * ENTRY];
         read_exact_at(&self.file, &mut buf, HEADER + from * ENTRY as u64)?;
-        out.extend(buf.chunks_exact(ENTRY).map(PosEntry::decode).filter(|e| e.key == key));
+        out.extend(buf.as_chunks::<ENTRY>().0.iter().map(|c| PosEntry::decode(c)).filter(|e| e.key == key));
         Ok(())
     }
 }
@@ -204,7 +204,7 @@ impl PositionIndex {
         }
 
         let dirty: Vec<GameId> = match std::fs::read(dir.join(DIRTY_FILE)) {
-            Ok(bytes) => bytes.chunks_exact(4).map(|c| u32_at(c, 0)).collect(),
+            Ok(bytes) => bytes.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect(),
             Err(_) => Vec::new(),
         };
         let openings = match std::fs::read(dir.join(OPENINGS_FILE)) {
@@ -213,7 +213,7 @@ impl PositionIndex {
                     && &b[..8] == OPENINGS_MAGIC
                     && u32_at(&b, 8) == openings::data_version() =>
             {
-                b[16..].chunks_exact(2).map(|c| u16_at(c, 0)).collect()
+                b[16..].as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()
             }
             _ => Vec::new(),
         };
