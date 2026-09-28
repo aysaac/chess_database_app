@@ -86,7 +86,7 @@ pub async fn detect_engines(state: State<'_, AppState>) -> AppResult<Vec<EngineD
 #[tauri::command]
 pub async fn add_engine(state: State<'_, AppState>, path: String) -> AppResult<Vec<EngineDto>> {
     let path = PathBuf::from(path);
-    let path = path.canonicalize().unwrap_or(path);
+    let path = dunce::canonicalize(&path).unwrap_or(path);
     if state.settings.lock().expect("settings lock").engines.iter().any(|e| e.path == path) {
         return Err(AppError::new(ErrorCode::AlreadyExists, "this engine is already in the list"));
     }

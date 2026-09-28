@@ -143,7 +143,7 @@ impl AppState {
     pub fn add_db(&self, db: Database, usage: DbUse) -> u32 {
         let handle = self.next_db.fetch_add(1, Ordering::Relaxed) + 1;
         // Canonical, as `find_db` is given: a folder can only be opened once.
-        let path = db.path().canonicalize().unwrap_or_else(|_| db.path().to_path_buf());
+        let path = dunce::canonicalize(db.path()).unwrap_or_else(|_| db.path().to_path_buf());
         if usage == DbUse::List {
             self.update_settings(|s| s.note_recent(&path));
         }

@@ -46,12 +46,33 @@ impl Settings {
     pub fn load(dir: &Path) -> Settings {
         let path = dir.join(FILE);
         match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
-                log::warn!("ignoring unreadable settings {}: {e}", path.display());
-                Settings::default()
-            }),
+            Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
+                .unwrap_or_else(|e| {
+                    log::warn!("ignoring unreadable settings {}: {e}", path.display());
+                    Settings::default()
+                })
+                .simplified(),
             Err(_) => Settings::default(),
         }
+    }
+
+    /// Drops the `\\?\` prefix Windows' `canonicalize` put on paths before
+    /// they went through `dunce`, so old settings show `C:\…` and Recent
+    /// doesn't list a database twice. A no-op elsewhere.
+    fn simplified(mut self) -> Settings {
+        let mut recent: Vec<PathBuf> = Vec::with_capacity(self.recent_databases.len());
+        for p in self.recent_databases.drain(..) {
+            let p = dunce::simplified(&p).to_path_buf();
+            if !recent.contains(&p) {
+                recent.push(p);
+            }
+        }
+        self.recent_databases = recent;
+        self.reference_database = self.reference_database.map(|p| dunce::simplified(&p).to_path_buf());
+        for e in &mut self.engines {
+            e.path = dunce::simplified(&e.path).to_path_buf();
+        }
+        self
     }
 
     /// Writes the settings atomically (temp file + rename).
@@ -119,5 +140,21 @@ mod tests {
         // Unknown and missing fields are fine.
         std::fs::write(dir.path().join(FILE), br#"{"recentDatabases": ["/c"], "future": 1}"#).unwrap();
         assert_eq!(Settings::load(dir.path()).recent_databases, [PathBuf::from("/c")]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drops_extended_length_prefixes() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = br#"{
+            "recentDatabases": ["\\\\?\\C:\\x\\a.chessdb", "C:\\x\\a.chessdb", "C:\\x\\b.chessdb"],
+            "referenceDatabase": "\\\\?\\C:\\x\\b.chessdb",
+            "engines": [{"id": "engine-1", "name": "Stockfish", "path": "\\\\?\\C:\\sf\\stockfish.exe"}]
+        }"#;
+        std::fs::write(dir.path().join(FILE), json).unwrap();
+        let s = Settings::load(dir.path());
+        assert_eq!(s.recent_databases, [PathBuf::from(r"C:\x\a.chessdb"), PathBuf::from(r"C:\x\b.chessdb")]);
+        assert_eq!(s.reference_database, Some(PathBuf::from(r"C:\x\b.chessdb")));
+        assert_eq!(s.engines[0].path, PathBuf::from(r"C:\sf\stockfish.exe"));
     }
 }
