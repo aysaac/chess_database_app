@@ -551,8 +551,12 @@ pub fn update_position_index(db: &Mutex<Database>, progress: &dyn Progress) -> R
     for o in &all_openings {
         bytes.extend_from_slice(&o.to_le_bytes());
     }
-    std::fs::write(&openings_tmp, &bytes)?;
-    File::open(&openings_tmp)?.sync_all()?;
+    {
+        // Syncing needs a writable handle on Windows (FlushFileBuffers).
+        let f = File::create(&openings_tmp)?;
+        write_all_at(&f, &bytes, 0)?;
+        f.sync_all()?;
+    }
 
     // Install: drop superseded segments (closing their files first).
     let final_path = dir.join(format!("positions-{generation}.idx"));

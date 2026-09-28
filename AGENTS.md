@@ -55,6 +55,8 @@ LARGE_PGN=path/to.pgn cargo test --release -p chess-db -- --ignored
 
 # End-to-end smoke test of the real app, on a private headless display (see below; needs sway)
 scripts/smoke/run.sh
+# The same on Windows (the window opens on the desktop; PowerShell 5.1+)
+powershell -ExecutionPolicy Bypass -File scripts\smoke\run.ps1 [scripts\smoke\layout.js]
 
 # Any other window you need to open: run it off-screen, never on the user's desktop
 scripts/offscreen.sh COMMAND [ARGS...]
@@ -107,6 +109,10 @@ desktop, so it's safe to run while they work.
 - **Ports and output:** it uses dev port 1430 (`SMOKE_PORT`), so it can run next to a
   normal `tauri dev` on 1420. Output goes to `target/smoke/<timestamp>/`,
   including the display's log (`sway.log`).
+- **Windows:** `scripts/smoke/run.ps1` takes the same drivers, placeholders
+  and variables. Windows has no private display, so the window opens on the
+  desktop; screenshots use `PrintWindow`, so covered windows still shoot.
+  Paths reach the drivers with forward slashes (`C:/…`).
 - **Off-screen:** the app runs on a private headless display
   (`scripts/offscreen.sh`, next section) and never shows on, or changes,
   the user's desktop. Without sway the harness stops with exit code 2; it
@@ -257,6 +263,9 @@ stay identical before, during and after the run.
   `File::try_lock`.
 - Formats are explicitly little-endian. PGN in accepts CRLF; PGN out writes
   `\n`.
+- Text files are LF everywhere: `.gitattributes` overrides Git for Windows'
+  `core.autocrlf=true`, so WSL and Windows git see the same files and diffs
+  don't turn every line over. Fixtures in `testdata/` are kept byte for byte.
 
 ## Gotchas (each one cost time)
 

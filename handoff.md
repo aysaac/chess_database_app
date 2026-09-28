@@ -51,6 +51,19 @@ that first.
 - **The smoke harness doesn't touch the user's desktop.** It runs the app on
   a private headless sway (`scripts/offscreen.sh`); see
   [Environment notes](#environment-notes).
+- **Windows tested (2026-09-27)** on the user's Windows 10 PC (from WSL2,
+  running the Windows toolchain through `cmd.exe`): fmt, clippy, 156 tests,
+  svelte-check, the frontend build, all six smoke drivers (with Stockfish 19
+  for Windows) and `tauri build --config src-tauri/tauri.stockfish.json`
+  (MSI + NSIS installers; the release exe starts). Fixes it took:
+  `update_position_index` synced `openings.idx.tmp` through a read-only
+  handle ("Access is denied" on Windows); `fitBoard()` now snaps the board
+  in device pixels like chessground (at 120% scaling it left a 6 px strip);
+  a race in `basic.js`; Rust 1.98 clippy lints. New: `scripts/smoke/run.ps1`,
+  and `.gitattributes` pinning LF (the Windows checkout had turned every file
+  into CRLF). One `cargo test` run on Windows had a single failure that 16
+  reruns didn't reproduce; its name wasn't captured.
+  The user allows visible windows on that PC.
 - **Next up:** CI once the user agrees, then catalog Phase 3
   (P2). More piece sets are on hold (the user said not now).
 
@@ -240,8 +253,10 @@ clocks and evals), 16-core laptop:
   click the board.
 - Real input could now be tested on the Mac (`cliclick`), once the
   terminal has Accessibility permission.
-- Windows was never built. On macOS the bundle was built but the app from
-  it was never launched and clicked through.
+- Bundles (`tauri build --config src-tauri/tauri.stockfish.json`) were built
+  on macOS (`.app` and DMG) and Windows (MSI and NSIS installers), but
+  neither was installed and clicked through; on Windows the release exe
+  starts. Linux bundles were never built.
 - Light mode was never screenshotted (the Mac can, once screenshots work).
 - The cursor repair in `scripts/smoke/run.sh` (see below).
 
