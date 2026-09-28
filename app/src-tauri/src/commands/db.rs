@@ -65,7 +65,7 @@ pub async fn create_db(state: State<'_, AppState>, path: String) -> AppResult<Db
 /// The handle of `path` for `usage`: the open database if it's open
 /// already (a folder can only be opened once), else it's opened.
 fn open_for(state: &AppState, path: &Path, usage: DbUse) -> AppResult<u32> {
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if let Some(handle) = state.find_db(&path) {
         state.claim_db(handle, usage);
         return Ok(handle);
@@ -128,7 +128,7 @@ pub async fn set_reference_db(
     }
     let path = path.map(|p| {
         let p = PathBuf::from(p);
-        p.canonicalize().unwrap_or(p)
+        dunce::canonicalize(&p).unwrap_or(p)
     });
     state.update_settings(|s| s.reference_database = path);
     Ok(reference(&state))

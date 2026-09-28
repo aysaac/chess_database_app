@@ -169,7 +169,7 @@ impl AppState {
     /// become the most recent one.
     pub fn add_db(&self, db: Database, usage: DbUse) -> u32 {
         // Canonical, as `find_db` is given: a folder can only be opened once.
-        let path = db.path().canonicalize().unwrap_or_else(|_| db.path().to_path_buf());
+        let path = dunce::canonicalize(db.path()).unwrap_or_else(|_| db.path().to_path_buf());
         self.add_shared(Arc::new(Mutex::new(db)), path, usage)
     }
 
@@ -321,7 +321,7 @@ mod tests {
             Ok(String::new())
         });
         state.index_builds.lock().unwrap().add(Arc::downgrade(&db), job);
-        let path = db.lock().unwrap().path().canonicalize().unwrap();
+        let path = dunce::canonicalize(db.lock().unwrap().path()).unwrap();
         drop(db);
 
         // Closed and opened again while the build runs: the same build.
@@ -344,7 +344,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::default();
         let db = Database::create(&dir.path().join("Busy")).unwrap();
-        let path = db.path().canonicalize().unwrap();
+        let path = dunce::canonicalize(db.path()).unwrap();
         let handle = state.add_db(db, DbUse::List);
         let job = state.db(handle).unwrap();
         assert!(state.release_db(handle, DbUse::List));

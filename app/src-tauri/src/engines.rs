@@ -49,7 +49,7 @@ pub fn detect() -> Vec<PathBuf> {
     }
     let mut out: Vec<PathBuf> = Vec::new();
     for p in found.into_iter().filter(|p| p.is_file()) {
-        let p = p.canonicalize().unwrap_or(p);
+        let p = dunce::canonicalize(&p).unwrap_or(p);
         if !out.contains(&p) {
             out.push(p);
         }
