@@ -113,6 +113,11 @@ desktop, so it's safe to run while they work.
   never falls back to the user's screen. `SMOKE_VISIBLE=1` opens the window
   on the user's desktop instead (it takes a tile and focus; no
   screenshots); only use it when the user asks to watch.
+- **macOS:** there is no private display, so the window opens on the
+  desktop and takes focus (only with the user's OK). Shots are
+  `screencapture` of the app window and need Screen Recording permission
+  for the terminal; without it the run goes on without shots. The script
+  keeps to macOS's bash 3.2.
 - **What it can't do:** it can't drag pieces or press real keys (no input tools are
   installed), and chessground ignores synthetic mouse events. It calls the
   same functions those gestures call.
