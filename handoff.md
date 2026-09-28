@@ -348,9 +348,10 @@ Recommended order:
   Windows notes for the next agent go under this heading, not in the
   TL;DR, so Mac and Windows PRs don't conflict.
 - **2026-09-28:** A1–A3 are PRs #3–#5, and a duplicate-engine race found
-  on the way is #6 (all platforms). Part B is done except B2/B3 (need a
-  person at the keyboard), dark mode and other scales in B6, and B8. An
-  MSI installed after an NSIS one lands in the NSIS folder (B1). B4 found two bugs for every platform,
+  on the way is #6 (all platforms). Part B is done except other scales in
+  B6 and B8. An MSI installed after an NSIS one lands in the NSIS folder
+  (B1). B2/B3 ran with real input (`SendInput`) while the user was away;
+  they found A4 (reload, print, find bar) and A7 (three small bugs). B4 found two bugs for every platform,
   now A5 and A6 in the to-do list.
 - From WSL, Windows programs inherit a PATH without
   `C:\Users\isaac\.cargo\bin`; prepend it in each `powershell.exe`
@@ -363,4 +364,6 @@ Recommended order:
   the webview's buttons (Invoke or Toggle) and inputs (Value); file
   dialogs take `WM_SETTEXT` on the name box and `BM_CLICK` on OK; keys
   posted to `Chrome_RenderWidgetHostHWND` reach the page (arrows and
-  Enter did, typed letters didn't).
+  Enter did, typed letters didn't). Real input needs `SendInput` and the
+  user's OK to leave the PC alone; the webview's keyboard layout belongs
+  to the focus window's thread (`GetGUIThreadInfo`), not the top window's.
