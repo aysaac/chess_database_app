@@ -1,0 +1,11 @@
+# LF in the repo and in every checkout, whatever core.autocrlf says (Git for
+# Windows sets it to true system-wide, which rewrote every file as CRLF and
+# made WSL git see each line as changed).
+* text=auto eol=lf
+
+# Fixtures are compared byte for byte (latin1-crlf.pgn tests CRLF input).
+testdata/** -text
+
+# cmd.exe needs CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
