@@ -349,8 +349,8 @@ Recommended order:
   TL;DR, so Mac and Windows PRs don't conflict.
 - **2026-09-28:** A1–A3 are PRs #3–#5, and a duplicate-engine race found
   on the way is #6 (all platforms). Part B is done except B2/B3 (need a
-  person at the keyboard), the MSI in B1 (needs the UAC click), dark mode
-  and other scales in B6, and B8. B4 found two bugs for every platform,
+  person at the keyboard), dark mode and other scales in B6, and B8. An
+  MSI installed after an NSIS one lands in the NSIS folder (B1). B4 found two bugs for every platform,
   now A5 and A6 in the to-do list.
 - From WSL, Windows programs inherit a PATH without
   `C:\Users\isaac\.cargo\bin`; prepend it in each `powershell.exe`
