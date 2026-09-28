@@ -10,7 +10,7 @@ that first.
   (Apple Silicon, macOS 26.5, see [Environment notes](#macos)). Everything
   passes there: fmt, clippy, 156 tests plus the ignored TWIC round trip,
   svelte-check, the build, and all six smoke drivers including the
-  1M-game parts. Changes that session (uncommitted until the user says):
+  1M-game parts. Changes that session (PR #1, merged 2026-09-28):
   - Clippy 1.98 flags `chunks_exact` with a constant size and one
     `sort_by`; fixed with `as_chunks` / `sort_by_key` (stable since 1.88,
     so fine on the Linux box's 1.94 and the MSRV).
