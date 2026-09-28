@@ -30,7 +30,8 @@ if (-not $Big) { $Big = if (Test-Path (Join-Path $Root 'testdata\large\lichess_1
 $probe = New-Object System.Net.Sockets.TcpClient
 try {
     $probe.Connect('127.0.0.1', $Port)
-    Write-Error "smoke: port $Port is already in use; set SMOKE_PORT to a free port"
+    # Not Write-Error: under 'Stop' it throws, and the script would exit 1.
+    [Console]::Error.WriteLine("smoke: port $Port is already in use; set SMOKE_PORT to a free port")
     exit 2
 } catch [System.Net.Sockets.SocketException] {
 } finally { $probe.Dispose() }
@@ -86,19 +87,22 @@ public static class SmokeShot {
 }
 '@ -ReferencedAssemblies System.Drawing
 
-# Settings go to the output folder, so the user's own settings stay untouched.
-$env:CHESSDB_SMOKE = $driverOut
-$env:CHESSDB_CONFIG_DIR = Join-Path $Out 'config'
-$app = Start-Process cmd.exe -PassThru -WindowStyle Hidden -WorkingDirectory (Join-Path $Root 'app') `
-    -ArgumentList '/c', "npm run tauri dev -- --config `"$confPath`" > `"$Log`" 2>&1"
-
 Write-Host "smoke: driver $Driver, output $Out (1M-game part: $Big)"
 Write-Host 'smoke: the app window opens on your desktop'
 $status = 1
 $seen = 0
-$start = Get-Date
 $done = $false
+$app = $null
+# Run as `.\run.ps1` from an open PowerShell, these would otherwise stay set in
+# that session, and its next `npm run tauri dev` would run the driver.
+$savedEnv = @{ CHESSDB_SMOKE = $env:CHESSDB_SMOKE; CHESSDB_CONFIG_DIR = $env:CHESSDB_CONFIG_DIR }
 try {
+    # Settings go to the output folder, so the user's own settings stay untouched.
+    $env:CHESSDB_SMOKE = $driverOut
+    $env:CHESSDB_CONFIG_DIR = Join-Path $Out 'config'
+    $app = Start-Process cmd.exe -PassThru -WindowStyle Hidden -WorkingDirectory (Join-Path $Root 'app') `
+        -ArgumentList '/c', "npm run tauri dev -- --config `"$confPath`" > `"$Log`" 2>&1"
+    $start = Get-Date
     while (-not $done -and ((Get-Date) - $start).TotalSeconds -lt $Timeout) {
         $fs = [IO.File]::Open($Log, 'Open', 'Read', 'ReadWrite,Delete')
         $text = (New-Object IO.StreamReader($fs, $utf8)).ReadToEnd()
@@ -121,7 +125,11 @@ try {
     if (-not $done -and ((Get-Date) - $start).TotalSeconds -ge $Timeout) { Write-Host "smoke: timed out after ${Timeout}s" }
 } finally {
     # npm, vite, cargo and the app all descend from this cmd.exe.
-    if (-not $app.HasExited) { & taskkill.exe /T /F /PID $app.Id *> $null }
+    if ($app -and -not $app.HasExited) { & taskkill.exe /T /F /PID $app.Id *> $null }
+    foreach ($name in $savedEnv.Keys) {
+        if ($null -eq $savedEnv[$name]) { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
+        else { Set-Item "env:$name" $savedEnv[$name] }
+    }
 }
 
 if ($status -eq 0) {
