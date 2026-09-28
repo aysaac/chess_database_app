@@ -76,6 +76,25 @@ impl Settings {
         self.default_engine.as_deref().and_then(|id| self.engine(id)).or_else(|| self.engines.first())
     }
 
+    /// Adds the engine at `path` unless one with that path is configured.
+    /// Callers probe the engine before calling this, so it checks again:
+    /// two calls at once (the first `list_engines` on a fresh install, say)
+    /// would otherwise both add it.
+    pub fn add_engine(
+        &mut self,
+        path: PathBuf,
+        name: String,
+        declared: Vec<chess_engine::UciOption>,
+        detected: bool,
+    ) -> bool {
+        if self.engines.iter().any(|e| e.path == path) {
+            return false;
+        }
+        let id = new_id(&self.engines);
+        self.engines.push(EngineConfig { id, name, path, detected, declared, options: Vec::new() });
+        true
+    }
+
     pub fn note_recent(&mut self, path: &Path) {
         self.recent_databases.retain(|p| p != path);
         self.recent_databases.insert(0, path.to_path_buf());
@@ -119,5 +138,15 @@ mod tests {
         // Unknown and missing fields are fine.
         std::fs::write(dir.path().join(FILE), br#"{"recentDatabases": ["/c"], "future": 1}"#).unwrap();
         assert_eq!(Settings::load(dir.path()).recent_databases, [PathBuf::from("/c")]);
+    }
+
+    #[test]
+    fn adds_an_engine_path_once() {
+        let mut s = Settings::default();
+        assert!(s.add_engine("/x/stockfish".into(), "Stockfish".into(), Vec::new(), true));
+        assert!(!s.add_engine("/x/stockfish".into(), "Stockfish".into(), Vec::new(), true));
+        assert!(s.add_engine("/y/stockfish".into(), "Stockfish".into(), Vec::new(), false));
+        let ids: Vec<&str> = s.engines.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["engine-1", "engine-2"]);
     }
 }
