@@ -55,7 +55,7 @@
           `workspace ${Math.round(work.height)}`,
       );
       expect(board.width === board.height, `${label}: a square board, got ${board.width}x${board.height}`);
-      expect(Math.abs(cg.width - board.width) < 1, `${label}: chessground to fill the board`);
+      expect(Math.abs(cg.width - board.width) < 1, `${label}: chessground to fill the board, got ${cg.width}x${cg.height} in ${board.width} (dpr ${devicePixelRatio})`);
       expect(board.left >= column.left && board.right <= column.right, `${label}: board inside its column`);
       expect(board.right <= notation.left, `${label}: board not overlapping the notation`);
       expect(nav.bottom <= work.bottom + 0.5, `${label}: nav bar inside the workspace`);

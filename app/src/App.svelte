@@ -41,8 +41,12 @@
       workspace.clientHeight - BOARD_CHROME_Y,
       workspace.clientWidth - NOTATION_MIN - BOARD_CHROME_X,
     );
-    // Multiples of 8 keep the square edges on whole pixels.
-    boardSize = Math.max(BOARD_MIN, Math.floor(fit / 8) * 8);
+    // chessground snaps its board to a multiple of 8 device pixels (whole-pixel
+    // squares), so snap the same way or it leaves a strip at fractional scales
+    // (Windows at 120%). Half a device pixel over the target keeps its floor()
+    // on the target despite layout rounding.
+    const dpr = window.devicePixelRatio || 1;
+    boardSize = Math.max(BOARD_MIN, (Math.floor((fit * dpr) / 8) * 8 + 0.5) / dpr);
   }
 
   // The board colours (UI-01) apply to every board through <html>.

@@ -234,9 +234,10 @@
     await until(() => document.activeElement === editor() && editor().closest(".intro"), "intro editor");
     document.execCommand("insertText", false, "Vienna-style.");
     editor().blur();
-    await until(() => document.querySelector(".notation .intro")?.textContent.trim() === "Vienna-style.",
+    await until(() => document.querySelector(".notation .intro[data-comment]")?.textContent.trim() === "Vienna-style.",
       "intro comment shown");
-    expect((await api.gamePgn(game.view.session)).includes("{Vienna-style.} 1. e4"), "intro in the PGN");
+    const intro = await api.gamePgn(game.view.session);
+    expect(intro.includes("{Vienna-style.} 1. e4"), "intro in the PGN:\n" + intro);
 
     // Promotion picker and underpromotion; K+N vs K is a dead draw.
     await game.newGame("8/4P3/8/8/8/8/k7/4K3 w - - 0 1");
