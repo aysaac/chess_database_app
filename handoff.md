@@ -347,3 +347,20 @@ Recommended order:
   verify each item: [docs/windows-testing.md](docs/windows-testing.md).
   Windows notes for the next agent go under this heading, not in the
   TL;DR, so Mac and Windows PRs don't conflict.
+- **2026-09-28:** A1–A3 are PRs #3–#5, and a duplicate-engine race found
+  on the way is #6 (all platforms). Part B is done except B2/B3 (need a
+  person at the keyboard), the MSI in B1 (needs the UAC click), dark mode
+  and other scales in B6, and B8. B4 found two bugs for every platform,
+  now A5 and A6 in the to-do list.
+- From WSL, Windows programs inherit a PATH without
+  `C:\Users\isaac\.cargo\bin`; prepend it in each `powershell.exe`
+  call. `gh` is in `C:\Program Files\GitHub CLI\` and logged in. Commit
+  and push with Windows git (`cmd.exe /c git …`); WSL git has no identity.
+- The display uses custom scaling (120%), so the Scale setting is greyed
+  out; test other ratios through the webview zoom
+  (`core:webview:allow-set-webview-zoom` in a temporary capability).
+- A release build can be driven without the mouse: UI Automation finds
+  the webview's buttons (Invoke or Toggle) and inputs (Value); file
+  dialogs take `WM_SETTEXT` on the name box and `BM_CLICK` on OK; keys
+  posted to `Chrome_RenderWidgetHostHWND` reach the page (arrows and
+  Enter did, typed letters didn't).
