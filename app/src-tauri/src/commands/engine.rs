@@ -13,7 +13,6 @@ use tauri::{AppHandle, Manager, State};
 use crate::dto::{AnalysisStatusDto, EngineDto, GameViewDto};
 use crate::engines::{self, Analysis};
 use crate::error::{AppError, AppResult, ErrorCode};
-use crate::settings::{EngineConfig, new_id};
 use crate::state::AppState;
 use crate::view::game_view;
 
@@ -46,18 +45,9 @@ async fn add_detected(state: &AppState) -> AppResult<usize> {
     for path in engines::detect().into_iter().filter(|p| !known.contains(p)) {
         match probe_async(path.clone()).await {
             Ok((name, declared)) => {
-                state.update_settings(|s| {
-                    let id = new_id(&s.engines);
-                    s.engines.push(EngineConfig {
-                        id,
-                        name,
-                        path,
-                        detected: true,
-                        declared,
-                        options: Vec::new(),
-                    });
-                });
-                added += 1;
+                if state.update_settings(|s| s.add_engine(path, name, declared, true)) {
+                    added += 1;
+                }
             }
             Err(e) => log::warn!("skipping engine {}: {}", path.display(), e.message),
         }
@@ -91,10 +81,9 @@ pub async fn add_engine(state: State<'_, AppState>, path: String) -> AppResult<V
         return Err(AppError::new(ErrorCode::AlreadyExists, "this engine is already in the list"));
     }
     let (name, declared) = probe_async(path.clone()).await?;
-    state.update_settings(|s| {
-        let id = new_id(&s.engines);
-        s.engines.push(EngineConfig { id, name, path, detected: false, declared, options: Vec::new() });
-    });
+    if !state.update_settings(|s| s.add_engine(path, name, declared, false)) {
+        return Err(AppError::new(ErrorCode::AlreadyExists, "this engine is already in the list"));
+    }
     Ok(engine_list(&state))
 }
 
