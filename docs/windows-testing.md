@@ -67,7 +67,8 @@ Windows check a change gets.
 
 ### A1. `run.ps1`: don't leak the smoke settings; exit 2 on a busy port
 
-- [ ] Done
+- [x] Done (2026-09-28): both variables are restored in `finally` (checked
+  unset and preset), a busy port exits 2, `layout.js` passes.
 
 **Problems** in `scripts/smoke/run.ps1`:
 1. It sets `$env:CHESSDB_SMOKE` and `$env:CHESSDB_CONFIG_DIR` and never
