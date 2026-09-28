@@ -94,7 +94,11 @@ throwing (`[Console]::Error.WriteLine(...)` or `Write-Host`) and then
 
 ### A2. Paths show as `\\?\C:\…`
 
-- [ ] Done
+- [x] Done (2026-09-28): `dunce` 1.0.5 (CC0/MIT-0/Apache-2.0, already in
+  the lockfile through Tauri). New and old settings show `C:\…` only; an
+  old file's duplicate Recent entry merges; a lower-case path reopens the
+  same handle; the reference shares it. Checked through the API from a
+  driver, not by clicking the dialogs.
 
 **Problem.** `canonicalize()` returns extended-length paths on Windows
 (`\\?\C:\Users\…`). The app canonicalizes database and engine paths in

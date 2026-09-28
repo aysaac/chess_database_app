@@ -355,6 +355,7 @@ dependencies = [
  "chess-db",
  "chess-engine",
  "chess-jobs",
+ "dunce",
  "log",
  "serde",
  "serde_json",
