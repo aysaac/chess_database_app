@@ -59,6 +59,21 @@
     fitBoard();
     const resize = new ResizeObserver(fitBoard);
     resize.observe(workspace);
+    // The snap depends on the device pixel ratio, which changes without a
+    // resize when the window moves to a monitor with another scale or the
+    // Windows scale changes. A media query matches only the current ratio,
+    // so listen again after each change.
+    let dprQuery: MediaQueryList | undefined;
+    const watchDpr = () => {
+      dprQuery?.removeEventListener("change", onDprChange);
+      dprQuery = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      dprQuery.addEventListener("change", onDprChange);
+    };
+    const onDprChange = () => {
+      fitBoard();
+      watchDpr();
+    };
+    watchDpr();
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
       if (!(await game.confirmDiscard(game.tabs))) event.preventDefault();
     });
@@ -73,6 +88,7 @@
     })();
     return () => {
       resize.disconnect();
+      dprQuery?.removeEventListener("change", onDprChange);
       unlisten.then((f) => f());
     };
   });
