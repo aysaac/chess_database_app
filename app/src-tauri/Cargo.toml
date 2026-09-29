@@ -27,5 +27,11 @@ log.workspace = true
 thiserror.workspace = true
 ts-rs = "12"
 
+# WebView2 settings Tauri has no option for (browser shortcuts); the versions
+# Tauri itself uses.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows-core = "0.61"
+
 [dev-dependencies]
 tempfile.workspace = true
