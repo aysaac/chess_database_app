@@ -22,7 +22,7 @@ const PGN_FILTER = [{ name: "PGN games", extensions: ["pgn"] }];
  * directory, which under `tauri dev` is src-tauri/ (writing there used to
  * restart the app).
  */
-async function inDocuments(name = ""): Promise<string | undefined> {
+export async function inDocuments(name = ""): Promise<string | undefined> {
   try {
     const dir = await documentDir();
     return name ? await join(dir, name) : dir;
