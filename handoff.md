@@ -355,6 +355,11 @@ Recommended order:
   Fixes: A4 #10, A5 #9, A6 #8, A7 #11. #4 conflicts with #6 and #9 in a
   few lines; rebase whichever merges after #4. B4 found two bugs for every platform,
   now A5 and A6 in the to-do list.
+- **2026-09-28 (Linux review):** #3 and #5–#11 were tested on Linux
+  (checks, all smoke drivers, throwaway drivers reproducing each bug on
+  `main`) and merged. #9 needed a second fix: the reopened database got a
+  second index build writing the same temp files (A5). #4 was merged as
+  #12, rebased onto #6 and #9.
 - From WSL, Windows programs inherit a PATH without
   `C:\Users\isaac\.cargo\bin`; prepend it in each `powershell.exe`
   call. `gh` is in `C:\Program Files\GitHub CLI\` and logged in. Commit
