@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use chess_core::game::GameEditor;
 use chess_db::{Database, GameId, SortSpec, sorted_subset};
@@ -92,6 +92,10 @@ impl Session {
 #[derive(Default)]
 pub struct AppState {
     dbs: Mutex<HashMap<u32, OpenDb>>,
+    /// Databases closed while a job (the position index, a compaction)
+    /// still held them: opening the folder again reuses the same
+    /// `Database` instead of failing on its lock.
+    released: Mutex<Vec<(PathBuf, Weak<Mutex<Database>>)>>,
     next_db: AtomicU32,
     /// Lock order: `filters` before a database.
     pub filters: Mutex<HashMap<u32, ActiveFilter>>,
@@ -141,13 +145,25 @@ impl AppState {
     /// Adds an opened database for `usage`. Databases opened for the list
     /// become the most recent one.
     pub fn add_db(&self, db: Database, usage: DbUse) -> u32 {
-        let handle = self.next_db.fetch_add(1, Ordering::Relaxed) + 1;
         // Canonical, as `find_db` is given: a folder can only be opened once.
         let path = db.path().canonicalize().unwrap_or_else(|_| db.path().to_path_buf());
+        self.add_shared(Arc::new(Mutex::new(db)), path, usage)
+    }
+
+    /// A database closed at `path` (canonical) that a job still holds.
+    pub fn revive_db(&self, path: &Path) -> Option<SharedDb> {
+        let mut released = self.released.lock().expect("released lock");
+        released.retain(|(_, weak)| weak.strong_count() > 0);
+        released.iter().find(|(p, _)| p == path).and_then(|(_, weak)| weak.upgrade())
+    }
+
+    /// Adds a database that's already open, from [`revive_db`](Self::revive_db).
+    pub fn add_shared(&self, db: SharedDb, path: PathBuf, usage: DbUse) -> u32 {
+        let handle = self.next_db.fetch_add(1, Ordering::Relaxed) + 1;
         if usage == DbUse::List {
             self.update_settings(|s| s.note_recent(&path));
         }
-        let mut open = OpenDb { db: Arc::new(Mutex::new(db)), path, listed: false, reference: false };
+        let mut open = OpenDb { db, path, listed: false, reference: false };
         *open.flag(usage) = true;
         self.dbs.lock().expect("dbs lock").insert(handle, open);
         handle
@@ -177,8 +193,14 @@ impl AppState {
         let mut dbs = self.dbs.lock().expect("dbs lock");
         let Some(open) = dbs.get_mut(&handle) else { return false };
         *open.flag(usage) = false;
-        if !open.listed && !open.reference {
-            dbs.remove(&handle);
+        if !open.listed
+            && !open.reference
+            && let Some(open) = dbs.remove(&handle)
+            && Arc::strong_count(&open.db) > 1
+        {
+            let mut released = self.released.lock().expect("released lock");
+            released.retain(|(_, weak)| weak.strong_count() > 0);
+            released.push((open.path, Arc::downgrade(&open.db)));
         }
         true
     }
@@ -258,6 +280,30 @@ mod tests {
         assert!(state.db(handle).is_err(), "closed once nothing uses it");
         assert!(!state.release_db(handle, DbUse::List));
         // The folder isn't locked any more.
+        Database::open(&path).unwrap();
+    }
+
+    #[test]
+    fn a_database_closed_while_a_job_holds_it_can_be_reopened() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let db = Database::create(&dir.path().join("Busy")).unwrap();
+        let path = db.path().canonicalize().unwrap();
+        let handle = state.add_db(db, DbUse::List);
+        let job = state.db(handle).unwrap();
+        assert!(state.release_db(handle, DbUse::List));
+        assert!(state.db(handle).is_err(), "closed for the app");
+        assert!(Database::open(&path).is_err(), "still locked: the job has it");
+
+        let again = state.revive_db(&path).expect("the job's database");
+        assert!(Arc::ptr_eq(&again, &job));
+        let handle = state.add_shared(again, path.clone(), DbUse::List);
+        drop(job);
+        assert!(state.db(handle).is_ok(), "open again under a new handle");
+
+        // Once nothing holds it, it closes for real and isn't revived.
+        assert!(state.release_db(handle, DbUse::List));
+        assert!(state.revive_db(&path).is_none());
         Database::open(&path).unwrap();
     }
 }

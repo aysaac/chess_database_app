@@ -70,6 +70,10 @@ fn open_for(state: &AppState, path: &Path, usage: DbUse) -> AppResult<u32> {
         state.claim_db(handle, usage);
         return Ok(handle);
     }
+    if let Some(db) = state.revive_db(&path) {
+        log::info!("reopened database {} (a job still had it open)", path.display());
+        return Ok(state.add_shared(db, path, usage));
+    }
     let db = Database::open(&path)?;
     log::info!("opened database {} ({} games)", path.display(), db.count());
     Ok(state.add_db(db, usage))
