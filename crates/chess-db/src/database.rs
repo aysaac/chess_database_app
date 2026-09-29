@@ -214,6 +214,9 @@ pub struct Database {
     /// Bumped when cached sort orders become invalid (game replaced).
     sort_epoch: u64,
     generation: u64,
+    /// Bumped by each compaction, which renumbers the games: a position
+    /// index built across one is stale (SRCH-04, DB-06).
+    compactions: u64,
     positions: PositionIndex,
     stats: Option<Vec<GameStat>>,
     /// Games per name id (deleted games excluded), with the generation
@@ -336,6 +339,7 @@ impl Database {
             sorts: HashMap::new(),
             sort_epoch: 0,
             generation: 0,
+            compactions: 0,
             positions,
             stats: None,
             name_counts: HashMap::new(),
@@ -412,6 +416,7 @@ impl Database {
             sorts: HashMap::new(),
             sort_epoch: 0,
             generation: 0,
+            compactions: 0,
             positions,
             stats: None,
             name_counts: HashMap::new(),
@@ -434,6 +439,12 @@ impl Database {
     /// Increases on every change (append, replace, delete flag).
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// How many times this handle compacted the database (see
+    /// [`update_position_index`](crate::update_position_index)).
+    pub fn compactions(&self) -> u64 {
+        self.compactions
     }
 
     pub fn names(&self, kind: NameKind) -> &NameTable {
@@ -807,6 +818,7 @@ impl Database {
         }
         // The index refers to old game ids: close its files, then delete them.
         self.positions = PositionIndex::empty(&self.dir);
+        self.compactions += 1;
         PositionIndex::remove_files(&self.dir)?;
         std::fs::remove_file(self.dir.join(COMPACT_MARKER))?;
 

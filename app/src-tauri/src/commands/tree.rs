@@ -26,6 +26,10 @@ pub async fn update_index(state: State<'_, AppState>, handle: u32) -> AppResult<
     }
     Ok(Some(state.jobs.spawn("index", "Indexing positions", move |ctx| {
         let s = update_position_index(&db, ctx).map_err(to_job_error)?;
+        if s.superseded {
+            // The frontend asks again, which rebuilds for the new game ids.
+            return Ok("The database was compacted; indexing again".to_owned());
+        }
         Ok(format!("Indexed the positions of {} games", thousands(u64::from(s.games))))
     })))
 }
