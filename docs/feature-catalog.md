@@ -302,7 +302,7 @@ Two sides of one program:
 | QOL-01 | Session restore (reopen DBs, games, positions, layout) | CB | P2 | INF-02 | |
 | QOL-02 | Unsaved-change prompts; replace-game vs save-as-new; recovery after crash | CB+FR | P1 | INF-03 | |
 | QOL-03 | Next/previous game in current list/filter without leaving board | CB | P1 | SRCH-14 | |
-| QOL-04 | Drag games between DBs / onto board | CB | P2 | DB-06 | |
+| QOL-04 | Drag games between DBs / onto board | CB | P2 | DB-06 | Done 2026-09-29 (pointer drags; Shift moves) |
 | QOL-05 | Cancellable long operations with ETA | CB | P1 | INF-01 | |
 | QOL-06 | Copy board as image (PNG/SVG) | CB+FR | P2 | UI-01 | **Done** (2026-09-29): "Board image ▾" in the toolbar copies PNG or SVG, or saves either; theme colours, coordinates, last move, check and drawings; three sizes |
 | QOL-07 | Remember column widths/sort/filters per DB | CB | P2 | INF-02 | |
@@ -363,9 +363,11 @@ Two sides of one program:
 > ENG-01/02/03/05/09, ANL-01/04, IO-08/11/12, INF-02/03/04, QOL-01/02/03/05.
 > Open P1 work: more piece sets (UI-01). See handoff.md.
 >
-> **Phase 3 (P2), started 2026-09-29:** QOL-06 (board as a PNG/SVG image), QOL-07 (list
-> sort, column widths and filter per database), QOL-08 (welcome guide, sample games, import
-> wizard), QOL-10 (go to a pasted position).
+> **Phase 3 (P2), started 2026-09-29:** QOL-04 (drag games onto another database, the
+> board or the tab strip, which also completes DB-06's copy/move between databases),
+> QOL-06 (board as a PNG/SVG image), QOL-07 (list sort, column widths and filter per
+> database), QOL-08 (welcome guide, sample games, import wizard), QOL-10 (go to a pasted
+> position).
 
 
 | Phase | Goal | Contents |

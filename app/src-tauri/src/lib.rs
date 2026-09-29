@@ -119,6 +119,8 @@ pub fn run() {
             commands::db::import_report,
             commands::db::export_pgn,
             commands::db::set_deleted,
+            commands::db::set_deleted_rows,
+            commands::db::copy_games,
             commands::db::search_games,
             commands::db::clear_filter,
             commands::db::compact_db,

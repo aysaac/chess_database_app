@@ -58,6 +58,16 @@ that first.
   `tauri dev`. Also fixed: the Opening column had no header label. All
   checks and the smoke drivers except `engine.js` (no Stockfish in that
   worktree) passed on Linux.
+- **QOL-04 (2026-09-29, P2)** on branch `qol-04-drag-games` (one commit,
+  not pushed, not merged). Select several games in the list and drag them
+  onto another database (copy; Shift moves), onto the board or onto the
+  tab strip (they open). It also completes DB-06, which only had
+  delete/restore/compact: copying and moving between databases, also from
+  the list's menu. Details in [New: dragging games](#new-dragging-games-qol-04-2026-09-29).
+  Checks: fmt, clippy, 170 Rust tests plus the TWIC round trip,
+  svelte-check, the build; smoke drivers off-screen: the new `drag.js` and
+  `basic.js` with their 1M-game parts, `layout`, `search`, `tree`, `setup`.
+  `engine.js` wasn't run (no Stockfish in that worktree).
 - **macOS (2026-09-27):** the project now also lives on the user's Mac
   (Apple Silicon, macOS 26.5, see [Environment notes](#macos)). Everything
   passes there: fmt, clippy, 156 tests plus the ignored TWIC round trip,
@@ -158,7 +168,7 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11 ·
   ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16 ·
   QOL-01 (reopens the last database and remembers orientation, pane size,
-  tree visibility, analysis lines), 02, 03, 05, 06, 07, 08, 10.
+  tree visibility, analysis lines), 02, 03, 04, 05, 06, 07, 08, 10.
 - **Partial:**
   - DB-04: players, events, sites and annotators have lists with counts,
     "show games" and rename/merge. No sources or teams, and no per-player
@@ -199,6 +209,40 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   and text, and the saved clips were looked at.
 - `cargo run -p chess-diagram --example render -- out.png [FEN] [SIZE] [black]`
   draws a FEN without the app.
+
+### New: dragging games (QOL-04, 2026-09-29)
+- **Selecting several games** in the list: click, Ctrl+click (add or
+  remove; it moves the anchor), Shift+click and Shift+arrows (from the
+  anchor), Ctrl+A. The selection is kept as row ranges (`lib/selection.ts`),
+  so selecting a million rows costs nothing; the backend turns ranges into
+  game ids in the list's sort and filter (`ListSelectionDto`,
+  `selected_ids` in `commands/db.rs`). Delete and the menu act on the
+  selection; the cursor row decides between delete and restore.
+- **Dragging** starts after 6 px with the button down. A shelf over the
+  notation lists the drop targets: the reference database, recent
+  databases that still exist (not the open one) and "New database…" (asks
+  where, via the save dialog). A label under the pointer says what the drop
+  will do; Shift switches copy to move, Escape cancels. The board opens the
+  first game like a double-click and the rest (up to 10) in new tabs; the
+  tab strip opens all in new tabs. `lib/stores/drag.svelte.ts`,
+  `DropShelf.svelte`.
+- **Pointer events, not HTML5 drag and drop** (decision in
+  `docs/stack.md`): WebView2 breaks HTML5 DnD while Tauri's file drop is on,
+  which IO-09 needs, and smoke drivers can dispatch pointer events.
+- **Copy/move (DB-06):** `chess_db::copy_games` appends the stored blob
+  bytes unchanged in batches of 2,000 and re-interns the names in the
+  target; nothing is decoded, so copies are exact (unit tests, a proptest
+  property, and `drag.js` compares PGN of every copy). Deleted games are
+  skipped. Moving marks the originals deleted after the copies commit.
+  Cancelling keeps what's copied. A target that isn't open is opened (or
+  created) for the job alone (`AppState::db_at`), shared if the list opens
+  it meanwhile. A new target is added to the recent list second, so the
+  open database is still the one reopened at start-up.
+- **Menu and keyboard path:** the list menu (right-click, the Menu key or
+  Shift+F10; arrows move between items) has "Copy … to database…" and
+  "Move … to database…", which open `CopyGamesDialog.svelte`.
+- `Database::set_deleted_many` marks many games with one fsync (the old
+  per-id fsync was listed as debt below).
 
 ### New in the second session (2026-09-26, late)
 - **Insert** in the variation dialog: the new move replaces the recorded
@@ -290,6 +334,7 @@ clocks and evals), 16-core laptop:
 | Position index build | 12.3 s (8 threads), 46.2M positions, 740 MB |
 | Opening tree: start / 1.e4 / Najdorf | 34 ms (first use, loads per-game stats) / 6.7 ms / 0.1 ms |
 | In the dev app (`tauri dev`) | index ready 14 s after a 1M import; tree 250 ms first, ~100 ms after 1.e4; position search (585k games) 45 ms |
+| Copy 1M games to a new database (DB-06, `drag.js`) | 13.2 s in the dev app, with other agents' smoke runs loading the machine (blobs copied as is, nothing decoded) |
 
 ### How the pieces talk (additions)
 - **Analysis:** `start_analysis` starts an `Analyzer` (`chess-engine`) on
@@ -325,7 +370,10 @@ clocks and evals), 16-core laptop:
 - Column widths are per database; a new database starts with the defaults.
   The list has no horizontal scrolling, so columns widened past the pane
   are cut off at the right (as in narrow windows before).
-- `set_deleted` fsyncs once per id; batch it before bulk deletes exist.
+- Deleting or restoring a selection (`set_deleted_rows`) runs in the command,
+  not as a job: fine for thousands of rows, a second or two for a million.
+- A copy target that another program has open fails with "database is
+  open in another process"; nothing waits for it.
 - Compaction holds the database lock for its whole run; the list waits.
 
 **PGN** (unchanged)
@@ -377,6 +425,11 @@ clocks and evals), 16-core laptop:
   click the board.
 - Real input could now be tested on the Mac (`cliclick`), once the
   terminal has Accessibility permission.
+- Dragging games (QOL-04) with a real mouse: `drag.js` dispatches synthetic
+  pointer events at the real positions, but WebKitGTK/WebView2/WKWebView
+  delivery of real ones (implicit capture, `buttons` on moves, releasing
+  outside the window) is untested. The "New database…" drop target opens a
+  native save dialog, so drivers call `db.copyRows(…, create)` instead.
 - Bundles (`tauri build --config src-tauri/tauri.stockfish.json`) were built
   on macOS (`.app` and DMG) and Windows (MSI and NSIS installers), but
   neither was installed and clicked through; on Windows the release exe
@@ -407,8 +460,11 @@ Recommended order:
 4. **Windows:** the agent on the Windows PC works through
    [docs/windows-testing.md](docs/windows-testing.md) and sends PRs; they
    are reviewed here with the Linux smoke harness before merging.
-5. Then catalog Phase 3 (P2): ENG-04/06/07/08/14, ANL-02/03/06, OPEN-02/03/05,
-   REF-01/02, NET-01/07, SRCH-05/06/08/12… (QOL-10 is done, on its branch.)
+5. Catalog Phase 3 (P2) has begun: QOL-04, 06, 07, 08 and 10 are in. Next:
+   ENG-04/06/07/08/14, ANL-02/03/06, OPEN-02/03/05, REF-01/02, NET-01/07,
+   SRCH-05/06/08/12… DB-14 (clip database) and PLAY-11 now have DB-06's copy
+   to build on; IO-09 (drop PGN files on the window) can use Tauri's file
+   drop, which the in-app drags leave alone.
 
 ## Environment notes
 

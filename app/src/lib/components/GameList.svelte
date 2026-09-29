@@ -3,11 +3,15 @@
   import { api, isAppError } from "../api";
   import type { GameRowDto } from "../bindings/GameRowDto";
   import type { SortKeyDto } from "../bindings/SortKeyDto";
+  import type { CopyModeDto } from "../bindings/CopyModeDto";
   import { formatCount, resultLabel } from "../format";
+  import { contains, count, normalize, span, toggle, type Ranges } from "../selection";
   import { db } from "../stores/db.svelte";
+  import { drag, type GamesDrag } from "../stores/drag.svelte";
   import { game } from "../stores/game.svelte";
   import { notices } from "../stores/notify.svelte";
   import { onboarding } from "../stores/onboarding.svelte";
+  import CopyGamesDialog from "./CopyGamesDialog.svelte";
   import FilterBar from "./FilterBar.svelte";
 
   const ROW = 26;
@@ -69,7 +73,12 @@
   let viewport: HTMLDivElement;
   let viewH = $state(0);
   let virtualTop = $state(0);
+  /** The cursor row (keyboard, Enter, next/previous game). */
   let selected = $state<number | null>(null);
+  /** Selected rows, for dragging (QOL-04), copying and deleting (DB-06). */
+  let picked = $state<Ranges>([]);
+  /** Where Shift+click and Shift+arrows extend the selection from. */
+  let anchor: number | null = null;
   let menu = $state<{ x: number; y: number; row: GameRowDto } | null>(null);
   let headMenu = $state<{ x: number; y: number; column: Column } | null>(null);
   /** Id of the column whose edge is being dragged. */
@@ -121,6 +130,8 @@
     menu = null;
     headMenu = { x: e.clientX, y: e.clientY, column };
   }
+  let copyDialog = $state<{ ranges: Ranges; mode: CopyModeDto } | null>(null);
+  const pickedCount = $derived(count(picked));
 
   let cache = new Map<number, GameRowDto[]>();
   let stale = new Map<number, GameRowDto[]>();
@@ -195,6 +206,8 @@
     loading = new Set();
     if (!sameList) {
       selected = null;
+      picked = [];
+      anchor = null;
       virtualTop = 0;
       if (viewport) viewport.scrollTop = 0;
       // Row numbers now mean other games.
@@ -241,11 +254,86 @@
     return (cache.get(p) ?? stale.get(p))?.[index - p * PAGE];
   }
 
-  function select(index: number) {
+  /** Moves the cursor to `index` and selects that row alone, or with `extend` the rows from the anchor. */
+  function select(index: number, extend = false) {
     selected = Math.max(0, Math.min(total - 1, index));
-    const top = selected * ROW;
+    if (extend && anchor !== null) {
+      picked = [span(anchor, selected)];
+    } else {
+      picked = [[selected, selected + 1]];
+      anchor = selected;
+    }
+    reveal(selected);
+  }
+
+  /** Scrolls row `index` into view. */
+  function reveal(index: number) {
+    const top = index * ROW;
     if (top < virtualTop) setVirtualTop(top);
     else if (top + ROW > virtualTop + viewH) setVirtualTop(top + ROW - viewH);
+  }
+
+  /** `Carlsen – Nakamura` for a row. */
+  function players(r: GameRowDto): string {
+    const last = (n: string) => (n ? n.split(",")[0] : "?");
+    return `${last(r.white)} – ${last(r.black)}`;
+  }
+
+  function dragged(): GamesDrag | null {
+    if (!db.info || !picked.length) return null;
+    const n = count(picked);
+    const one = n === 1 ? rowAt(picked[0][0]) : undefined;
+    return {
+      handle: db.info.handle,
+      ranges: $state.snapshot(picked),
+      count: n,
+      label: one ? players(one) : n === 1 ? "1 game" : `${formatCount(n)} games`,
+    };
+  }
+
+  /**
+   * Pressing a row selects it (Ctrl adds or removes it, Shift selects the
+   * rows from the anchor) and can start dragging the selection (QOL-04).
+   * Pressing one of several selected rows keeps them all for the drag; a
+   * plain click then selects that row alone.
+   */
+  function onRowDown(e: PointerEvent, index: number) {
+    if (e.button !== 0) return;
+    const mod = e.ctrlKey || e.metaKey;
+    let collapse = false;
+    if (e.shiftKey && anchor !== null) {
+      picked = mod ? normalize([...picked, span(anchor, index)]) : [span(anchor, index)];
+    } else if (mod) {
+      picked = toggle(picked, index);
+      anchor = index;
+    } else if (contains(picked, index) && count(picked) > 1) {
+      anchor = index;
+      collapse = true;
+    } else {
+      picked = [[index, index + 1]];
+      anchor = index;
+    }
+    selected = index;
+    if (!contains(picked, index)) return;
+    drag.arm(e, dragged, () => {
+      if (collapse) picked = [[index, index + 1]];
+    });
+  }
+
+  /** The rows the menu and Delete act on: the selection if it has `index`, else that row alone. */
+  function rowsFor(index: number): Ranges {
+    if (!contains(picked, index)) {
+      picked = [[index, index + 1]];
+      anchor = index;
+    }
+    selected = index;
+    return $state.snapshot(picked);
+  }
+
+  function openMenuAt(index: number, x: number, y: number) {
+    const row = rowAt(index);
+    rowsFor(index);
+    if (row) menu = { x, y, row };
   }
 
   /** Opens a row's game; `newTab` (Ctrl) opens it next to the current one. */
@@ -253,12 +341,19 @@
     if (row && db.info) await game.open(db.info.handle, row.id, index, newTab ? "tab" : "auto");
   }
 
-  // Follow next/previous game (opened from the board) in the list.
+  // Follow next/previous game (opened from the board) in the list. A game
+  // among the selected rows (several dropped on the tab strip) keeps them.
   $effect(() => {
     const index = game.listIndex;
     if (index === null) return;
     untrack(() => {
-      if (index !== selected && viewport) select(index);
+      if (index === selected || !viewport) return;
+      if (contains(picked, index)) {
+        selected = index;
+        reveal(index);
+      } else {
+        select(index);
+      }
     });
   });
 
@@ -279,13 +374,22 @@
     if (e.key in moves) {
       e.preventDefault();
       e.stopPropagation();
-      select(moves[e.key]);
+      select(moves[e.key], e.shiftKey);
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && total > 0) {
+      e.preventDefault();
+      picked = [[0, total]];
+      anchor = selected ?? 0;
     } else if (e.key === "Enter" && selected !== null) {
       e.preventDefault();
       openRow(rowAt(selected), selected, e.ctrlKey || e.metaKey);
     } else if (e.key === "Delete" && selected !== null) {
+      // The cursor row decides: a deleted one restores the selection.
       const row = rowAt(selected);
-      if (row) db.setDeleted([row.id], !row.deleted);
+      if (row) db.setDeletedRows(rowsFor(selected), !row.deleted);
+    } else if ((e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) && selected !== null) {
+      e.preventDefault();
+      const r = viewport.getBoundingClientRect();
+      openMenuAt(selected, r.left + 80, r.top + (selected * ROW - virtualTop) + ROW);
     }
   }
 
@@ -307,6 +411,7 @@
       e.preventDefault();
       menu = null;
       headMenu = null;
+      viewport?.focus();
     }
   }}
 />
@@ -365,18 +470,19 @@
         {#each visible as { index, row } (index)}
           <div
             class="row"
-            class:selected={selected === index}
+            class:selected={contains(picked, index)}
+            class:cursor={selected === index && pickedCount > 1}
             class:deleted={row?.deleted}
             class:open={row && isOpen(row)}
             role="row"
+            aria-selected={contains(picked, index)}
             tabindex="-1"
-            onmousedown={() => (selected = index)}
+            onpointerdown={(e) => onRowDown(e, index)}
             ondblclick={(e) => openRow(row, index, e.ctrlKey || e.metaKey)}
             oncontextmenu={(e) => {
               e.preventDefault();
-              selected = index;
               headMenu = null;
-              if (row) menu = { x: e.clientX, y: e.clientY, row };
+              openMenuAt(index, e.clientX, e.clientY);
             }}
           >
             {#if row}
@@ -441,18 +547,35 @@
 
 {#if menu}
   {@const row = menu.row}
+  {@const what = pickedCount > 1 ? `${formatCount(pickedCount)} games` : "game"}
   <div
     class="menu"
     role="menu"
     tabindex="-1"
     style:left="{menu.x}px"
-    style:top="{Math.min(menu.y, window.innerHeight - 120)}px"
+    style:top="{Math.min(menu.y, window.innerHeight - 180)}px"
     onmousedown={(e) => e.stopPropagation()}
+    onkeydown={(e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      const items = [...e.currentTarget.querySelectorAll<HTMLElement>("[role='menuitem']")];
+      const i = items.indexOf(document.activeElement as HTMLElement);
+      items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+    }}
+    {@attach (el) => el.querySelector<HTMLElement>("[role='menuitem']")?.focus()}
   >
     <button role="menuitem" onclick={() => { const i = selected; menu = null; openRow(row, i ?? 0); }}>Open game</button>
     <button role="menuitem" onclick={() => { const i = selected; menu = null; openRow(row, i ?? 0, true); }}>Open in a new tab</button>
-    <button role="menuitem" onclick={() => { menu = null; db.setDeleted([row.id], !row.deleted); }}>
-      {row.deleted ? "Restore game" : "Mark as deleted"}
+    <hr />
+    <button role="menuitem" onclick={() => { menu = null; copyDialog = { ranges: $state.snapshot(picked), mode: "copy" }; }}>
+      Copy {pickedCount > 1 ? what : "game"} to database…
+    </button>
+    <button role="menuitem" onclick={() => { menu = null; copyDialog = { ranges: $state.snapshot(picked), mode: "move" }; }}>
+      Move {pickedCount > 1 ? what : "game"} to database…
+    </button>
+    <hr />
+    <button role="menuitem" onclick={() => { menu = null; db.setDeletedRows($state.snapshot(picked), !row.deleted); }}>
+      {row.deleted ? `Restore ${what}` : `Mark ${what} as deleted`}
     </button>
   </div>
 {/if}
@@ -482,6 +605,17 @@
       Default widths for all columns
     </button>
   </div>
+{/if}
+
+{#if copyDialog}
+  <CopyGamesDialog
+    ranges={copyDialog.ranges}
+    mode={copyDialog.mode}
+    onClose={() => {
+      copyDialog = null;
+      viewport?.focus();
+    }}
+  />
 {/if}
 
 {#if db.info && total > 0}
@@ -628,6 +762,12 @@
     background: var(--felt-soft);
   }
 
+  /* The cursor row among several selected ones. */
+  .row.cursor {
+    outline: 1px dotted var(--felt);
+    outline-offset: -2px;
+  }
+
   .row.open {
     box-shadow: inset 3px 0 0 var(--felt);
   }
@@ -692,6 +832,13 @@
 
   .menu button {
     text-align: left;
+  }
+
+  .menu hr {
+    width: 100%;
+    margin: 4px 0;
+    border: 0;
+    border-top: 1px solid var(--rule);
   }
 
   .sr-only {

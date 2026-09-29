@@ -200,6 +200,31 @@ impl AppState {
         released.iter().find(|(p, _)| p == path).and_then(|(_, weak)| weak.upgrade())
     }
 
+    /// The database at `path` for a job that writes into it (copying games,
+    /// DB-06/QOL-04): the app's own if it has it open, else it's opened for
+    /// the job alone, or created first with `create` if it doesn't exist.
+    /// Opening it in the list while the job still runs shares the job's
+    /// (see [`revive_db`](Self::revive_db)); otherwise it closes when the
+    /// job lets go of it. Also says whether it was created.
+    pub fn db_at(&self, path: &Path, create: bool) -> AppResult<(SharedDb, bool)> {
+        let dir = if create { Database::dir_for(path) } else { path.to_path_buf() };
+        let canonical = dunce::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        if let Some(handle) = self.find_db(&canonical) {
+            return Ok((self.db(handle)?, false));
+        }
+        if let Some(db) = self.revive_db(&canonical) {
+            return Ok((db, false));
+        }
+        let created = create && !dir.exists();
+        let db = if created { Database::create(&dir)? } else { Database::open(&canonical)? };
+        let canonical = dunce::canonicalize(db.path()).unwrap_or_else(|_| db.path().to_path_buf());
+        let db = Arc::new(Mutex::new(db));
+        let mut released = self.released.lock().expect("released lock");
+        released.retain(|(_, weak)| weak.strong_count() > 0);
+        released.push((canonical, Arc::downgrade(&db)));
+        Ok((db, created))
+    }
+
     /// Adds a database that's already open, from [`revive_db`](Self::revive_db).
     pub fn add_shared(&self, db: SharedDb, path: PathBuf, usage: DbUse) -> u32 {
         let handle = self.next_db.fetch_add(1, Ordering::Relaxed) + 1;
@@ -525,6 +550,36 @@ mod tests {
         finish.send(()).unwrap();
         state.jobs.wait(job);
         assert_eq!(state.index_builds.lock().unwrap().running(&db, &state.jobs), None, "finished");
+    }
+
+    #[test]
+    fn a_copy_target_is_shared_while_a_job_writes_into_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let listed = state.add_db(Database::create(&dir.path().join("Listed")).unwrap(), DbUse::List);
+        let path = dunce::canonicalize(dir.path().join("Listed.chessdb")).unwrap();
+
+        // An open database is the app's own.
+        let (db, created) = state.db_at(&path, false).unwrap();
+        assert!(Arc::ptr_eq(&db, &state.db(listed).unwrap()) && !created);
+
+        // A new one is created (with its extension) for the job alone.
+        let (clip, created) = state.db_at(&dir.path().join("Clip"), true).unwrap();
+        let clip_path = dunce::canonicalize(dir.path().join("Clip.chessdb")).unwrap();
+        assert!(created && state.find_db(&clip_path).is_none());
+        // Asked again (another drop) or opened in the list meanwhile: the same one.
+        let (again, created) = state.db_at(&dir.path().join("Clip.chessdb"), true).unwrap();
+        assert!(Arc::ptr_eq(&again, &clip) && !created);
+        let revived = state.revive_db(&clip_path).expect("held by the job");
+        assert!(Arc::ptr_eq(&revived, &clip));
+        drop((again, revived, clip));
+
+        // Once the job is done it's closed: opening it again works.
+        let (reopened, created) = state.db_at(&clip_path, false).unwrap();
+        assert!(!created);
+        drop(reopened);
+        Database::open(&clip_path).unwrap();
+        assert!(state.db_at(&dir.path().join("Missing.chessdb"), false).is_err());
     }
 
     #[test]

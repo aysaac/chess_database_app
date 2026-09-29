@@ -74,6 +74,12 @@ body {
   user-select: none;
 }
 
+/* While games are dragged out of the list (QOL-04). */
+body.dragging-games,
+body.dragging-games * {
+  cursor: grabbing !important;
+}
+
 button {
   font: inherit;
   color: inherit;

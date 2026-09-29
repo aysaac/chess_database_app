@@ -6,6 +6,7 @@ import type { AnalysisStatusDto } from "./bindings/AnalysisStatusDto";
 import type { AppError } from "./bindings/AppError";
 import type { BoardImageDto } from "./bindings/BoardImageDto";
 import type { CommentSlotDto } from "./bindings/CommentSlotDto";
+import type { CopyModeDto } from "./bindings/CopyModeDto";
 import type { DbInfoDto } from "./bindings/DbInfoDto";
 import type { DbViewDto } from "./bindings/DbViewDto";
 import type { EngineDto } from "./bindings/EngineDto";
@@ -19,6 +20,7 @@ import type { ImageFormatDto } from "./bindings/ImageFormatDto";
 import type { ImportReportDto } from "./bindings/ImportReportDto";
 import type { JobDto } from "./bindings/JobDto";
 import type { LegalMoveDto } from "./bindings/LegalMoveDto";
+import type { ListSelectionDto } from "./bindings/ListSelectionDto";
 import type { NameKindDto } from "./bindings/NameKindDto";
 import type { NameListDto } from "./bindings/NameListDto";
 import type { OnboardingDto } from "./bindings/OnboardingDto";
@@ -49,6 +51,10 @@ export const api = {
     invoke<number>("export_pgn", { handle, path, ids }),
   setDeleted: (handle: number, ids: number[], deleted: boolean) =>
     invoke<void>("set_deleted", { handle, ids, deleted }),
+  setDeletedRows: (handle: number, selection: ListSelectionDto, deleted: boolean) =>
+    invoke<number>("set_deleted_rows", { handle, selection, deleted }),
+  copyGames: (handle: number, selection: ListSelectionDto, target: string, create: boolean, mode: CopyModeDto) =>
+    invoke<number>("copy_games", { handle, selection, target, create, mode }),
   searchGames: (handle: number, query: Partial<HeaderQueryDto>, within: boolean, quick: boolean) =>
     invoke<number | null>("search_games", { handle, query, within, quick }),
   clearFilter: (handle: number) => invoke<DbInfoDto>("clear_filter", { handle }),

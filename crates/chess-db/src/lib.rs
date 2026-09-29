@@ -1,8 +1,10 @@
 //! Native chess database storage: the on-disk format (see
-//! `docs/file-format.md`), PGN import/export and sorted game lists.
+//! `docs/file-format.md`), PGN import/export, copying games between
+//! databases and sorted game lists.
 
 pub mod blob;
 mod bytes;
+mod copy;
 mod database;
 mod export;
 mod import;
@@ -15,6 +17,7 @@ mod sort;
 
 use std::path::PathBuf;
 
+pub use copy::{CopySummary, copy_games};
 pub use database::{CompactSummary, Database, DbInfo, EXTENSION, GameRow, GameStat, NameKind, PreparedGame};
 pub use export::export_pgn;
 pub use import::{ImportSummary, ImportWarning, import_pgn, import_reader};

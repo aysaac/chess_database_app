@@ -99,7 +99,11 @@ desktop, so it's safe to run while they work.
   and SVG, save, a failed save), `onboarding.js` (welcome guide, sample
   games, engine page, import wizard; QOL-08), `view.js` (QOL-07: resizing
   columns, and the sort, widths and each kind of filter coming back after
-  reopening). `search.js`, `tree.js` and `view.js` time the 1M-game database when `__BIG__`.
+  reopening), `drag.js` (selecting several games, dragging them onto another
+  database, the board and the tab strip, Shift to move, Escape, the list
+  menu's copy dialog, copying into a new and into the reference database;
+  QOL-04/DB-06). `search.js`, `tree.js` and `view.js` time the 1M-game
+  database when `__BIG__`; `drag.js` times copying it.
 - **Clipboard:** a driver logs `clip:<name>` to have the harness save the
   private display's clipboard (`wl-paste`) as `<out-dir>/clips/<name>.png`
   or `.txt`, and print the types on offer. Linux only; it never reads the
@@ -142,7 +146,10 @@ desktop, so it's safe to run while they work.
   keeps to macOS's bash 3.2.
 - **What it can't do:** it can't drag pieces or press real keys (no input tools are
   installed), and chessground ignores synthetic mouse events. It calls the
-  same functions those gestures call.
+  same functions those gestures call. The app's own pointer handling (list
+  selection, dragging games) does take synthetic `PointerEvent`s: `drag.js`
+  dispatches them at elements' real positions, with `buttons: 1` on moves
+  (a move without it ends the drag, as a release outside the window does).
 
 ### Running windows off-screen (`scripts/offscreen.sh`)
 
@@ -322,6 +329,10 @@ stay identical before, during and after the run.
   0.29 uses a `Visitor` with `Tags`/`Movetext`/`Output` associated types
   and `ControlFlow`.
 - `svelte-check` doesn't support TypeScript 7 yet. Stay on TS 6.
+- **Svelte 5 props are live getters.** A dialog shown by `{#if thing}` with
+  `prop={thing.x}` throws once its `onClose` sets `thing = null` and it then
+  reads `prop`. Copy props into locals before calling `onClose`
+  (`CopyGamesDialog.svelte`).
 - TWIC rejects `curl` without browser-like headers (HTTP 406). The fetch
   script sends them.
 - Editing files under `app/src` or the crates while `tauri dev` runs

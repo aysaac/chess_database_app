@@ -123,6 +123,20 @@ pub fn mainline(blob: &[u8]) -> Result<(Option<Chess>, Vec<u8>), DbError> {
     }
 }
 
+/// The Date, Round and ECO strings of a blob, read without decoding the
+/// moves (copying games between databases needs them for the record).
+pub fn date_round_eco(blob: &[u8]) -> Result<(String, String, String), DbError> {
+    let mut r = ByteReader::new(blob);
+    let version = r.u8()?;
+    if version != BLOB_VERSION {
+        return Err(DbError::Corrupt(format!("unknown blob version {version}")));
+    }
+    if r.u8()? & FLAG_SETUP != 0 {
+        skip_str(&mut r)?;
+    }
+    Ok((r.str()?, r.str()?, r.str()?))
+}
+
 pub fn encode_game(game: &Game) -> Vec<u8> {
     let mut out = Vec::with_capacity(64 + game.mainline_len() * 2);
     out.push(BLOB_VERSION);

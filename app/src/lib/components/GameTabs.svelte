@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { GameTab } from "../stores/game.svelte";
+  import { drag } from "../stores/drag.svelte";
   import { game } from "../stores/game.svelte";
 
   // Open games as tabs (UI-05).
@@ -25,7 +26,16 @@
   }
 </script>
 
-<div class="tabs" role="tablist" aria-label="Open games" tabindex="-1" onkeydown={onKey}>
+<!-- Games dragged from the list onto the tabs open in new tabs (QOL-04). -->
+<div
+  class="tabs"
+  class:drop-over={drag.target?.kind === "tabs"}
+  role="tablist"
+  aria-label="Open games"
+  tabindex="-1"
+  data-drop="tabs"
+  onkeydown={onKey}
+>
   {#each game.tabs as t (t.session)}
     {@const active = t.session === game.activeSession}
     <div class="tab" class:active>
@@ -59,6 +69,11 @@
     border-bottom: 1px solid var(--rule);
     overflow-x: auto;
     scrollbar-width: thin;
+  }
+
+  .tabs.drop-over {
+    background: var(--felt-soft);
+    box-shadow: inset 0 0 0 2px var(--felt);
   }
 
   .tab {

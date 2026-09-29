@@ -270,6 +270,22 @@ class GameStore {
     await this.#show(() => api.openGame(handle, game), mode, listIndex);
   }
 
+  /**
+   * Opens games dropped from the list (QOL-04). On the board the first opens
+   * like a double-click; on the tab strip (`newTabs`) it gets a new tab. The
+   * others always get new tabs, and games already open are only shown.
+   * The first one is on screen afterwards.
+   */
+  async openRows(handle: number, rows: { id: number; index: number }[], newTabs = false) {
+    let first: number | null = null;
+    for (const [i, row] of rows.entries()) {
+      const open = this.tabs.find((t) => t.view.source?.db === handle && t.view.source.game === row.id);
+      await this.open(handle, row.id, row.index, open || (i === 0 && !newTabs) ? "auto" : "tab");
+      if (i === 0) first = this.activeSession;
+    }
+    if (first !== null) await this.activate(first);
+  }
+
   newGame(fen: string | null = null, mode: OpenMode = "auto") {
     return this.#show(() => api.newGame(fen), mode, null);
   }

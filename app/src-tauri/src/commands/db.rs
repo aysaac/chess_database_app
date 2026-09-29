@@ -1,15 +1,16 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chess_db::{
-    Database, EloMode, GameSet, HeaderQuery, ResultFilter, SortSpec, build_sort, export_pgn as export_db,
-    import_pgn as import_db, page_ids, search_headers,
+    Database, EloMode, GameId, GameSet, HeaderQuery, ResultFilter, SortSpec, build_sort,
+    export_pgn as export_db, import_pgn as import_db, page_ids, search_headers,
 };
 use chess_jobs::JobError;
 use tauri::{AppHandle, Manager, State};
 
 use crate::dto::{
-    DbInfoDto, FilterDto, GamePage, GameRowDto, HeaderQueryDto, ImportReportDto, IndexStatusDto,
-    ReferenceDbDto, SortSpecDto,
+    CopyModeDto, DbInfoDto, FilterDto, GamePage, GameRowDto, HeaderQueryDto, ImportReportDto, IndexStatusDto,
+    ListSelectionDto, ReferenceDbDto, SortSpecDto,
 };
 use crate::error::{AppError, AppResult};
 use crate::settings::FilterStep;
@@ -441,11 +442,109 @@ pub async fn set_deleted(
     deleted: bool,
 ) -> AppResult<()> {
     let db = state.db(handle)?;
-    let mut db = db.lock().expect("db lock");
-    for id in ids {
-        db.set_deleted(id, deleted)?;
-    }
+    db.lock().expect("db lock").set_deleted_many(&ids, deleted)?;
     Ok(())
+}
+
+/// Marks the selected rows as deleted, or restores them. Returns how many
+/// games changed.
+#[tauri::command]
+pub async fn set_deleted_rows(
+    state: State<'_, AppState>,
+    handle: u32,
+    selection: ListSelectionDto,
+    deleted: bool,
+) -> AppResult<u32> {
+    let ids = selected_ids(&state, handle, &selection)?;
+    let db = state.db(handle)?;
+    let changed = db.lock().expect("db lock").set_deleted_many(&ids, deleted)?;
+    Ok(changed)
+}
+
+/// The game ids of the selected rows, in list order.
+fn selected_ids(state: &AppState, handle: u32, selection: &ListSelectionDto) -> AppResult<Vec<GameId>> {
+    let db = state.db(handle)?;
+    let mut filters = state.filters.lock().expect("filters lock");
+    let db = db.lock().expect("db lock");
+    let spec: SortSpec = selection.sort.into();
+    let mut ids = Vec::new();
+    match filters.get_mut(&handle) {
+        Some(filter) => {
+            let order = filter.ordered(&db, spec)?;
+            for &(start, end) in &selection.ranges {
+                let end = (end as usize).min(order.len());
+                ids.extend_from_slice(order.get(start as usize..end).unwrap_or_default());
+            }
+        }
+        None => {
+            for &(start, end) in &selection.ranges {
+                ids.extend(page_ids(&db, spec, start, end.saturating_sub(start))?);
+            }
+        }
+    }
+    Ok(ids)
+}
+
+/// `1 game`, `1,234 games`.
+fn games(n: u64) -> String {
+    if n == 1 { "1 game".to_owned() } else { format!("{} games", thousands(n)) }
+}
+
+/// Copies or moves the selected rows of `handle` to the database at
+/// `target` (DB-06), as dropping games on a database does (QOL-04), in a
+/// background job. With `create`, a database that doesn't exist yet is
+/// created (and listed among the recent ones). Deleted games are skipped.
+/// Moving marks the originals as deleted once they're copied, so they can
+/// be restored until the database is compacted.
+#[tauri::command]
+pub async fn copy_games(
+    state: State<'_, AppState>,
+    handle: u32,
+    selection: ListSelectionDto,
+    target: String,
+    create: bool,
+    mode: CopyModeDto,
+) -> AppResult<u64> {
+    let source = state.db(handle)?;
+    let ids = selected_ids(&state, handle, &selection)?;
+    if ids.is_empty() {
+        return Err(AppError::invalid("select the games to copy first"));
+    }
+    let target = PathBuf::from(target);
+    let name =
+        Database::dir_for(&target).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let (dest, created) = state.db_at(&target, create)?;
+    if Arc::ptr_eq(&source, &dest) {
+        return Err(AppError::invalid(format!("the games are already in {name}; choose another database")));
+    }
+    if created {
+        let path = dest.lock().expect("db lock").path().to_path_buf();
+        let path = dunce::canonicalize(&path).unwrap_or(path);
+        state.update_settings(|s| s.remember_database(&path));
+    }
+    let moving = mode == CopyModeDto::Move;
+    let label =
+        format!("{} {} to {name}", if moving { "Moving" } else { "Copying" }, games(ids.len() as u64));
+    Ok(state.jobs.spawn("copy", label, move |ctx| {
+        let summary = chess_db::copy_games(&source, &ids, &dest, ctx).map_err(to_job_error)?;
+        if moving && !summary.copied.is_empty() {
+            source.lock().expect("db lock").set_deleted_many(&summary.copied, true).map_err(to_job_error)?;
+        }
+        if summary.cancelled {
+            log::info!("copying to {name} cancelled after {} games", summary.copied.len());
+            return Err(JobError::Cancelled);
+        }
+        let n = summary.copied.len() as u64;
+        let mut msg = match (n, moving) {
+            (0, _) => "Nothing to copy: the selected games are marked as deleted".to_owned(),
+            (n, false) => format!("Copied {} to {name}", games(n)),
+            (n, true) => format!("Moved {} to {name}; the originals are marked as deleted", games(n)),
+        };
+        if n > 0 && summary.skipped_deleted > 0 {
+            msg.push_str(&format!(" (skipped {} marked as deleted)", games(summary.skipped_deleted)));
+        }
+        Ok(msg)
+    }))
 }
 
 #[cfg(test)]

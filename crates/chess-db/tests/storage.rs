@@ -10,7 +10,7 @@ use chess_core::game::{Game, Nag, NodeId};
 use chess_core::pgn::{read_pgn_str, write_game};
 use chess_core::shakmaty::Position;
 use chess_db::blob::{decode_game, encode_game};
-use chess_db::{Database, NoProgress, export_pgn, import_pgn};
+use chess_db::{Database, NoProgress, copy_games, export_pgn, import_pgn};
 use proptest::prelude::*;
 
 fn fixtures() -> PathBuf {
@@ -175,5 +175,53 @@ proptest! {
         let game = random_game(&choices);
         let decoded = decode_game(&encode_game(&game)).unwrap();
         prop_assert_eq!(&decoded, &game, "\n{}", write_game(&game));
+    }
+}
+
+proptest! {
+    // Each case creates two databases (with fsyncs), so fewer cases.
+    #![proptest_config(ProptestConfig::with_cases(40))]
+
+    /// Copying games between databases (DB-06) reuses the stored bytes and
+    /// renames nothing: the copies read back exactly like the originals.
+    #[test]
+    fn copied_games_read_back_identically(
+        games in prop::collection::vec(
+            (prop::collection::vec(any::<(u8, u8, u8)>(), 0..60), any::<(u8, u8, u16, bool)>()),
+            1..6,
+        ),
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let source = Mutex::new(Database::create(&dir.path().join("From")).unwrap());
+        let target = Mutex::new(Database::create(&dir.path().join("To")).unwrap());
+        let dates = ["", "2024.05.06", "1999.??.??", "????.12.??", "bad date"];
+        let rounds = ["", "1", "3.2", "?", "-", "final"];
+        let ecos = ["", "B90", "A00", "E99", "Z5"];
+        for (choices, (a, b, elo, extra)) in &games {
+            let mut game = random_game(choices);
+            let h = &mut game.headers;
+            h.white = format!("P{}", a % 3);
+            h.black = format!("P{}", b % 4);
+            h.event = if a % 2 == 0 { String::new() } else { format!("Event {b}") };
+            h.date = dates[*a as usize % dates.len()].into();
+            h.round = rounds[*b as usize % rounds.len()].into();
+            h.eco = ecos[(*a as usize + *b as usize) % ecos.len()].into();
+            h.white_elo = (*elo > 1000).then_some(*elo % 3000);
+            if *extra {
+                h.extra.push(("Opening".into(), "Sicilian".into()));
+            }
+            source.lock().unwrap().append(&game).unwrap();
+        }
+        // Names the target already has get the target's ids.
+        target.lock().unwrap().append(&random_game(&[])).unwrap();
+        let ids: Vec<u32> = (0..games.len() as u32).rev().collect();
+        let summary = copy_games(&source, &ids, &target, &NoProgress).unwrap();
+        prop_assert_eq!(&summary.copied, &ids);
+        let (src, dst) = (source.lock().unwrap(), target.lock().unwrap());
+        for (copy, &id) in (1..).zip(&ids) {
+            prop_assert_eq!(dst.read_game(copy).unwrap(), src.read_game(id).unwrap());
+            prop_assert_eq!(dst.read_blob(copy).unwrap(), src.read_blob(id).unwrap());
+            prop_assert_eq!(dst.row(copy).unwrap().date, src.row(id).unwrap().date);
+        }
     }
 }

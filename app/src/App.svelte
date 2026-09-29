@@ -4,6 +4,7 @@
   import AnalysisPane from "./lib/components/AnalysisPane.svelte";
   import Board from "./lib/components/Board.svelte";
   import BoardNav from "./lib/components/BoardNav.svelte";
+  import DropShelf from "./lib/components/DropShelf.svelte";
   import EvalBar from "./lib/components/EvalBar.svelte";
   import EvalGraph from "./lib/components/EvalGraph.svelte";
   import FenPaste from "./lib/components/FenPaste.svelte";
@@ -19,6 +20,7 @@
   import { analysis } from "./lib/stores/analysis.svelte";
   import { board as boardPrefs } from "./lib/stores/board.svelte";
   import { db } from "./lib/stores/db.svelte";
+  import { drag } from "./lib/stores/drag.svelte";
   import { game } from "./lib/stores/game.svelte";
   import { onboarding } from "./lib/stores/onboarding.svelte";
   import { prefs } from "./lib/stores/prefs.svelte";
@@ -187,7 +189,8 @@
     <section class="board-column" aria-label="Board">
       <div class="board-row">
         <div class="eval-bar"><EvalBar /></div>
-        <div class="board-square">
+        <!-- Games dragged from the list open here (QOL-04). -->
+        <div class="board-square" data-drop="board" class:drop-over={drag.target?.kind === "board"}>
           <Board />
           {#if game.typing !== null}<MoveEntry />{/if}
         </div>
@@ -202,6 +205,7 @@
       {#if analysis.status.running || analysis.starting}
         <AnalysisPane />
       {/if}
+      <DropShelf />
     </section>
   </main>
 
@@ -262,7 +266,13 @@
     flex: none;
   }
 
+  .board-square.drop-over {
+    outline: 3px solid var(--felt);
+    outline-offset: 3px;
+  }
+
   .game-column {
+    position: relative;
     display: flex;
     flex-direction: column;
     min-height: 0;

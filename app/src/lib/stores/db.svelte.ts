@@ -1,17 +1,21 @@
 import { documentDir, join } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { api } from "../api";
+import { api, isAppError } from "../api";
+import type { CopyModeDto } from "../bindings/CopyModeDto";
 import type { DbInfoDto } from "../bindings/DbInfoDto";
 import type { DbViewDto } from "../bindings/DbViewDto";
 import type { GameRowDto } from "../bindings/GameRowDto";
 import type { HeaderQueryDto } from "../bindings/HeaderQueryDto";
 import type { ImportReportDto } from "../bindings/ImportReportDto";
+import type { JobDto } from "../bindings/JobDto";
+import type { ListSelectionDto } from "../bindings/ListSelectionDto";
 import type { NameKindDto } from "../bindings/NameKindDto";
 import type { RecentDbDto } from "../bindings/RecentDbDto";
 import type { ReferenceDbDto } from "../bindings/ReferenceDbDto";
 import type { SortKeyDto } from "../bindings/SortKeyDto";
 import type { SortSpecDto } from "../bindings/SortSpecDto";
 import { formatCount } from "../format";
+import { count, type Ranges } from "../selection";
 import { game } from "./game.svelte";
 import { jobs } from "./jobs.svelte";
 import { notices } from "./notify.svelte";
@@ -20,6 +24,9 @@ export const PGN_FILTER = [{ name: "PGN games", extensions: ["pgn"] }];
 /** List columns can be resized within these widths (CSS pixels). */
 export const MIN_COLUMN_WIDTH = 24;
 export const MAX_COLUMN_WIDTH = 1200;
+
+/** A database games can be copied or moved to (DB-06, QOL-04). */
+export type CopyTarget = { path: string; name: string; reference: boolean };
 
 /**
  * Where file dialogs start: the Documents folder rather than the working
@@ -65,6 +72,23 @@ class DbStore {
   /** Rows in the list: the filtered games when a filter is active. */
   get listTotal(): number {
     return this.info?.filter?.count ?? this.info?.games ?? 0;
+  }
+
+  /**
+   * Where games of the open database can be copied (QOL-04): the reference
+   * database and the recently opened ones that still exist, not the open one.
+   */
+  get copyTargets(): CopyTarget[] {
+    const here = this.info;
+    const out: CopyTarget[] = [];
+    const ref = this.reference;
+    if (ref?.info && ref.info.handle !== here?.handle) out.push({ path: ref.path, name: ref.name, reference: true });
+    for (const r of this.recent) {
+      if (r.exists && r.path !== here?.path && !out.some((t) => t.path === r.path)) {
+        out.push({ path: r.path, name: r.name, reference: false });
+      }
+    }
+    return out.slice(0, 8);
   }
   #importJobs = new Set<number>();
   #refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -575,12 +599,81 @@ class DbStore {
     if (!this.info) return;
     try {
       await api.setDeleted(this.info.handle, ids, deleted);
-      this.listVersion++;
+      await this.refresh();
       const what = ids.length === 1 ? "game" : `${formatCount(ids.length)} games`;
       notices.show(deleted ? `Marked ${what} as deleted` : `Restored ${what}`);
     } catch (e) {
       notices.error(e);
     }
+  }
+
+  /**
+   * Runs `f` on the selected rows (`ranges` of the list as shown). If a
+   * saved game invalidated the list's sort order meanwhile, it's rebuilt and
+   * `f` runs again.
+   */
+  async #onRows<T>(ranges: Ranges, f: (handle: number, selection: ListSelectionDto) => Promise<T>): Promise<T> {
+    const info = this.info;
+    if (!info) throw new Error("No database is open");
+    const selection: ListSelectionDto = { sort: { ...this.sort }, ranges: ranges.map(([a, b]) => [a, b]) };
+    try {
+      return await f(info.handle, selection);
+    } catch (e) {
+      if (!isAppError(e) || e.code !== "notSorted") throw e;
+      await this.setSort(selection.sort, true);
+      return f(info.handle, selection);
+    }
+  }
+
+  /** Marks the selected rows as deleted, or restores them. */
+  async setDeletedRows(ranges: Ranges, deleted: boolean) {
+    if (!this.info || !ranges.length) return;
+    try {
+      const changed = await this.#onRows(ranges, (h, sel) => api.setDeletedRows(h, sel, deleted));
+      await this.refresh();
+      const n = count(ranges);
+      const what = n === 1 ? "game" : `${formatCount(n)} games`;
+      if (changed === 0) notices.show(deleted ? "Already marked as deleted" : "Not marked as deleted");
+      else notices.show(deleted ? `Marked ${what} as deleted` : `Restored ${what}`);
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  /**
+   * Copies or moves the selected rows to the database at `target` (DB-06),
+   * as dropping them on it does (QOL-04); `create` makes the database first
+   * if it doesn't exist. Resolves with the finished job, or null on error.
+   */
+  async copyRows(ranges: Ranges, target: string, mode: CopyModeDto, create = false): Promise<JobDto | null> {
+    const info = this.info;
+    if (!info || !ranges.length) return null;
+    try {
+      const job = await this.#onRows(ranges, (h, sel) => api.copyGames(h, sel, target, create, mode));
+      const done = await jobs.waitFor(job);
+      // Moved games are marked as deleted here now.
+      if (mode === "move" && this.info?.handle === info.handle) await this.refresh();
+      if (create) void this.loadRecent();
+      if (this.reference?.path === target) void this.loadReference();
+      return done;
+    } catch (e) {
+      notices.error(e);
+      return null;
+    }
+  }
+
+  /** Asks where to create a database, then copies or moves the selected rows into it. */
+  async copyRowsToNewDialog(ranges: Ranges, mode: CopyModeDto): Promise<JobDto | null> {
+    const path = await save({
+      title: mode === "move" ? "Move the games to a new database" : "Copy the games to a new database",
+      defaultPath: await inDocuments("Clip.chessdb"),
+    });
+    return path ? this.copyRows(ranges, path, mode, true) : null;
+  }
+
+  /** The rows at `indexes` of the list as shown (null where there's none). */
+  rowsAt(indexes: number[]): Promise<(GameRowDto | null)[]> {
+    return Promise.all(indexes.map((i) => this.rowAt(i)));
   }
 }
 

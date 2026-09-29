@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use chess_core::game::{Game, GameResult, Headers};
 
-use crate::blob::{decode_game, encode_game};
+use crate::blob::{date_round_eco, decode_game, encode_game};
 use crate::bytes::u64_at;
 use crate::io::{read_exact_at, write_all_at};
 use crate::names::NameTable;
@@ -93,7 +93,7 @@ pub struct GameRow {
 /// A game ready to be stored: encoded blob plus what the index record
 /// needs. Holding these instead of full [`Game`] trees keeps import batches
 /// small.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedGame {
     headers: Headers,
     flags: u32,
@@ -293,17 +293,23 @@ fn check_header(file: &File, magic: &[u8; 8], what: &Path) -> Result<(), DbError
 }
 
 impl Database {
-    /// Creates a new, empty database directory. `path` should end in
-    /// `.chessdb`; the extension is added if missing.
-    pub fn create(path: &Path) -> Result<Database, DbError> {
-        let dir = if path.extension().is_some_and(|e| e == EXTENSION) {
+    /// The directory [`create`](Self::create) uses for `path`: `path` with
+    /// `.chessdb` added unless it ends in it.
+    pub fn dir_for(path: &Path) -> PathBuf {
+        if path.extension().is_some_and(|e| e == EXTENSION) {
             path.to_path_buf()
         } else {
             let mut name = path.as_os_str().to_owned();
             name.push(".");
             name.push(EXTENSION);
             PathBuf::from(name)
-        };
+        }
+    }
+
+    /// Creates a new, empty database directory. `path` should end in
+    /// `.chessdb`; the extension is added if missing.
+    pub fn create(path: &Path) -> Result<Database, DbError> {
+        let dir = Database::dir_for(path);
         if dir.exists() {
             return Err(DbError::AlreadyExists(dir));
         }
@@ -579,19 +585,43 @@ impl Database {
     }
 
     pub fn set_deleted(&mut self, id: GameId, deleted: bool) -> Result<(), DbError> {
-        let mut rec = self.record(id)?;
-        if rec.is_deleted() == deleted {
-            return Ok(());
+        self.set_deleted_many(&[id], deleted).map(|_| ())
+    }
+
+    /// Marks games as deleted, or restores them, with one fsync for all of
+    /// them. Each record is written whole, so a crash leaves every game
+    /// either changed or not. Returns how many games changed. Nothing is
+    /// written if an id doesn't exist.
+    pub fn set_deleted_many(&mut self, ids: &[GameId], deleted: bool) -> Result<u32, DbError> {
+        if let Some(&bad) = ids.iter().find(|&&id| id >= self.count) {
+            return Err(DbError::NotFound(bad));
         }
-        rec.flags ^= FLAG_DELETED;
-        self.write_record(id, &rec)?;
-        self.generation += 1;
-        Ok(())
+        let mut changed = 0;
+        for &id in ids {
+            let mut rec = self.record(id)?;
+            if rec.is_deleted() == deleted {
+                continue;
+            }
+            rec.flags ^= FLAG_DELETED;
+            self.put_record(id, &rec)?;
+            changed += 1;
+        }
+        if changed > 0 {
+            self.idx.sync_data()?;
+            self.generation += 1;
+        }
+        Ok(changed)
     }
 
     fn write_record(&mut self, id: GameId, rec: &IndexRecord) -> Result<(), DbError> {
-        write_all_at(&self.idx, &rec.encode(), IDX_HEADER + u64::from(id) * RECORD_SIZE as u64)?;
+        self.put_record(id, rec)?;
         self.idx.sync_data()?;
+        Ok(())
+    }
+
+    /// Writes a record without syncing (the caller syncs).
+    fn put_record(&mut self, id: GameId, rec: &IndexRecord) -> Result<(), DbError> {
+        write_all_at(&self.idx, &rec.encode(), IDX_HEADER + u64::from(id) * RECORD_SIZE as u64)?;
         if let Some(stat) = self.stats.as_mut().and_then(|s| s.get_mut(id as usize)) {
             *stat = GameStat::of(rec);
         }
@@ -873,6 +903,37 @@ impl Database {
         Ok(game)
     }
 
+    /// A game as [`PreparedGame::new`] would prepare it, taken straight from
+    /// the stored blob and record without decoding the moves: copying games
+    /// to another database (DB-06) is then mostly I/O. The copy isn't marked
+    /// deleted.
+    pub fn read_prepared(&self, id: GameId) -> Result<PreparedGame, DbError> {
+        self.prepared_from(&self.record(id)?)
+    }
+
+    pub(crate) fn prepared_from(&self, rec: &IndexRecord) -> Result<PreparedGame, DbError> {
+        let mut blob = vec![0u8; rec.blob_len as usize];
+        read_exact_at(&self.blob, &mut blob, rec.blob_offset)?;
+        let (date, round, eco) = date_round_eco(&blob)?;
+        let name = |kind: NameKind, id: u32| self.names[kind as usize].get(id).to_owned();
+        let headers = Headers {
+            event: name(NameKind::Event, rec.event),
+            site: name(NameKind::Site, rec.site),
+            date,
+            round,
+            white: name(NameKind::Player, rec.white),
+            black: name(NameKind::Player, rec.black),
+            result: result_from_u8(rec.result),
+            white_elo: (rec.white_elo != 0).then_some(rec.white_elo),
+            black_elo: (rec.black_elo != 0).then_some(rec.black_elo),
+            eco,
+            annotator: name(NameKind::Annotator, rec.annotator),
+            extra: Vec::new(),
+        };
+        let content = FLAG_VARIATIONS | FLAG_COMMENTS | FLAG_ANNOTATIONS | FLAG_SETUP;
+        Ok(PreparedGame { headers, flags: rec.flags & content, plies: rec.plies, blob })
+    }
+
     pub fn row_from_record(&self, id: GameId, rec: &IndexRecord) -> GameRow {
         let player = &self.names[NameKind::Player as usize];
         GameRow {
@@ -1024,6 +1085,54 @@ mod tests {
         let row = db.row(0).unwrap();
         assert!(row.deleted, "replace keeps the deleted flag");
         assert_eq!(row.white, "Dave");
+    }
+
+    #[test]
+    fn deleting_many_games_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Bulk")).unwrap();
+        for g in sample_games().iter().chain(&sample_games()) {
+            db.append(g).unwrap();
+        }
+        assert_eq!(db.game_stats().unwrap().iter().filter(|s| s.deleted).count(), 0);
+        let generation = db.generation();
+        assert_eq!(db.set_deleted_many(&[0, 2, 3], true).unwrap(), 3);
+        assert!(db.generation() > generation);
+        assert_eq!(db.set_deleted_many(&[2, 1], true).unwrap(), 1, "2 was deleted already");
+        let deleted: Vec<bool> = (0..4).map(|id| db.row(id).unwrap().deleted).collect();
+        assert_eq!(deleted, [true, true, true, true]);
+        assert!(db.game_stats().unwrap().iter().all(|s| s.deleted), "the cached stats follow");
+        // An unknown id changes nothing.
+        assert!(matches!(db.set_deleted_many(&[1, 9], false), Err(DbError::NotFound(9))));
+        assert!(db.row(1).unwrap().deleted);
+        assert_eq!(db.set_deleted_many(&[1, 3], false).unwrap(), 2);
+        let path = db.path().to_path_buf();
+        drop(db);
+        let db = Database::open(&path).unwrap();
+        let deleted: Vec<bool> = (0..4).map(|id| db.row(id).unwrap().deleted).collect();
+        assert_eq!(deleted, [true, false, true, false]);
+    }
+
+    #[test]
+    fn read_prepared_matches_preparing_the_decoded_game() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Raw")).unwrap();
+        let mut games = sample_games();
+        games[1].headers.extra.push(("TimeControl".into(), "600+5".into()));
+        games[1].headers.date = "2023.??.??".into();
+        games.extend(read_pgn_str(
+            "[Event \"Study\"]\n[Round \"4\"]\n[SetUp \"1\"]\n[FEN \"8/8/8/4k3/8/8/4P3/4K3 w - - 0 1\"]\n\n1. Kd2 {a}  *\n",
+        ));
+        for g in &games {
+            db.append(g).unwrap();
+        }
+        db.set_deleted(1, true).unwrap();
+        assert!(db.row(2).unwrap().has_setup);
+        for id in 0..3 {
+            let raw = db.read_prepared(id).unwrap();
+            assert_eq!(raw, PreparedGame::new(&db.read_game(id).unwrap()), "game {id}");
+            assert_eq!(raw.flags & FLAG_DELETED, 0, "a copy isn't deleted");
+        }
     }
 
     #[test]

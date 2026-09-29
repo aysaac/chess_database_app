@@ -82,6 +82,7 @@ matter of running the build, not porting:
 - Lock files with `std::fs::File::try_lock`. Do positional I/O through `crates/chess-db/src/io.rs`, which picks `read_at`/`seek_read` per OS.
 - File formats use explicit little-endian encoding. PGN input accepts CRLF; PGN output uses `\n`.
 - Define shortcuts as Ctrl-or-Cmd. Use only standard CSS (no WebKit-only features).
+- Drags inside the app (games out of the list, QOL-04) use pointer events and `elementFromPoint` hit testing on `data-drop` targets, not HTML5 drag and drop. WebView2 breaks HTML5 drag and drop while Tauri's OS file-drop handler (`dragDropEnabled`) is on, and that handler is what dropping PGN files on the window (IO-09) will need. Pointer events also behave the same in WebKitGTK, WKWebView and WebView2, and smoke drivers can dispatch them.
 - No Linux-only crates in the `crates/` dependency tree.
 
 ## Storage

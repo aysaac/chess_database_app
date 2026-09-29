@@ -218,6 +218,17 @@ impl Settings {
     pub fn forget_db_view(&mut self, path: &Path) {
         self.database_views.retain(|v| v.path != path);
     }
+
+    /// Lists a database created for copying games into (QOL-04) among the
+    /// recent ones, second: the first is the one reopened at start-up.
+    /// One that's listed already stays where it is.
+    pub fn remember_database(&mut self, path: &Path) {
+        if !self.recent_databases.iter().any(|p| p == path) {
+            let at = self.recent_databases.len().min(1);
+            self.recent_databases.insert(at, path.to_path_buf());
+            self.recent_databases.truncate(MAX_RECENT);
+        }
+    }
 }
 
 /// A short unique id for a new engine entry.
@@ -315,6 +326,18 @@ mod tests {
         // Old settings files have no views.
         std::fs::write(dir.path().join(FILE), br#"{"recentDatabases": ["/c"]}"#).unwrap();
         assert!(Settings::load(dir.path()).database_views.is_empty());
+    }
+
+    #[test]
+    fn a_copy_target_is_remembered_behind_the_open_database() {
+        let mut s = Settings::default();
+        s.remember_database(Path::new("/clip.chessdb"));
+        assert_eq!(s.recent_databases, [PathBuf::from("/clip.chessdb")]);
+        s.note_recent(Path::new("/a.chessdb"));
+        s.remember_database(Path::new("/new.chessdb"));
+        s.remember_database(Path::new("/clip.chessdb"));
+        let recent: Vec<&str> = s.recent_databases.iter().map(|p| p.to_str().unwrap()).collect();
+        assert_eq!(recent, ["/a.chessdb", "/new.chessdb", "/clip.chessdb"]);
     }
 
     #[test]

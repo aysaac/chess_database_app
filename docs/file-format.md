@@ -82,8 +82,16 @@ spelling cleanup (DB-09) will build on these tables.
 
 A 16-byte header (magic `CHDBBLOB`, version `1`, zero padding), then blobs at
 the offsets given in the records. Replacing a game appends a new blob and
-repoints its record. Old blobs become unreferenced garbage until compaction is
-added (DB-06).
+repoints its record. Old blobs are unreferenced garbage until the database is
+compacted (DB-06).
+
+A blob holds no name-table ids, so it means the same in any database:
+copying or moving games to another database (DB-06, QOL-04) appends the
+blob bytes unchanged and writes a new record whose names are looked up (or
+added) in the target's tables. Nothing is decoded, and the copy is exactly
+the original. Copies go in batches of 2,000 games, each a normal crash-safe
+commit; a move marks the originals as deleted only after their copies are
+committed, so a crash in between leaves duplicates, never a lost game.
 
 ### Game blob
 

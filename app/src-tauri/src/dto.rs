@@ -177,6 +177,27 @@ pub struct GamePage {
     pub rows: Vec<GameRowDto>,
 }
 
+/// Selected rows of the game list as shown: `[start, end)` row ranges in
+/// `sort` order, of the filtered list when a filter is active. A selection
+/// of a million rows is still a few numbers over IPC (DB-06, QOL-04).
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ListSelectionDto {
+    pub sort: SortSpecDto,
+    pub ranges: Vec<(u32, u32)>,
+}
+
+/// Copy games to another database, or move them (the originals are marked
+/// as deleted).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CopyModeDto {
+    Copy,
+    Move,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
