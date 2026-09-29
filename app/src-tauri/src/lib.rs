@@ -42,6 +42,35 @@ fn run_smoke_script<R: tauri::Runtime>(webview: &tauri::Webview<R>) {
     }
 }
 
+/// Release builds on Windows: turns off WebView2's browser shortcuts, which
+/// Linux and macOS webviews don't have: F5/Ctrl+R reload the page (losing
+/// what's on screen), Ctrl+P prints it, Ctrl+F in a text field opens a find
+/// bar. The page still gets the keys, so the app's own Ctrl+F (flip) works.
+/// Debug builds keep them: they include F12 and Ctrl+Shift+I for DevTools.
+#[cfg(windows)]
+fn disable_browser_shortcuts(window: &tauri::WebviewWindow) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let result = window.with_webview(|webview| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+        use windows_core::Interface;
+        // SAFETY: COM calls on the webview's own controller, on the thread
+        // `with_webview` runs us on.
+        let done = unsafe {
+            webview.controller().CoreWebView2().and_then(|core| core.Settings()).and_then(|settings| {
+                settings.cast::<ICoreWebView2Settings3>()?.SetAreBrowserAcceleratorKeysEnabled(false)
+            })
+        };
+        if let Err(e) = done {
+            log::warn!("couldn't turn off the browser shortcuts: {e}");
+        }
+    });
+    if let Err(e) = result {
+        log::warn!("couldn't reach the webview: {e}");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -66,6 +95,10 @@ pub fn run() {
                     log::warn!("failed to emit job event: {e}");
                 }
             });
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                disable_browser_shortcuts(&window);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -365,6 +365,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "ts-rs",
+ "webview2-com",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
