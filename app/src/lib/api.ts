@@ -7,6 +7,7 @@ import type { AppError } from "./bindings/AppError";
 import type { BoardImageDto } from "./bindings/BoardImageDto";
 import type { CommentSlotDto } from "./bindings/CommentSlotDto";
 import type { DbInfoDto } from "./bindings/DbInfoDto";
+import type { DbViewDto } from "./bindings/DbViewDto";
 import type { EngineDto } from "./bindings/EngineDto";
 import type { FenCheckDto } from "./bindings/FenCheckDto";
 import type { GamePage } from "./bindings/GamePage";
@@ -52,6 +53,10 @@ export const api = {
     invoke<number | null>("search_games", { handle, query, within, quick }),
   clearFilter: (handle: number) => invoke<DbInfoDto>("clear_filter", { handle }),
   compactDb: (handle: number) => invoke<number>("compact_db", { handle }),
+  dbView: (handle: number) => invoke<DbViewDto>("db_view", { handle }),
+  saveDbLayout: (handle: number, sort: SortSpecDto, columns: Record<string, number>) =>
+    invoke<void>("save_db_layout", { handle, sort, columns }),
+  restoreFilter: (handle: number) => invoke<number | null>("restore_filter", { handle }),
   listNames: (handle: number, kind: NameKindDto, text: string, byGames: boolean, limit: number) =>
     invoke<NameListDto>("list_names", { handle, kind, text, byGames, limit }),
   showNameGames: (handle: number, kind: NameKindDto, id: number) =>

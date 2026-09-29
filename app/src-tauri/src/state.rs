@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use chess_core::game::GameEditor;
@@ -10,7 +10,7 @@ use chess_jobs::{JobId, JobManager};
 use crate::dto::ImportReportDto;
 use crate::engines::Analysis;
 use crate::error::{AppError, AppResult};
-use crate::settings::Settings;
+use crate::settings::{DbView, FilterStep, SavedFilter, Settings};
 
 pub type SharedDb = Arc<Mutex<Database>>;
 
@@ -67,14 +67,21 @@ pub struct ActiveFilter {
     /// Ascending game ids.
     pub ids: Arc<Vec<GameId>>,
     pub description: String,
+    /// How the filter was made, to make it again when the database is
+    /// reopened (QOL-07).
+    pub steps: Vec<FilterStep>,
     /// The ids in each sort order used so far, valid for `epoch`.
     orders: HashMap<SortSpec, Arc<Vec<GameId>>>,
     epoch: u64,
 }
 
 impl ActiveFilter {
-    pub fn new(ids: Vec<GameId>, description: String) -> ActiveFilter {
-        ActiveFilter { ids: Arc::new(ids), description, orders: HashMap::new(), epoch: 0 }
+    pub fn new(ids: Vec<GameId>, description: String, steps: Vec<FilterStep>) -> ActiveFilter {
+        ActiveFilter { ids: Arc::new(ids), description, steps, orders: HashMap::new(), epoch: 0 }
+    }
+
+    pub fn saved(&self) -> SavedFilter {
+        SavedFilter { steps: self.steps.clone(), description: self.description.clone() }
     }
 
     /// The filtered ids in `spec` order (fails with `NotSorted` like the
@@ -118,8 +125,12 @@ pub struct AppState {
     /// `Database` instead of failing on its lock.
     released: Mutex<Vec<(PathBuf, Weak<Mutex<Database>>)>>,
     next_db: AtomicU32,
-    /// Lock order: `filters` before a database.
+    /// Lock order: `filters` before a database. Change it through
+    /// `set_filter` and `clear_filter`, which remember it (QOL-07).
     pub filters: Mutex<HashMap<u32, ActiveFilter>>,
+    /// Bumped (under the `filters` lock) whenever a list filter is set or
+    /// cleared, so a filter being restored doesn't replace a newer one.
+    filter_generation: AtomicU64,
     sessions: Mutex<HashMap<u32, Session>>,
     next_session: AtomicU32,
     pub jobs: JobManager,
@@ -237,6 +248,91 @@ impl AppState {
         true
     }
 
+    /// The canonical path of `handle` while it's shown in the game list.
+    fn list_path(&self, handle: u32) -> Option<PathBuf> {
+        self.dbs.lock().expect("dbs lock").get(&handle).filter(|o| o.listed).map(|o| o.path.clone())
+    }
+
+    /// Limits the list of `handle` to `filter`, and remembers it for the next
+    /// time the database is opened (QOL-07).
+    pub fn set_filter(&self, handle: u32, filter: ActiveFilter) {
+        let saved = filter.saved();
+        {
+            let mut filters = self.filters.lock().expect("filters lock");
+            filters.insert(handle, filter);
+            self.filter_generation.fetch_add(1, Ordering::Relaxed);
+        }
+        self.remember_filter(handle, Some(saved));
+    }
+
+    /// Shows all games of `handle` again, next time too.
+    pub fn clear_filter(&self, handle: u32) {
+        {
+            let mut filters = self.filters.lock().expect("filters lock");
+            filters.remove(&handle);
+            self.filter_generation.fetch_add(1, Ordering::Relaxed);
+        }
+        self.remember_filter(handle, None);
+    }
+
+    /// Where a filter change stands, for [`finish_restore`](Self::finish_restore).
+    pub fn filter_generation(&self) -> u64 {
+        let _filters = self.filters.lock().expect("filters lock");
+        self.filter_generation.load(Ordering::Relaxed)
+    }
+
+    /// Finishes restoring the saved filter of `handle`: installs `filter`,
+    /// or with `None` (it couldn't be made again) forgets the saved one.
+    /// Does nothing, returning false, if the list's filter changed since
+    /// `generation` or the database left the list.
+    pub fn finish_restore(&self, handle: u32, filter: Option<ActiveFilter>, generation: u64) -> bool {
+        if self.list_path(handle).is_none() {
+            return false;
+        }
+        {
+            let mut filters = self.filters.lock().expect("filters lock");
+            if self.filter_generation.load(Ordering::Relaxed) != generation {
+                return false;
+            }
+            let Some(filter) = filter else {
+                drop(filters);
+                self.remember_filter(handle, None);
+                return true;
+            };
+            filters.insert(handle, filter);
+            self.filter_generation.fetch_add(1, Ordering::Relaxed);
+        }
+        true
+    }
+
+    fn remember_filter(&self, handle: u32, saved: Option<SavedFilter>) {
+        if let Some(path) = self.list_path(handle) {
+            self.update_settings(|s| s.db_view_mut(&path).filter = saved);
+        }
+    }
+
+    /// The saved list view of the database `handle` (empty if it has none).
+    pub fn db_view(&self, handle: u32) -> AppResult<DbView> {
+        let path = self.list_path(handle).ok_or_else(|| AppError::not_found(format!("database {handle}")))?;
+        let settings = self.settings.lock().expect("settings lock");
+        Ok(settings.db_view(&path).cloned().unwrap_or_default())
+    }
+
+    /// Changes and saves the list view of the database `handle`.
+    pub fn update_db_view(&self, handle: u32, f: impl FnOnce(&mut DbView)) -> AppResult<()> {
+        let path = self.list_path(handle).ok_or_else(|| AppError::not_found(format!("database {handle}")))?;
+        self.update_settings(|s| f(s.db_view_mut(&path)));
+        Ok(())
+    }
+
+    /// Forgets the list view saved for the database `handle` (it was just
+    /// created, maybe where an older one was).
+    pub fn forget_db_view(&self, handle: u32) {
+        if let Some(path) = self.list_path(handle) {
+            self.update_settings(|s| s.forget_db_view(&path));
+        }
+    }
+
     /// Handle of the open reference database.
     pub fn reference_db(&self) -> Option<u32> {
         self.dbs.lock().expect("dbs lock").iter().find(|(_, o)| o.reference).map(|(&h, _)| h)
@@ -303,7 +399,7 @@ mod tests {
         assert_eq!(state.reference_db(), Some(handle));
 
         // Leaving the list keeps the reference open, without the list's filter.
-        state.filters.lock().unwrap().insert(handle, ActiveFilter::new(vec![0], "f".into()));
+        state.filters.lock().unwrap().insert(handle, ActiveFilter::new(vec![0], "f".into(), Vec::new()));
         assert!(state.release_db(handle, DbUse::List));
         assert!(state.db(handle).is_ok());
         assert!(state.filters.lock().unwrap().is_empty());
@@ -313,6 +409,89 @@ mod tests {
         assert!(!state.release_db(handle, DbUse::List));
         // The folder isn't locked any more.
         Database::open(&path).unwrap();
+    }
+
+    fn step(text: &str) -> FilterStep {
+        FilterStep::Header {
+            query: crate::dto::HeaderQueryDto { text: text.into(), ..Default::default() },
+            quick: true,
+        }
+    }
+
+    #[test]
+    fn the_list_filter_is_remembered_per_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let state = AppState::default();
+        state.init_dirs(config.clone(), dir.path().join("data"));
+        let handle = state.add_db(Database::create(&dir.path().join("A")).unwrap(), DbUse::List);
+        assert_eq!(state.db_view(handle).unwrap(), DbView::default());
+
+        state.set_filter(handle, ActiveFilter::new(vec![1, 2], "“x”".into(), vec![step("x")]));
+        let saved = state.db_view(handle).unwrap().filter.expect("saved");
+        assert_eq!((saved.description.as_str(), saved.steps.as_slice()), ("“x”", [step("x")].as_slice()));
+        // Saved to disk, keyed by the database's folder.
+        let path = state.list_path(handle).unwrap();
+        assert_eq!(Settings::load(&config).db_view(&path).unwrap().filter.as_ref(), Some(&saved));
+
+        // Closing keeps it for next time; clearing forgets it.
+        assert!(state.release_db(handle, DbUse::List));
+        assert!(Settings::load(&config).db_view(&path).unwrap().filter.is_some());
+        let handle = state.add_db(Database::open(&path).unwrap(), DbUse::List);
+        assert!(state.filters.lock().unwrap().get(&handle).is_none(), "not active until restored");
+        state.clear_filter(handle);
+        assert_eq!(state.db_view(handle).unwrap().filter, None);
+
+        // The reference database (not in the list) remembers nothing.
+        let other = state.add_db(Database::create(&dir.path().join("B")).unwrap(), DbUse::Reference);
+        state.set_filter(other, ActiveFilter::new(vec![], "y".into(), vec![step("y")]));
+        assert!(state.db_view(other).is_err());
+        assert_eq!(Settings::load(&config).database_views.len(), 1);
+    }
+
+    #[test]
+    fn a_restored_filter_doesnt_replace_a_newer_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        state.init_dirs(dir.path().join("config"), dir.path().join("data"));
+        let handle = state.add_db(Database::create(&dir.path().join("A")).unwrap(), DbUse::List);
+        state.set_filter(handle, ActiveFilter::new(vec![1], "old".into(), vec![step("old")]));
+        state.filters.lock().unwrap().clear();
+
+        let generation = state.filter_generation();
+        assert!(state.finish_restore(
+            handle,
+            Some(ActiveFilter::new(vec![1], "old".into(), vec![])),
+            generation
+        ));
+        assert_eq!(state.filters.lock().unwrap()[&handle].description, "old");
+
+        // The user filtered while it was being restored: theirs stays.
+        let generation = state.filter_generation();
+        state.set_filter(handle, ActiveFilter::new(vec![2], "new".into(), vec![step("new")]));
+        assert!(!state.finish_restore(
+            handle,
+            Some(ActiveFilter::new(vec![1], "old".into(), vec![])),
+            generation
+        ));
+        assert!(!state.finish_restore(handle, None, generation), "and stays saved");
+        assert_eq!(state.filters.lock().unwrap()[&handle].description, "new");
+        assert_eq!(state.db_view(handle).unwrap().filter.unwrap().description, "new");
+
+        // A filter that couldn't be made again is forgotten.
+        let generation = state.filter_generation();
+        assert!(state.finish_restore(handle, None, generation));
+        assert_eq!(state.db_view(handle).unwrap().filter, None);
+
+        // Not after the database left the list.
+        let generation = state.filter_generation();
+        state.release_db(handle, DbUse::List);
+        assert!(!state.finish_restore(
+            handle,
+            Some(ActiveFilter::new(vec![], "x".into(), vec![])),
+            generation
+        ));
+        assert!(state.filters.lock().unwrap().is_empty());
     }
 
     #[test]

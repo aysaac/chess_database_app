@@ -7,6 +7,7 @@ use tauri::State;
 use crate::commands::db::thousands;
 use crate::dto::{DbInfoDto, NameKindDto, NameListDto, NameRowDto};
 use crate::error::{AppError, AppResult, ErrorCode};
+use crate::settings::FilterStep;
 use crate::state::{ActiveFilter, AppState};
 
 const MAX_ROWS: u32 = 2000;
@@ -74,6 +75,7 @@ pub async fn show_name_games(
     id: u32,
 ) -> AppResult<DbInfoDto> {
     let db = state.db(handle)?;
+    let table = kind;
     let kind: NameKind = kind.into();
     let (ids, name) = tauri::async_runtime::spawn_blocking(move || {
         let name = db.lock().expect("db lock").names(kind).get(id).to_owned();
@@ -81,11 +83,8 @@ pub async fn show_name_games(
     })
     .await
     .map_err(|e| AppError::new(ErrorCode::Internal, e.to_string()))??;
-    state
-        .filters
-        .lock()
-        .expect("filters lock")
-        .insert(handle, ActiveFilter::new(ids, format!("{}: {name}", label(kind))));
+    let description = format!("{}: {name}", label(kind));
+    state.set_filter(handle, ActiveFilter::new(ids, description, vec![FilterStep::Name { table, name }]));
     crate::commands::db::db_info(state, handle).await
 }
 

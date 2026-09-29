@@ -12,6 +12,7 @@ use crate::dto::{
     ReferenceDbDto, SortSpecDto,
 };
 use crate::error::{AppError, AppResult};
+use crate::settings::FilterStep;
 use crate::state::{ActiveFilter, AppState, DbUse};
 
 const MAX_PAGE: u32 = 1000;
@@ -59,6 +60,8 @@ pub async fn create_db(state: State<'_, AppState>, path: String) -> AppResult<Db
     let db = Database::create(&PathBuf::from(path))?;
     log::info!("created database {}", db.path().display());
     let handle = state.add_db(db, DbUse::List);
+    // A new database starts with the default list, even where an old one was.
+    state.forget_db_view(handle);
     info(&state, handle)
 }
 
@@ -334,19 +337,19 @@ pub async fn search_games(
     quick: bool,
 ) -> AppResult<Option<u64>> {
     let db = state.db(handle)?;
-    let query: HeaderQuery = query.into();
+    let mut steps = Vec::new();
     let base = within
         .then(|| {
-            state
-                .filters
-                .lock()
-                .expect("filters lock")
-                .get(&handle)
-                .map(|f| (f.ids.clone(), f.description.clone()))
+            state.filters.lock().expect("filters lock").get(&handle).map(|f| {
+                steps = f.steps.clone();
+                (f.ids.clone(), f.description.clone())
+            })
         })
         .flatten();
+    steps.push(FilterStep::Header { query: query.clone(), quick });
+    let query: HeaderQuery = query.into();
     if query == HeaderQuery::default() && base.is_none() {
-        state.filters.lock().expect("filters lock").remove(&handle);
+        state.clear_filter(handle);
         return Ok(None);
     }
     let mut description = describe(&query);
@@ -358,11 +361,7 @@ pub async fn search_games(
         let within = base.as_ref().map(|(ids, _)| GameSet::from_ids(ids));
         let ids = search_headers(&db, &query, within.as_ref(), ctx).map_err(to_job_error)?;
         let n = ids.len() as u64;
-        app.state::<AppState>()
-            .filters
-            .lock()
-            .expect("filters lock")
-            .insert(handle, ActiveFilter::new(ids, description));
+        app.state::<AppState>().set_filter(handle, ActiveFilter::new(ids, description, steps));
         Ok(match n {
             0 => "No games match the search".to_owned(),
             1 => "Found 1 game".to_owned(),
@@ -377,7 +376,7 @@ pub async fn search_games(
 #[tauri::command]
 pub async fn compact_db(app: AppHandle, state: State<'_, AppState>, handle: u32) -> AppResult<u64> {
     let db = state.db(handle)?;
-    state.filters.lock().expect("filters lock").remove(&handle);
+    state.clear_filter(handle);
     Ok(state.jobs.spawn("compact", "Compacting the database", move |ctx| {
         let summary = db.lock().expect("db lock").compact(ctx).map_err(to_job_error)?;
         app.state::<AppState>().remap_sources(handle, &summary.mapping);
@@ -393,7 +392,7 @@ pub async fn compact_db(app: AppHandle, state: State<'_, AppState>, handle: u32)
 /// Shows all games again.
 #[tauri::command]
 pub async fn clear_filter(state: State<'_, AppState>, handle: u32) -> AppResult<DbInfoDto> {
-    state.filters.lock().expect("filters lock").remove(&handle);
+    state.clear_filter(handle);
     info(&state, handle)
 }
 

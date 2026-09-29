@@ -1,4 +1,5 @@
 pub mod db;
+pub mod dbview;
 pub mod engine;
 pub mod game;
 pub mod image;

@@ -43,6 +43,21 @@ that first.
   Checks: fmt, clippy, 166 tests (+1 ignored), svelte-check, the build and
   all seven drivers, with Stockfish and (onboarding) without; the 1M-game
   parts didn't run (no `testdata/large/` in that worktree).
+- **QOL-07 (2026-09-29, branch `qol-07-remember-db-view`):** the game list
+  remembers its sort order, column widths and filter per database and puts
+  them back when the database is opened again. Columns can now be resized:
+  drag a header's right edge, Shift+←/→ on a focused header, double-click
+  the edge or right-click the header for the default width. Filters are
+  saved as the steps that made them (quick filter, header searches and
+  searches within them, a player/event/site/annotator by name, a position
+  as FEN, full or through the index) and run again as a job on open, so
+  they survive compaction and include games added since. A filter that
+  can't be made again (the player was renamed) is dropped with a notice.
+  New smoke driver `scripts/smoke/view.js`; reopening the 1M-game database
+  with a sort by White Elo and a quick filter restored took 968 ms in
+  `tauri dev`. Also fixed: the Opening column had no header label. All
+  checks and the smoke drivers except `engine.js` (no Stockfish in that
+  worktree) passed on Linux.
 - **macOS (2026-09-27):** the project now also lives on the user's Mac
   (Apple Silicon, macOS 26.5, see [Environment notes](#macos)). Everything
   passes there: fmt, clippy, 156 tests plus the ignored TWIC round trip,
@@ -123,6 +138,7 @@ that first.
 | **Format version 2** (new) | `db.meta` says `chessdb 2`: replaced games are recorded in `positions.dirty`. Version 1 databases upgrade on open (only the meta file changes). Binary headers stay at version 1 | `docs/file-format.md` |
 | **Opening names** (new) | lichess-org/chess-openings (CC0) vendored as `crates/chess-core/data/openings.tsv` (commit c67912b), keyed by position hash; classified in the index build and stored in `openings.idx` | `crates/chess-core/src/openings.rs` |
 | **Settings** (new) | `settings.json` in the app config dir (engines, default engine, recent databases, frontend prefs). `CHESSDB_CONFIG_DIR` overrides the folder; the smoke harness uses its own | `app/src-tauri/src/settings.rs` |
+| **List view per database** (QOL-07) | `databaseViews` in `settings.json`, keyed by the canonical folder path (50 most recent): sort, resized column widths, and the filter as its steps (`FilterStep`) plus description. Not inside the database folder: no format change, and read-only or shared databases work. Rust records the steps in `ActiveFilter` and saves on every change (`AppState::set_filter`/`clear_filter`; closing keeps it); the frontend saves sort and widths (`save_db_layout`) and on open calls `db_view`, then `restore_filter` (a job that won't replace a filter set meanwhile) | `app/src-tauri/src/commands/dbview.rs` |
 | **Tabs** (new) | Opening a game reuses the current tab if it has no unsaved changes, else opens a new tab (no discard prompt). Next/previous game replaces the tab (with the prompt). Analysis follows the active tab | `app/src/lib/stores/game.svelte.ts` |
 | **Reference database** (DB-13) | A path in settings (`referenceDatabase`). The backend opens it on its own handle, shared with the list when it's the same folder (`DbUse` flags in `AppState`: a database closes when neither the list nor the reference uses it). The tree picks its source (open or reference); "Find games" on the reference opens it in the list | `app/src-tauri/src/state.rs` |
 | **Onboarding** (QOL-08) | The guide opens while `welcomeDone` is unset and no database was ever opened. Sample games are compiled in (`app/src-tauri/data/sample-games.pgn`) and built into the app data folder, not Documents. `CHESSDB_CONFIG_DIR` holds app data too | `docs/stack.md` |
@@ -142,7 +158,7 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11 ·
   ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16 ·
   QOL-01 (reopens the last database and remembers orientation, pane size,
-  tree visibility, analysis lines), 02, 03, 05, 06, 08, 10.
+  tree visibility, analysis lines), 02, 03, 05, 06, 07, 08, 10.
 - **Partial:**
   - DB-04: players, events, sites and annotators have lists with counts,
     "show games" and rename/merge. No sources or teams, and no per-player
@@ -302,7 +318,13 @@ clocks and evals), 16-core laptop:
 - Name tables: rename rewrites the whole file; merges rewrite the affected
   records (no DB-09 fuzzy matching yet). Merged-away names stay in the table
   until compaction.
-- Sort permutations and filters live in memory only.
+- Sort permutations and filter results live in memory only; reopening a
+  database rebuilds its saved sort and filter (QOL-07). A moved or renamed
+  database folder loses its saved view, and renaming a name doesn't update
+  a saved name filter (it's dropped on the next open, with a notice).
+- Column widths are per database; a new database starts with the defaults.
+  The list has no horizontal scrolling, so columns widened past the pane
+  are cut off at the right (as in narrow windows before).
 - `set_deleted` fsyncs once per id; batch it before bulk deletes exist.
 - Compaction holds the database lock for its whole run; the list waits.
 

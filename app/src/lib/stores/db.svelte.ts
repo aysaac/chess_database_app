@@ -2,6 +2,7 @@ import { documentDir, join } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import type { DbInfoDto } from "../bindings/DbInfoDto";
+import type { DbViewDto } from "../bindings/DbViewDto";
 import type { GameRowDto } from "../bindings/GameRowDto";
 import type { HeaderQueryDto } from "../bindings/HeaderQueryDto";
 import type { ImportReportDto } from "../bindings/ImportReportDto";
@@ -16,6 +17,9 @@ import { jobs } from "./jobs.svelte";
 import { notices } from "./notify.svelte";
 
 export const PGN_FILTER = [{ name: "PGN games", extensions: ["pgn"] }];
+/** List columns can be resized within these widths (CSS pixels). */
+export const MIN_COLUMN_WIDTH = 24;
+export const MAX_COLUMN_WIDTH = 1200;
 
 /**
  * Where file dialogs start: the Documents folder rather than the working
@@ -50,6 +54,13 @@ class DbStore {
   reference = $state<ReferenceDbDto | null>(null);
   /** Warnings of the last import into the open database, until dismissed. */
   importReport = $state<ImportReportDto | null>(null);
+  /**
+   * Widths in CSS pixels of the list columns the user resized, by column
+   * id; saved per database with the sort order (QOL-07).
+   */
+  columns = $state<Record<string, number>>({});
+  /** Description of the saved filter being made again after opening (QOL-07). */
+  restoring = $state<string | null>(null);
 
   /** Rows in the list: the filtered games when a filter is active. */
   get listTotal(): number {
@@ -57,6 +68,10 @@ class DbStore {
   }
   #importJobs = new Set<number>();
   #refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Layout saves, one after the other so the last one wins. */
+  #saving: Promise<unknown> = Promise.resolve();
+  /** Bumped by each `setSort`, so only the latest one is applied. */
+  #sortSeq = 0;
 
   constructor() {
     // Let the list grow live while an import is running.
@@ -239,16 +254,93 @@ class DbStore {
 
   async #use(info: DbInfoDto) {
     if (this.info && this.info.handle !== info.handle) {
+      await this.#saving;
       await api.closeDb(this.info.handle).catch(() => {});
     }
     this.info = info;
     this.importReport = null;
     this.sort = { key: "id", descending: false };
+    this.sortingKey = null;
+    this.columns = {};
+    this.restoring = null;
     this.quickText = "";
     this.filterVersion++;
     this.listVersion++;
     void this.loadRecent();
     void this.ensureIndex();
+    await this.#restoreView(info.handle);
+  }
+
+  /**
+   * Puts back the sort order, column widths and filter the list of `handle`
+   * had last time (QOL-07). Resolves once they're in place.
+   */
+  async #restoreView(handle: number) {
+    let view: DbViewDto;
+    try {
+      view = await api.dbView(handle);
+    } catch (e) {
+      notices.error(e);
+      return;
+    }
+    if (this.info?.handle !== handle) return;
+    this.columns = view.columns;
+    if (view.lastQuery) this.lastQuery = view.lastQuery;
+    await Promise.all([
+      view.sort && this.setSort(view.sort, false, false),
+      view.filter && this.#restoreFilter(handle, view.filter, view.quickText),
+    ]);
+  }
+
+  async #restoreFilter(handle: number, description: string, quickText: string) {
+    this.quickText = quickText;
+    this.restoring = description;
+    try {
+      const job = await api.restoreFilter(handle);
+      if (job !== null) await jobs.waitFor(job);
+      if (this.info?.handle !== handle) return;
+      this.info = await api.dbInfo(handle);
+      // It couldn't be made again (the job said why): nothing to show in the box.
+      if (!this.info.filter && this.quickText === quickText) this.quickText = "";
+      this.filterVersion++;
+      this.listVersion++;
+    } catch (e) {
+      notices.error(e);
+    } finally {
+      if (this.info?.handle === handle) this.restoring = null;
+    }
+  }
+
+  /**
+   * Saves the sort order and column widths of the open database's list
+   * (QOL-07). Saves run in order, so the last one wins.
+   */
+  saveLayout() {
+    const handle = this.info?.handle;
+    if (handle === undefined) return;
+    const sort = { ...this.sort };
+    const columns = { ...this.columns };
+    this.#saving = this.#saving
+      .then(() => api.saveDbLayout(handle, sort, columns))
+      .catch((e) => console.error("couldn't save the list layout", e));
+  }
+
+  /**
+   * Sets the width of a list column in CSS pixels, or with `null` goes back
+   * to its default width. `save` = false while dragging (save at the end).
+   */
+  setColumnWidth(id: string, width: number | null, save = true) {
+    const next = { ...this.columns };
+    if (width === null) delete next[id];
+    else next[id] = Math.round(Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, width)));
+    this.columns = next;
+    if (save) this.saveLayout();
+  }
+
+  /** Every list column back to its default width. */
+  resetColumns() {
+    this.columns = {};
+    this.saveLayout();
   }
 
   /**
@@ -279,12 +371,14 @@ class DbStore {
     const info = this.info;
     if (!info) return;
     try {
+      await this.#saving;
       await api.closeDb(info.handle);
     } catch (e) {
       notices.error(e);
     }
     this.info = null;
     this.importReport = null;
+    this.restoring = null;
     this.quickText = "";
     this.filterVersion++;
     this.listVersion++;
@@ -388,24 +482,31 @@ class DbStore {
     }
   }
 
-  /** Builds the sort order if needed, then switches the list to it. */
-  async setSort(spec: SortSpecDto, force = false) {
+  /**
+   * Builds the sort order if needed, then switches the list to it and
+   * (with `save`) remembers it for the database. Only the latest call wins.
+   */
+  async setSort(spec: SortSpecDto, force = false, save = true) {
     if (!this.info) return;
+    const handle = this.info.handle;
     const same = spec.key === this.sort.key && spec.descending === this.sort.descending;
     if (same && !force) return;
+    const seq = ++this.#sortSeq;
     try {
       this.sortingKey = spec.key;
-      const job = await api.sortGames(this.info.handle, spec);
+      const job = await api.sortGames(handle, spec);
       if (job !== null) {
         const done = await jobs.waitFor(job);
         if (done.state !== "done") return;
       }
+      if (seq !== this.#sortSeq || this.info?.handle !== handle) return;
       this.sort = spec;
       this.listVersion++;
+      if (save) this.saveLayout();
     } catch (e) {
       notices.error(e);
     } finally {
-      this.sortingKey = null;
+      if (seq === this.#sortSeq) this.sortingKey = null;
     }
   }
 

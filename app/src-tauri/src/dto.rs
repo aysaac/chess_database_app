@@ -1,7 +1,7 @@
 //! Serializable types shared with the frontend. TypeScript definitions are
 //! generated into `app/src/lib/bindings/` by `npm run bindings`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chess_core::game::{GameResult, Headers, Shape, ShapeColor};
 use chess_core::shakmaty::Square;
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::error::AppError;
+use crate::settings::{DbView, FilterStep};
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +50,45 @@ pub struct ReferenceDbDto {
 pub struct FilterDto {
     pub count: u32,
     pub description: String,
+}
+
+/// How a database's game list looked last time (QOL-07), to put back when
+/// it's opened.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DbViewDto {
+    /// `None` for the natural order.
+    pub sort: Option<SortSpecDto>,
+    /// Widths in CSS pixels of the columns the user resized, by column id.
+    pub columns: BTreeMap<String, u32>,
+    /// Description of the saved filter, which `restore_filter` makes again.
+    pub filter: Option<String>,
+    /// Text for the quick filter box, when the saved filter is the quick filter.
+    pub quick_text: String,
+    /// The saved filter's last header search, to start the search dialog from.
+    pub last_query: Option<HeaderQueryDto>,
+}
+
+impl From<&DbView> for DbViewDto {
+    fn from(v: &DbView) -> DbViewDto {
+        let steps = v.filter.as_ref().map(|f| f.steps.as_slice()).unwrap_or_default();
+        let quick_text = match steps {
+            [FilterStep::Header { query, quick: true }] => query.text.clone(),
+            _ => String::new(),
+        };
+        let last_query = steps.iter().rev().find_map(|s| match s {
+            FilterStep::Header { query, quick: false } => Some(query.clone()),
+            _ => None,
+        });
+        DbViewDto {
+            sort: v.sort,
+            columns: v.columns.clone(),
+            filter: v.filter.as_ref().map(|f| f.description.clone()),
+            quick_text,
+            last_query,
+        }
+    }
 }
 
 impl DbInfoDto {
@@ -155,7 +195,7 @@ pub enum SortKeyDto {
     Plies,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SortSpecDto {
     pub key: SortKeyDto,
@@ -663,7 +703,7 @@ pub struct OnboardingDto {
     pub sample_games: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum ResultFilterDto {
@@ -673,7 +713,7 @@ pub enum ResultFilterDto {
     Decisive,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum EloModeDto {
@@ -684,7 +724,7 @@ pub enum EloModeDto {
 }
 
 /// Header search criteria (SRCH-01); empty fields match everything.
-#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(export)]
 pub struct HeaderQueryDto {
@@ -924,5 +964,37 @@ impl ImportReportDto {
                 })
                 .collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::SavedFilter;
+
+    #[test]
+    fn a_saved_view_fills_the_filter_box_and_the_search_dialog() {
+        let q = |text: &str, white: &str| HeaderQueryDto {
+            text: text.into(),
+            white: white.into(),
+            ..Default::default()
+        };
+        let view = |steps: Vec<FilterStep>| DbView {
+            filter: Some(SavedFilter { steps, description: "d".into() }),
+            ..DbView::default()
+        };
+        let dto = DbViewDto::from(&view(vec![FilterStep::Header { query: q("carlsen", ""), quick: true }]));
+        assert_eq!(
+            (dto.quick_text.as_str(), dto.last_query, dto.filter.as_deref()),
+            ("carlsen", None, Some("d"))
+        );
+
+        // A search within the quick filter's results: the box stays empty.
+        let dto = DbViewDto::from(&view(vec![
+            FilterStep::Header { query: q("carlsen", ""), quick: true },
+            FilterStep::Header { query: q("", "Carlsen"), quick: false },
+        ]));
+        assert_eq!((dto.quick_text.as_str(), dto.last_query), ("", Some(q("", "Carlsen"))));
+        assert_eq!(DbViewDto::from(&DbView::default()), DbViewDto::default());
     }
 }

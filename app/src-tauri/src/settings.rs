@@ -1,15 +1,70 @@
 //! Persistent user settings (INF-02): configured engines, recent databases
-//! (DB-07), whether the welcome guide ran (QOL-08) and the frontend's own
-//! preferences, stored as JSON in the app's config directory.
-//! `CHESSDB_CONFIG_DIR` overrides the directory, so test runs don't touch the
-//! user's settings.
+//! (DB-07), how each database's game list looked (QOL-07), whether the
+//! welcome guide ran (QOL-08) and the frontend's own preferences, stored as
+//! JSON in the app's config directory. `CHESSDB_CONFIG_DIR` overrides the
+//! directory, so test runs don't touch the user's settings.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::dto::{HeaderQueryDto, NameKindDto, SortSpecDto};
+
 const FILE: &str = "settings.json";
 const MAX_RECENT: usize = 12;
+/// Databases whose list view is remembered; the least recently used go.
+const MAX_VIEWS: usize = 50;
+
+/// One step of a game-list filter (QOL-07): enough to make the filter again
+/// when the database is reopened, since game ids don't last (compaction
+/// renumbers them) and new games may match. Steps after the first searched
+/// within the results of the ones before (SRCH-14).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FilterStep {
+    /// A header search (SRCH-01), or the quick filter box (SRCH-02).
+    #[serde(rename_all = "camelCase")]
+    Header {
+        query: HeaderQueryDto,
+        #[serde(default)]
+        quick: bool,
+    },
+    /// The games of one player, event, site or annotator (DB-04), by name.
+    #[serde(rename_all = "camelCase")]
+    Name { table: NameKindDto, name: String },
+    /// The games reaching a position (SRCH-03); `full` searched every game
+    /// at any depth instead of the position index.
+    #[serde(rename_all = "camelCase")]
+    Position {
+        fen: String,
+        #[serde(default)]
+        full: bool,
+    },
+}
+
+/// A filter to make again when its database is reopened.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedFilter {
+    pub steps: Vec<FilterStep>,
+    /// As the filter bar showed it.
+    pub description: String,
+}
+
+/// How the game list of one database looked (QOL-07): its sort order, the
+/// column widths the user chose and its filter.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DbView {
+    /// The database folder (canonical, as `AppState` keeps it).
+    pub path: PathBuf,
+    /// `None` for the natural order (by game number).
+    pub sort: Option<SortSpecDto>,
+    /// Widths in CSS pixels of the columns the user resized, by column id.
+    pub columns: BTreeMap<String, u32>,
+    pub filter: Option<SavedFilter>,
+}
 
 /// A configured UCI engine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +96,8 @@ pub struct Settings {
     pub reference_database: Option<PathBuf>,
     /// The welcome guide (QOL-08) was finished or dismissed.
     pub welcome_done: bool,
+    /// The game list's look per database (QOL-07), most recently used first.
+    pub database_views: Vec<DbView>,
     /// Preferences owned by the frontend (board orientation, pane sizes…).
     pub ui: serde_json::Map<String, serde_json::Value>,
 }
@@ -75,6 +132,14 @@ impl Settings {
         for e in &mut self.engines {
             e.path = dunce::simplified(&e.path).to_path_buf();
         }
+        let mut views: Vec<DbView> = Vec::with_capacity(self.database_views.len());
+        for mut v in self.database_views.drain(..) {
+            v.path = dunce::simplified(&v.path).to_path_buf();
+            if !views.iter().any(|seen| seen.path == v.path) {
+                views.push(v);
+            }
+        }
+        self.database_views = views;
         self
     }
 
@@ -130,6 +195,28 @@ impl Settings {
         self.recent_databases.retain(|p| p != path);
         self.recent_databases.insert(0, path.to_path_buf());
         self.recent_databases.truncate(MAX_RECENT);
+    }
+
+    /// The saved list view of the database at `path`, if there is one.
+    pub fn db_view(&self, path: &Path) -> Option<&DbView> {
+        self.database_views.iter().find(|v| v.path == path)
+    }
+
+    /// The list view of the database at `path` to change, made if needed
+    /// and moved to the front. Views beyond the most recent `MAX_VIEWS` go.
+    pub fn db_view_mut(&mut self, path: &Path) -> &mut DbView {
+        let view = match self.database_views.iter().position(|v| v.path == path) {
+            Some(i) => self.database_views.remove(i),
+            None => DbView { path: path.to_path_buf(), ..DbView::default() },
+        };
+        self.database_views.insert(0, view);
+        self.database_views.truncate(MAX_VIEWS);
+        &mut self.database_views[0]
+    }
+
+    /// Forgets the list view of the database at `path` (a new database there).
+    pub fn forget_db_view(&mut self, path: &Path) {
+        self.database_views.retain(|v| v.path != path);
     }
 }
 
@@ -187,6 +274,47 @@ mod tests {
         assert!(!Settings::load(dir.path()).needs_welcome());
         std::fs::write(dir.path().join(FILE), br#"{"engines": []}"#).unwrap();
         assert!(Settings::load(dir.path()).needs_welcome());
+    }
+
+    #[test]
+    fn keeps_the_list_views_of_recent_databases() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Settings::default();
+        let view = s.db_view_mut(Path::new("/a.chessdb"));
+        view.sort = Some(SortSpecDto { key: crate::dto::SortKeyDto::Date, descending: true });
+        view.columns.insert("white".into(), 180);
+        view.filter = Some(SavedFilter {
+            steps: vec![
+                FilterStep::Name { table: NameKindDto::Player, name: "Kasparov, Garry".into() },
+                FilterStep::Header {
+                    query: HeaderQueryDto { year_from: Some(1999), ..Default::default() },
+                    quick: false,
+                },
+                FilterStep::Position { fen: "8/8/8/8/8/8/8/K6k w - - 0 1".into(), full: true },
+            ],
+            description: "Player: Kasparov, Garry, then from 1999".into(),
+        });
+        s.db_view_mut(Path::new("/b.chessdb"));
+        s.save(dir.path()).unwrap();
+        let loaded = Settings::load(dir.path());
+        assert_eq!(loaded, s);
+        assert_eq!(loaded.db_view(Path::new("/a.chessdb")).unwrap().columns["white"], 180);
+
+        // Most recently used first, and only so many.
+        s.db_view_mut(Path::new("/a.chessdb"));
+        assert_eq!(s.database_views[0].path, PathBuf::from("/a.chessdb"));
+        assert_eq!(s.database_views[0].columns["white"], 180, "moving keeps it");
+        for i in 0..MAX_VIEWS {
+            s.db_view_mut(&PathBuf::from(format!("/{i}.chessdb")));
+        }
+        assert_eq!(s.database_views.len(), MAX_VIEWS);
+        assert!(s.db_view(Path::new("/a.chessdb")).is_none(), "the oldest went");
+        s.forget_db_view(Path::new("/0.chessdb"));
+        assert!(s.db_view(Path::new("/0.chessdb")).is_none());
+
+        // Old settings files have no views.
+        std::fs::write(dir.path().join(FILE), br#"{"recentDatabases": ["/c"]}"#).unwrap();
+        assert!(Settings::load(dir.path()).database_views.is_empty());
     }
 
     #[test]

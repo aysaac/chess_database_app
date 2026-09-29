@@ -17,28 +17,110 @@
   // scaled and wheel scrolling is handled here.
   const MAX_SPACER = 8_000_000;
 
-  const columns: { key: SortKeyDto | null; label: string; title?: string; num?: boolean }[] = [
-    { key: "id", label: "#", num: true },
-    { key: "white", label: "White" },
-    { key: "whiteElo", label: "Elo", title: "White Elo", num: true },
-    { key: "black", label: "Black" },
-    { key: "blackElo", label: "Elo", title: "Black Elo", num: true },
-    { key: "result", label: "Result" },
-    { key: "date", label: "Date", num: true },
-    { key: "event", label: "Event" },
-    { key: "site", label: "Site" },
-    { key: "round", label: "Round", num: true },
-    { key: "eco", label: "ECO" },
-    { key: null, label: "Opening", title: "Opening, from the positions in the game" },
-    { key: "plies", label: "Moves", num: true },
-    { key: null, label: "", title: "V: variations, C: comments, A: symbols or arrows, F: starts from a position" },
+  type Column = {
+    /** Saved with the column widths (QOL-07); don't rename. */
+    id: string;
+    key: SortKeyDto | null;
+    label: string;
+    /** For "Resize the … column" and the header menu. */
+    name: string;
+    title?: string;
+    num?: boolean;
+    /** Default grid track: fixed, or a share of the free space. */
+    width: string;
+  };
+
+  const columns: Column[] = [
+    { id: "id", key: "id", label: "#", name: "number", num: true, width: "64px" },
+    { id: "white", key: "white", label: "White", name: "White", width: "minmax(110px, 1.4fr)" },
+    { id: "whiteElo", key: "whiteElo", label: "Elo", name: "White Elo", title: "White Elo", num: true, width: "46px" },
+    { id: "black", key: "black", label: "Black", name: "Black", width: "minmax(110px, 1.4fr)" },
+    { id: "blackElo", key: "blackElo", label: "Elo", name: "Black Elo", title: "Black Elo", num: true, width: "46px" },
+    { id: "result", key: "result", label: "Result", name: "Result", width: "52px" },
+    { id: "date", key: "date", label: "Date", name: "Date", num: true, width: "88px" },
+    { id: "event", key: "event", label: "Event", name: "Event", width: "minmax(90px, 1.2fr)" },
+    { id: "site", key: "site", label: "Site", name: "Site", width: "minmax(80px, 1fr)" },
+    { id: "round", key: "round", label: "Round", name: "Round", num: true, width: "52px" },
+    { id: "eco", key: "eco", label: "ECO", name: "ECO", width: "42px" },
+    {
+      id: "opening",
+      key: null,
+      label: "Opening",
+      name: "Opening",
+      title: "Opening, from the positions in the game",
+      width: "minmax(110px, 1.5fr)",
+    },
+    { id: "plies", key: "plies", label: "Moves", name: "Moves", num: true, width: "50px" },
+    {
+      id: "flags",
+      key: null,
+      label: "",
+      name: "flags",
+      title: "V: variations, C: comments, A: symbols or arrows, F: starts from a position",
+      width: "44px",
+    },
   ];
+
+  // Resized columns get their saved width; the others keep their default.
+  const template = $derived(
+    columns.map((c) => (db.columns[c.id] ? `${db.columns[c.id]}px` : c.width)).join(" "),
+  );
 
   let viewport: HTMLDivElement;
   let viewH = $state(0);
   let virtualTop = $state(0);
   let selected = $state<number | null>(null);
   let menu = $state<{ x: number; y: number; row: GameRowDto } | null>(null);
+  let headMenu = $state<{ x: number; y: number; column: Column } | null>(null);
+  /** Id of the column whose edge is being dragged. */
+  let resizing = $state<string | null>(null);
+
+  /** Drags the right edge of a column (QOL-07); saved when it's let go. */
+  function startResize(e: PointerEvent, c: Column) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const cell = (e.currentTarget as HTMLElement).parentElement!;
+    // Where on the edge it was grabbed, so the edge doesn't jump.
+    const grab = e.clientX - cell.getBoundingClientRect().right;
+    let moved = false;
+    // The left edge is measured each time: columns sharing the free space
+    // to the left may shrink as this one grows.
+    const move = (ev: PointerEvent) => {
+      moved = true;
+      db.setColumnWidth(c.id, ev.clientX - grab - cell.getBoundingClientRect().left, false);
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      resizing = null;
+      if (moved) db.saveLayout();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    resizing = c.id;
+  }
+
+  /** Shift+Left/Right on a column header narrows or widens the column. */
+  function resizeKey(e: KeyboardEvent, c: Column) {
+    if (!e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const cell = (e.currentTarget as HTMLElement).parentElement!;
+    const width = db.columns[c.id] ?? cell.getBoundingClientRect().width;
+    db.setColumnWidth(c.id, width + (e.key === "ArrowRight" ? 10 : -10));
+  }
+
+  function openHeadMenu(e: MouseEvent) {
+    const id = (e.target as HTMLElement).closest<HTMLElement>("[data-column]")?.dataset.column;
+    const column = columns.find((c) => c.id === id);
+    if (!column) return;
+    e.preventDefault();
+    menu = null;
+    headMenu = { x: e.clientX, y: e.clientY, column };
+  }
 
   let cache = new Map<number, GameRowDto[]>();
   let stale = new Map<number, GameRowDto[]>();
@@ -216,34 +298,60 @@
 </script>
 
 <svelte:window
-  onmousedown={() => (menu = null)}
+  onmousedown={() => {
+    menu = null;
+    headMenu = null;
+  }}
   onkeydown={(e) => {
-    if (menu && e.key === "Escape") {
+    if ((menu || headMenu) && e.key === "Escape") {
       e.preventDefault();
       menu = null;
+      headMenu = null;
     }
   }}
 />
 
-<section class="list" aria-label="Games">
+<section class="list" class:resizing={resizing !== null} aria-label="Games" style:--columns={template}>
   {#if db.info}<FilterBar />{/if}
-  <div class="row head" role="row">
-    {#each columns as c (c.label + c.key)}
-      {#if c.key}
-        <button
-          class="cell"
-          class:num={c.num}
-          title={c.title ?? `Sort by ${c.label.toLowerCase()}`}
-          disabled={!db.info || total === 0}
-          onclick={() => db.toggleSort(c.key!)}
-        >
-          {c.label}{#if db.sortingKey === c.key}<span class="sorting"> sorting…</span>{:else if db.sort.key === c.key && c.key !== "id"}<span
-              class="arrow">{db.sort.descending ? " ▼" : " ▲"}</span
-            >{:else if c.key === "id" && db.sort.key === "id" && db.sort.descending}<span class="arrow"> ▼</span>{/if}
-        </button>
-      {:else}
-        <span class="cell" title={c.title}></span>
-      {/if}
+  <div class="row head" role="row" tabindex="-1" oncontextmenu={openHeadMenu}>
+    {#each columns as c (c.id)}
+      <div class="head-cell" data-column={c.id}>
+        {#if c.key}
+          <button
+            class="cell"
+            class:num={c.num}
+            title={c.title ?? `Sort by ${c.label.toLowerCase()}`}
+            aria-keyshortcuts="Shift+ArrowLeft Shift+ArrowRight"
+            disabled={!db.info || total === 0}
+            onclick={() => db.toggleSort(c.key!)}
+            onkeydown={(e) => resizeKey(e, c)}
+          >
+            {c.label}{#if db.sortingKey === c.key}<span class="sorting"> sorting…</span>{:else if db.sort.key === c.key && c.key !== "id"}<span
+                class="arrow">{db.sort.descending ? " ▼" : " ▲"}</span
+              >{:else if c.key === "id" && db.sort.key === "id" && db.sort.descending}<span class="arrow"> ▼</span>{/if}
+          </button>
+        {:else}
+          <!-- Focusable so it can be resized from the keyboard too. -->
+          <span
+            class="cell"
+            class:idle={!db.info || total === 0}
+            role="columnheader"
+            tabindex="0"
+            title={c.title}
+            aria-label={c.title}
+            aria-keyshortcuts="Shift+ArrowLeft Shift+ArrowRight"
+            onkeydown={(e) => resizeKey(e, c)}>{c.label}</span
+          >
+        {/if}
+        <span
+          class="grip"
+          class:active={resizing === c.id}
+          role="presentation"
+          title="Drag to resize the {c.name} column; double-click for its default width"
+          onpointerdown={(e) => startResize(e, c)}
+          ondblclick={() => db.setColumnWidth(c.id, null)}
+        ></span>
+      </div>
     {/each}
   </div>
 
@@ -267,6 +375,7 @@
             oncontextmenu={(e) => {
               e.preventDefault();
               selected = index;
+              headMenu = null;
               if (row) menu = { x: e.clientX, y: e.clientY, row };
             }}
           >
@@ -348,6 +457,33 @@
   </div>
 {/if}
 
+{#if headMenu}
+  {@const column = headMenu.column}
+  <div
+    class="menu"
+    role="menu"
+    tabindex="-1"
+    style:left="{Math.min(headMenu.x, window.innerWidth - 240)}px"
+    style:top="{headMenu.y}px"
+    onmousedown={(e) => e.stopPropagation()}
+  >
+    <button
+      role="menuitem"
+      disabled={!db.columns[column.id]}
+      onclick={() => { headMenu = null; db.setColumnWidth(column.id, null); }}
+    >
+      Default width for the {column.name} column
+    </button>
+    <button
+      role="menuitem"
+      disabled={Object.keys(db.columns).length === 0}
+      onclick={() => { headMenu = null; db.resetColumns(); }}
+    >
+      Default widths for all columns
+    </button>
+  </div>
+{/if}
+
 {#if db.info && total > 0}
   <span class="sr-only" aria-live="polite">{formatCount(total)} games</span>
 {/if}
@@ -363,9 +499,8 @@
 
   .row {
     display: grid;
-    grid-template-columns:
-      64px minmax(110px, 1.4fr) 46px minmax(110px, 1.4fr) 46px 52px 88px
-      minmax(90px, 1.2fr) minmax(80px, 1fr) 52px 42px minmax(110px, 1.5fr) 50px 44px;
+    /* From the column list in the script: defaults plus resized widths. */
+    grid-template-columns: var(--columns);
     align-items: center;
     height: 26px;
     padding: 0 8px;
@@ -378,13 +513,66 @@
     font-weight: 600;
   }
 
+  .head-cell {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    height: 100%;
+  }
+
   .head .cell {
+    flex: 1;
+    min-width: 0;
     padding: 0 6px;
     height: 100%;
     border: 0;
     border-radius: 0;
     text-align: left;
     font-weight: 600;
+    line-height: 26px;
+  }
+
+  /* Like the disabled sort buttons next to it. */
+  .head span.cell.idle {
+    opacity: 0.4;
+  }
+
+  .head span.cell:focus-visible {
+    outline: 2px solid var(--felt);
+    outline-offset: -2px;
+  }
+
+  /* The column's right edge, dragged to resize it (QOL-07). */
+  .grip {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    right: -4px;
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .grip::after {
+    content: "";
+    position: absolute;
+    top: 5px;
+    bottom: 5px;
+    left: 3px;
+    width: 2px;
+    border-radius: 1px;
+  }
+
+  .grip:hover::after,
+  .grip.active::after {
+    background: var(--felt);
+  }
+
+  .resizing,
+  .resizing * {
+    cursor: col-resize;
+    user-select: none;
   }
 
   .head .cell.num {

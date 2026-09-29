@@ -97,7 +97,9 @@ desktop, so it's safe to run while they work.
   `setup.js` (position editor), `goto.js` (QOL-10: Ctrl+V with a FEN, the
   "Go to position" dialog), `image.js` (board images: the menu, copy as PNG
   and SVG, save, a failed save), `onboarding.js` (welcome guide, sample
-  games, engine page, import wizard; QOL-08). `search.js` and `tree.js` time the 1M-game database when `__BIG__`.
+  games, engine page, import wizard; QOL-08), `view.js` (QOL-07: resizing
+  columns, and the sort, widths and each kind of filter coming back after
+  reopening). `search.js`, `tree.js` and `view.js` time the 1M-game database when `__BIG__`.
 - **Clipboard:** a driver logs `clip:<name>` to have the harness save the
   private display's clipboard (`wl-paste`) as `<out-dir>/clips/<name>.png`
   or `.txt`, and print the types on offer. Linux only; it never reads the

@@ -13,6 +13,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::commands::db::{thousands, to_job_error};
 use crate::dto::{DbInfoDto, OpeningDto, TreeDto, TreeRowDto};
 use crate::error::AppResult;
+use crate::settings::FilterStep;
 use crate::state::{ActiveFilter, AppState};
 
 /// Brings the position index of `handle` up to date in a background job.
@@ -133,8 +134,13 @@ fn describe_position(pos: &Chess) -> String {
     }
 }
 
-fn install_filter(state: &AppState, handle: u32, ids: Vec<GameId>, description: String) {
-    state.filters.lock().expect("filters lock").insert(handle, ActiveFilter::new(ids, description));
+/// Limits the list to the games reaching `pos` (found with a `full` scan
+/// or the index), remembering the position for next time (QOL-07).
+fn install_filter(state: &AppState, handle: u32, ids: Vec<GameId>, pos: &Chess, full: bool) {
+    let description = describe_position(pos);
+    let description = if full { format!("{description} (full search)") } else { description };
+    let step = FilterStep::Position { fen: position::to_fen(pos), full };
+    state.set_filter(handle, ActiveFilter::new(ids, description, vec![step]));
 }
 
 /// Position search (SRCH-03): limits the list of `handle` to the games
@@ -150,7 +156,7 @@ pub async fn search_position(state: State<'_, AppState>, handle: u32, session: u
     .await
     .map_err(|e| crate::error::AppError::new(crate::error::ErrorCode::Internal, e.to_string()))??;
     let ids = hits.entries.iter().map(|e| e.game).collect();
-    install_filter(&state, handle, ids, describe_position(&pos));
+    install_filter(&state, handle, ids, &pos, false);
     crate::commands::db::db_info(state, handle).await
 }
 
@@ -168,12 +174,7 @@ pub async fn scan_position_games(
     Ok(state.jobs.spawn("search", "Searching all games for the position", move |ctx| {
         let ids = scan_position(&db, &pos, ctx).map_err(to_job_error)?;
         let n = ids.len() as u64;
-        install_filter(
-            &app.state::<AppState>(),
-            handle,
-            ids,
-            format!("{} (full search)", describe_position(&pos)),
-        );
+        install_filter(&app.state::<AppState>(), handle, ids, &pos, true);
         Ok(match n {
             0 => "No game reaches this position".to_owned(),
             1 => "Found 1 game with this position".to_owned(),

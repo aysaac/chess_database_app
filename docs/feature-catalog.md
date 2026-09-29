@@ -363,8 +363,9 @@ Two sides of one program:
 > ENG-01/02/03/05/09, ANL-01/04, IO-08/11/12, INF-02/03/04, QOL-01/02/03/05.
 > Open P1 work: more piece sets (UI-01). See handoff.md.
 >
-> **Phase 3 (P2), started 2026-09-29:** QOL-06 (board as a PNG/SVG image), QOL-08 (welcome
-> guide, sample games, import wizard), QOL-10 (go to a pasted position).
+> **Phase 3 (P2), started 2026-09-29:** QOL-06 (board as a PNG/SVG image), QOL-07 (list
+> sort, column widths and filter per database), QOL-08 (welcome guide, sample games, import
+> wizard), QOL-10 (go to a pasted position).
 
 
 | Phase | Goal | Contents |

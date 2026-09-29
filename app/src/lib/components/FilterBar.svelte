@@ -44,6 +44,8 @@
       {db.info.filter.description}
     </span>
     <button onclick={() => db.clearFilter()}>Show all games</button>
+  {:else if db.restoring}
+    <span class="status" title={db.restoring}>Restoring the last filter: {db.restoring}…</span>
   {:else if db.searching}
     <span class="status">Searching…</span>
   {/if}
