@@ -244,7 +244,14 @@ impl PositionIndex {
             let path = entry?.path();
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             if name.starts_with("positions") || name.starts_with("openings") {
-                std::fs::remove_file(&path)?;
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {}
+                    // A build running outside the lock may hold its temp files
+                    // open (Windows can't delete those); it removes them when it
+                    // finds it was superseded.
+                    Err(_) if name.ends_with(".tmp") => {}
+                    Err(e) => return Err(e.into()),
+                }
             }
         }
         Ok(())
@@ -470,21 +477,30 @@ pub struct IndexSummary {
     pub plan: IndexPlan,
     pub games: u32,
     pub positions: u64,
+    /// The database was compacted while this ran, so nothing was installed;
+    /// the caller should run it again.
+    pub superseded: bool,
 }
 
 /// Brings the position index up to date: indexes games added since the last
 /// update, or rebuilds everything when needed (see [`IndexPlan`]). Runs
 /// outside the database lock except while reading games and installing.
 pub fn update_position_index(db: &Mutex<Database>, progress: &dyn Progress) -> Result<IndexSummary, DbError> {
-    let (plan, dir, count, dirty_before, max_ply, generation) = {
+    let (plan, dir, count, dirty_before, max_ply, generation, compactions) = {
         let db = db.lock().expect("db lock");
         let index = db.positions();
         let generation = index.segments.iter().map(|s| s.generation).max().unwrap_or(0) + 1;
         let max_ply = if index.is_built() { index.max_ply() } else { DEFAULT_MAX_PLY };
-        (index.plan(db.count()), db.path().to_path_buf(), db.count(), index.dirty.len(), max_ply, generation)
+        let plan = index.plan(db.count());
+        (plan, db.path().to_path_buf(), db.count(), index.dirty.len(), max_ply, generation, db.compactions())
     };
+    // A compaction renumbers the games and deletes the index files, ours
+    // included: whatever this run built is then stale, and any error it hit
+    // on the way (a deleted temp file, a game id past the end) is moot.
+    let superseded = |db: &Database| db.compactions() != compactions;
+    let stale = || IndexSummary { plan, games: 0, positions: 0, superseded: true };
     let first = match plan {
-        IndexPlan::UpToDate => return Ok(IndexSummary { plan, games: 0, positions: 0 }),
+        IndexPlan::UpToDate => return Ok(IndexSummary { plan, games: 0, positions: 0, superseded: false }),
         IndexPlan::Append(from) => from,
         IndexPlan::Rebuild => 0,
     };
@@ -526,19 +542,23 @@ pub fn update_position_index(db: &Mutex<Database>, progress: &dyn Progress) -> R
     });
     if let Err(e) = result {
         cleanup(&runs);
-        return Err(e);
+        return if superseded(&db.lock().expect("db lock")) { Ok(stale()) } else { Err(e) };
     }
     let tmp = dir.join(format!("positions-{generation}.idx.tmp"));
     let merged = merge_runs(&runs, &mut pending, &tmp, first, count, max_ply);
     cleanup(&runs);
     if let Err(e) = merged {
         let _ = std::fs::remove_file(&tmp);
-        return Err(e);
+        return if superseded(&db.lock().expect("db lock")) { Ok(stale()) } else { Err(e) };
     }
 
     // Openings: a rebuild rewrites the file, an append extends it.
     let openings_tmp = dir.join(format!("{OPENINGS_FILE}.tmp"));
     let mut db = db.lock().expect("db lock");
+    if superseded(&db) {
+        let _ = std::fs::remove_file(&tmp);
+        return Ok(stale());
+    }
     let index = db.positions_mut();
     let mut all_openings = if plan == IndexPlan::Rebuild { Vec::new() } else { index.openings.clone() };
     all_openings.truncate(first as usize);
@@ -578,7 +598,7 @@ pub fn update_position_index(db: &Mutex<Database>, progress: &dyn Progress) -> R
     }
     index.segments.push(Segment::open(&final_path, generation)?);
     index.openings = all_openings;
-    Ok(IndexSummary { plan, games: ids.len() as u32, positions })
+    Ok(IndexSummary { plan, games: ids.len() as u32, positions, superseded: false })
 }
 
 /// Games (all of them, deleted ones included) whose main line reaches `pos`
@@ -855,6 +875,50 @@ mod tests {
         let segs = files.filter(|e| e.file_name().to_string_lossy().starts_with("positions-")).count();
         assert_eq!(segs, 1, "old segments deleted");
         drop(dir);
+    }
+
+    /// Compacts the database the first time the build reports progress,
+    /// that is after it read the games and before it installs the index.
+    struct CompactMidway<'a> {
+        db: &'a Mutex<Database>,
+        done: std::sync::atomic::AtomicBool,
+    }
+
+    impl Progress for CompactMidway<'_> {
+        fn report(&self, _done: u64, _total: u64) {
+            if !self.done.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                let mut db = self.db.lock().unwrap();
+                db.set_deleted(1, true).unwrap();
+                db.compact(&NoProgress).unwrap();
+            }
+        }
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn a_compaction_during_a_build_supersedes_it() {
+        let (_d, db) = db();
+        let progress = CompactMidway { db: &db, done: Default::default() };
+        let s = update_position_index(&db, &progress).unwrap();
+        assert!(s.superseded, "the build noticed the compaction");
+        assert!(!db.lock().unwrap().positions().is_built(), "nothing stale was installed");
+        let path = db.lock().unwrap().path().to_path_buf();
+        let leftovers: Vec<String> = std::fs::read_dir(&path)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("positions") || n.starts_with("openings"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left: {leftovers:?}");
+
+        // Running it again indexes the renumbered games: C-D (1.e4 c5) is
+        // gone and E-F, the transposition, is game 1 now.
+        let s = update_position_index(&db, &NoProgress).unwrap();
+        assert_eq!((s.plan, s.games, s.superseded), (IndexPlan::Rebuild, 3, false));
+        assert_eq!(games(&db, &["e2e4", "e7e5", "g1f3", "b8c6"]), [0, 1]);
+        assert_eq!(games(&db, &["e2e4", "c7c5"]), Vec::<GameId>::new());
     }
 
     #[test]
