@@ -15,10 +15,12 @@
   import Notation from "./lib/components/Notation.svelte";
   import StatusBar from "./lib/components/StatusBar.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
+  import WelcomeGuide from "./lib/components/WelcomeGuide.svelte";
   import { analysis } from "./lib/stores/analysis.svelte";
   import { board as boardPrefs } from "./lib/stores/board.svelte";
   import { db } from "./lib/stores/db.svelte";
   import { game } from "./lib/stores/game.svelte";
+  import { onboarding } from "./lib/stores/onboarding.svelte";
   import { prefs } from "./lib/stores/prefs.svelte";
   import { tree } from "./lib/stores/tree.svelte";
 
@@ -84,6 +86,8 @@
       listShare = prefs.get("listShare", listShare);
       game.orientation = prefs.get<string>("orientation", "white") === "black" ? "black" : "white";
       await db.reopenLast();
+      // The welcome guide on a first run (QOL-08).
+      void onboarding.check();
       void db.loadReference();
       await analysis.loadEngines();
     })();
@@ -213,6 +217,8 @@
 
   <StatusBar />
 </div>
+
+{#if onboarding.open}<WelcomeGuide />{/if}
 
 <style>
   .app {

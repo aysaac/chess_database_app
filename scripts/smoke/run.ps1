@@ -57,6 +57,15 @@ $js = [IO.File]::ReadAllText((Resolve-Path $Driver).Path)
 $js = $js.Replace('__ROOT__', $Root.Replace('\', '/')).Replace('__OUT__', $Out.Replace('\', '/')).Replace('__BIG__', $Big)
 $driverOut = Join-Path $Out 'driver.js'
 [IO.File]::WriteAllText($driverOut, $js, $utf8)
+# Every run starts with fresh settings, which is a first run: the welcome
+# guide (QOL-08) would open over the app. Drivers start as a returning user
+# unless they say "smoke: first-run" (onboarding.js).
+$configDir = Join-Path $Out 'config'
+if (-not $js.Contains('smoke: first-run')) {
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+    $settingsPath = Join-Path $configDir 'settings.json'
+    if (-not (Test-Path $settingsPath)) { [IO.File]::WriteAllText($settingsPath, '{"welcomeDone": true}', $utf8) }
+}
 $Log = Join-Path $Out 'dev.log'
 [IO.File]::WriteAllText($Log, '')
 
@@ -97,9 +106,10 @@ $app = $null
 # that session, and its next `npm run tauri dev` would run the driver.
 $savedEnv = @{ CHESSDB_SMOKE = $env:CHESSDB_SMOKE; CHESSDB_CONFIG_DIR = $env:CHESSDB_CONFIG_DIR }
 try {
-    # Settings go to the output folder, so the user's own settings stay untouched.
+    # Settings and app data (the sample database) go to the output folder,
+    # so the user's own stay untouched.
     $env:CHESSDB_SMOKE = $driverOut
-    $env:CHESSDB_CONFIG_DIR = Join-Path $Out 'config'
+    $env:CHESSDB_CONFIG_DIR = $configDir
     $app = Start-Process cmd.exe -PassThru -WindowStyle Hidden -WorkingDirectory (Join-Path $Root 'app') `
         -ArgumentList '/c', "npm run tauri dev -- --config `"$confPath`" > `"$Log`" 2>&1"
     $start = Get-Date

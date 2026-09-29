@@ -3,6 +3,7 @@
   import { db } from "../stores/db.svelte";
   import { jobs } from "../stores/jobs.svelte";
   import { notices } from "../stores/notify.svelte";
+  import { onboarding } from "../stores/onboarding.svelte";
   import ImportWarnings from "./ImportWarnings.svelte";
   import Modal from "./Modal.svelte";
 
@@ -56,6 +57,13 @@
   <span class="notice" class:error={notices.current?.kind === "error"} aria-live="polite">
     {notices.current?.text ?? ""}
   </span>
+
+  <button
+    class="help"
+    aria-label="Getting started"
+    title="Getting started: sample games, importing, the engine and tips"
+    onclick={() => onboarding.show()}>?</button
+  >
 </footer>
 
 {#if showWarnings && db.importReport}
@@ -93,7 +101,7 @@
 <style>
   footer {
     display: grid;
-    grid-template-columns: auto 1fr minmax(0, auto);
+    grid-template-columns: auto 1fr minmax(0, auto) auto;
     align-items: center;
     gap: 16px;
     height: 30px;
@@ -154,5 +162,18 @@
 
   .notice.error {
     color: var(--danger);
+  }
+
+  /* Opens the welcome guide (QOL-08). */
+  .help {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border-color: var(--rule);
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--ink-soft);
   }
 </style>

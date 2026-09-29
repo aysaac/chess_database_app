@@ -92,6 +92,28 @@ game blobs, normalized name tables, crash-safe commits. There is no
 memory-mapping in the prototype; positional reads were fast enough (see the
 benchmarks there).
 
+## App folders and onboarding (QOL-08)
+
+- **Settings** live in the app's config folder (`settings.json`), **app
+  data** in its data folder (Tauri's `app_config_dir` / `app_data_dir`).
+  `CHESSDB_CONFIG_DIR` points both at one folder, so test runs touch
+  neither of the user's.
+- **Sample games** are 12 famous games (1851 to 1999, plus the Saavedra
+  study) in `app/src-tauri/data/sample-games.pgn`, compiled into the
+  binary with `include_str!`. Game scores are facts; the notes in them are
+  our own, under the project's GPL. The first "Explore the sample games"
+  builds `Sample games.chessdb` in the data folder (under a temporary name,
+  renamed once complete) and later ones open it. It isn't put in
+  Documents, so a first look leaves nothing there.
+- **The welcome guide** opens when `welcomeDone` isn't set in the settings
+  and no database was ever opened (so people who used the app before the
+  guide existed don't get it). Closing or finishing it sets `welcomeDone`.
+  Its import wizard suggests `<Documents>/<first PGN's name>.chessdb`
+  (" 2", " 3"… when taken), like the file dialogs.
+- **No engine download.** The guide shows the engine that detection found
+  (the bundled Stockfish, ENG-09) or explains how to add one; fetching
+  Stockfish at run time (ENG-09's "auto-download") is still open.
+
 ## Deferred: programmatic access
 
 Discussed and parked. Recorded here so the design isn't lost:

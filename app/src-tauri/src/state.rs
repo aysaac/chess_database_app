@@ -127,16 +127,25 @@ pub struct AppState {
     pub index_builds: Mutex<IndexBuilds>,
     pub settings: Mutex<Settings>,
     config_dir: OnceLock<PathBuf>,
+    /// Where the app keeps its own data, such as the sample database (QOL-08).
+    data_dir: OnceLock<PathBuf>,
     pub analysis: Mutex<Option<Analysis>>,
     /// The last import into each database (by handle), while it had warnings.
     pub import_reports: Mutex<HashMap<u32, ImportReportDto>>,
 }
 
 impl AppState {
-    /// Loads the settings from `dir` (called once at start-up).
-    pub fn init_settings(&self, dir: PathBuf) {
-        *self.settings.lock().expect("settings lock") = Settings::load(&dir);
-        let _ = self.config_dir.set(dir);
+    /// Loads the settings from `config_dir` and notes the data folder
+    /// (called once at start-up).
+    pub fn init_dirs(&self, config_dir: PathBuf, data_dir: PathBuf) {
+        *self.settings.lock().expect("settings lock") = Settings::load(&config_dir);
+        let _ = self.config_dir.set(config_dir);
+        let _ = self.data_dir.set(data_dir);
+    }
+
+    /// The app's data folder (it may not exist yet).
+    pub fn data_dir(&self) -> AppResult<PathBuf> {
+        self.data_dir.get().cloned().ok_or_else(|| AppError::not_found("the app's data folder"))
     }
 
     /// Changes the settings and saves them.

@@ -7,6 +7,7 @@
   import { db } from "../stores/db.svelte";
   import { game } from "../stores/game.svelte";
   import { notices } from "../stores/notify.svelte";
+  import { onboarding } from "../stores/onboarding.svelte";
   import FilterBar from "./FilterBar.svelte";
 
   const ROW = 26;
@@ -301,6 +302,10 @@
         <div>
           <button class="primary" onclick={() => db.createDialog()}>Create database</button>
           <button onclick={() => db.openDialog()}>Open database</button>
+        </div>
+        <div>
+          <button onclick={() => onboarding.show("import")}>Import PGN files into a new database…</button>
+          <button title={onboarding.samplePath || undefined} onclick={() => db.openSample()}>Open the sample games</button>
         </div>
         {#if db.recent.some((r) => r.exists)}
           <p class="recent-title">Recently opened</p>

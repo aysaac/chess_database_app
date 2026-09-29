@@ -20,6 +20,7 @@ import type { JobDto } from "./bindings/JobDto";
 import type { LegalMoveDto } from "./bindings/LegalMoveDto";
 import type { NameKindDto } from "./bindings/NameKindDto";
 import type { NameListDto } from "./bindings/NameListDto";
+import type { OnboardingDto } from "./bindings/OnboardingDto";
 import type { PlayResultDto } from "./bindings/PlayResultDto";
 import type { RecentDbDto } from "./bindings/RecentDbDto";
 import type { ReferenceDbDto } from "./bindings/ReferenceDbDto";
@@ -130,6 +131,11 @@ export const api = {
   forgetRecentDatabase: (path: string) => invoke<void>("forget_recent_database", { path }),
   uiPrefs: () => invoke<Record<string, unknown>>("ui_prefs"),
   setUiPref: (key: string, value: unknown) => invoke<void>("set_ui_pref", { key, value }),
+
+  onboardingStatus: () => invoke<OnboardingDto>("onboarding_status"),
+  finishWelcome: () => invoke<void>("finish_welcome"),
+  openSampleDb: () => invoke<DbInfoDto>("open_sample_db"),
+  suggestDbPath: (name: string) => invoke<string>("suggest_db_path", { name }),
 };
 
 export function onAnalysis(cb: (update: AnalysisDto) => void): Promise<UnlistenFn> {

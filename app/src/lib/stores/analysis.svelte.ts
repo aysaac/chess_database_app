@@ -53,13 +53,25 @@ class AnalysisStore {
     return this.engines.find((e) => e.isDefault) ?? this.engines[0];
   }
 
-  async loadEngines() {
-    try {
-      this.engines = await api.listEngines();
-      this.status = await api.analysisStatus();
-    } catch (e) {
-      notices.error(e);
-    }
+  /** True while the engine list loads (the first time, engines are looked for and started once). */
+  loadingEngines = $state(false);
+  #loading: Promise<void> | null = null;
+
+  /** Loads the engines; calls while it runs share the same load. */
+  loadEngines(): Promise<void> {
+    this.#loading ??= (async () => {
+      this.loadingEngines = true;
+      try {
+        this.engines = await api.listEngines();
+        this.status = await api.analysisStatus();
+      } catch (e) {
+        notices.error(e);
+      } finally {
+        this.loadingEngines = false;
+        this.#loading = null;
+      }
+    })();
+    return this.#loading;
   }
 
   async #engines(f: () => Promise<EngineDto[]>) {
@@ -72,8 +84,13 @@ class AnalysisStore {
     }
   }
 
-  detect() {
-    return this.#engines(() => api.detectEngines());
+  async detect() {
+    this.loadingEngines = true;
+    try {
+      return await this.#engines(() => api.detectEngines());
+    } finally {
+      this.loadingEngines = false;
+    }
   }
 
   add(path: string) {

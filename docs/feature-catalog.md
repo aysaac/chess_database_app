@@ -306,7 +306,7 @@ Two sides of one program:
 | QOL-05 | Cancellable long operations with ETA | CB | P1 | INF-01 | |
 | QOL-06 | Copy board as image (PNG/SVG) | CB+FR | P2 | UI-01 | **Done** (2026-09-29): "Board image ▾" in the toolbar copies PNG or SVG, or saves either; theme colours, coordinates, last move, check and drawings; three sizes |
 | QOL-07 | Remember column widths/sort/filters per DB | CB | P2 | INF-02 | |
-| QOL-08 | Onboarding: sample DB, bundled engine, first-run import wizard | FR | P2 | ENG-09 | |
+| QOL-08 | Onboarding: sample DB, bundled engine, first-run import wizard | FR | P2 | ENG-09 | Done: welcome guide on first run, 12 classic sample games, engine check, PGN → new database wizard |
 | QOL-09 | Share game via link / QR code (CB18) | CB | P4 | NET-03 | |
 | QOL-10 | Global "go to position": paste FEN anywhere to jump & tree-search it | — | P2 | SRCH-03 | Done: Ctrl+V outside a text box or "Go to position…"; FEN, FEN tag or Lichess link |
 
@@ -363,8 +363,8 @@ Two sides of one program:
 > ENG-01/02/03/05/09, ANL-01/04, IO-08/11/12, INF-02/03/04, QOL-01/02/03/05.
 > Open P1 work: more piece sets (UI-01). See handoff.md.
 >
-> **Phase 3 (P2), started 2026-09-29:** QOL-06 (board as a PNG/SVG image), QOL-10 (go to
-> a pasted position).
+> **Phase 3 (P2), started 2026-09-29:** QOL-06 (board as a PNG/SVG image), QOL-08 (welcome
+> guide, sample games, import wizard), QOL-10 (go to a pasted position).
 
 
 | Phase | Goal | Contents |

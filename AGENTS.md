@@ -75,7 +75,7 @@ desktop, so it's safe to run while they work.
 
 - **How it works:** debug builds only. `app/src-tauri/src/lib.rs` evaluates the file in
   `CHESSDB_SMOKE` after page load. `app/src/main.ts` exposes
-  `window.__chessdb = { db, game, jobs, api, invoke }`. The driver calls the
+  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, onboarding, api, invoke }`. The driver calls the
   stores exactly as the UI does and reports through the `dev_log` command
   as `[smoke] …` lines.
 - **Default driver:** `scripts/smoke/basic.js`. It imports the fixtures, sorts, opens a
@@ -96,16 +96,22 @@ desktop, so it's safe to run while they work.
   opening tree, position search, opening names, reference database),
   `setup.js` (position editor), `goto.js` (QOL-10: Ctrl+V with a FEN, the
   "Go to position" dialog), `image.js` (board images: the menu, copy as PNG
-  and SVG, save, a failed save). `search.js` and `tree.js` time the 1M-game database when `__BIG__`.
+  and SVG, save, a failed save), `onboarding.js` (welcome guide, sample
+  games, engine page, import wizard; QOL-08). `search.js` and `tree.js` time the 1M-game database when `__BIG__`.
 - **Clipboard:** a driver logs `clip:<name>` to have the harness save the
   private display's clipboard (`wl-paste`) as `<out-dir>/clips/<name>.png`
   or `.txt`, and print the types on offer. Linux only; it never reads the
   user's clipboard (not with `SMOKE_VISIBLE`). Look at the images.
+- **First run:** every run starts with fresh settings, so the harness writes
+  `{"welcomeDone": true}` first and the welcome guide stays closed. A driver
+  that contains the text `smoke: first-run` (only `onboarding.js`) starts
+  with no settings, as on a first run.
 - **Never open native dialogs from a driver:** nobody can click them on the
   private display, so the driver hangs until it times out. Every driver
   starts with `game.confirmDiscard = async () => true`.
 - **Settings:** the harness sets `CHESSDB_CONFIG_DIR` to `<out-dir>/config`,
-  so runs never touch the user's settings.
+  so runs never touch the user's settings. The app keeps its data there
+  too (the sample database), not in the user's data folder.
 - **Writing a driver:** a new flow is a new driver. Copy `basic.js`; the placeholders
   `__ROOT__`, `__OUT__` and `__BIG__` are filled in by `run.sh`. Log
   `shot:<name>` to request a screenshot and `FAILED: …` to fail.

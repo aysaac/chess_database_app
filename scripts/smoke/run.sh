@@ -28,6 +28,8 @@
 # 1.25, the user's laptop screen).
 # SMOKE_VISIBLE=1: open the window on your own desktop instead, to watch it
 # (it takes a tile and focus there; no screenshots).
+# Runs start as a returning user (the welcome guide stays closed), unless the
+# driver contains the text "smoke: first-run".
 #
 # macOS has no private display: the window opens on the desktop (it takes
 # focus), and screenshots are `screencapture` of that window alone, which
@@ -70,6 +72,13 @@ print(json.dumps({
 }))
 PY
 sed -e "s|__ROOT__|$ROOT|g" -e "s|__OUT__|$OUT|g" -e "s|__BIG__|$BIG|g" "$DRIVER" >"$OUT/driver.js"
+# Every run starts with fresh settings, which is a first run: the welcome
+# guide (QOL-08) would open over the app. Drivers start as a returning user
+# unless they say "smoke: first-run" (onboarding.js).
+if ! grep -q 'smoke: first-run' "$DRIVER"; then
+  mkdir -p "$OUT/config"
+  [[ -f "$OUT/config/settings.json" ]] || printf '{"welcomeDone": true}\n' >"$OUT/config/settings.json"
+fi
 LOG="$OUT/dev.log"
 : >"$LOG"
 
@@ -173,8 +182,8 @@ clip() {
 }
 
 # Own session, so npm, vite, cargo, the app and its private bus can be
-# stopped together. Settings go to the output folder, so the user's own
-# settings stay untouched.
+# stopped together. Settings and app data (the sample database) go to the
+# output folder, so the user's own stay untouched.
 # macOS has no setsid; job control gives the background job its own process
 # group instead.
 if command -v setsid >/dev/null; then

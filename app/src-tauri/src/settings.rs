@@ -1,7 +1,8 @@
 //! Persistent user settings (INF-02): configured engines, recent databases
-//! (DB-07) and the frontend's own preferences, stored as JSON in the app's
-//! config directory. `CHESSDB_CONFIG_DIR` overrides the directory, so test
-//! runs don't touch the user's settings.
+//! (DB-07), whether the welcome guide ran (QOL-08) and the frontend's own
+//! preferences, stored as JSON in the app's config directory.
+//! `CHESSDB_CONFIG_DIR` overrides the directory, so test runs don't touch the
+//! user's settings.
 
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,8 @@ pub struct Settings {
     pub recent_databases: Vec<PathBuf>,
     /// The reference database (DB-13) the opening tree can use.
     pub reference_database: Option<PathBuf>,
+    /// The welcome guide (QOL-08) was finished or dismissed.
+    pub welcome_done: bool,
     /// Preferences owned by the frontend (board orientation, pane sizes…).
     pub ui: serde_json::Map<String, serde_json::Value>,
 }
@@ -82,6 +85,13 @@ impl Settings {
         let tmp = dir.join(format!("{FILE}.tmp"));
         std::fs::write(&tmp, json)?;
         std::fs::rename(&tmp, dir.join(FILE))
+    }
+
+    /// Whether to open the welcome guide at start-up: on a first run, but
+    /// not for someone who used the app before the guide existed (they have
+    /// recent databases).
+    pub fn needs_welcome(&self) -> bool {
+        !self.welcome_done && self.recent_databases.is_empty()
     }
 
     pub fn engine(&self, id: &str) -> Option<&EngineConfig> {
@@ -148,6 +158,7 @@ mod tests {
         s.note_recent(Path::new("/b.chessdb"));
         s.note_recent(Path::new("/a.chessdb"));
         s.ui.insert("orientation".into(), "black".into());
+        s.welcome_done = true;
         s.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());
         assert_eq!(loaded, s);
@@ -159,6 +170,23 @@ mod tests {
         // Unknown and missing fields are fine.
         std::fs::write(dir.path().join(FILE), br#"{"recentDatabases": ["/c"], "future": 1}"#).unwrap();
         assert_eq!(Settings::load(dir.path()).recent_databases, [PathBuf::from("/c")]);
+    }
+
+    #[test]
+    fn welcomes_new_users_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Settings::load(dir.path());
+        assert!(s.needs_welcome(), "first run");
+        s.welcome_done = true;
+        s.save(dir.path()).unwrap();
+        assert!(!Settings::load(dir.path()).needs_welcome(), "finished");
+
+        // Settings from before the guide existed: someone who has opened
+        // databases isn't new.
+        std::fs::write(dir.path().join(FILE), br#"{"recentDatabases": ["/a.chessdb"]}"#).unwrap();
+        assert!(!Settings::load(dir.path()).needs_welcome());
+        std::fs::write(dir.path().join(FILE), br#"{"engines": []}"#).unwrap();
+        assert!(Settings::load(dir.path()).needs_welcome());
     }
 
     #[test]

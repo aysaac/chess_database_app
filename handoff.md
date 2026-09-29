@@ -28,6 +28,21 @@ that first.
   build, and the smoke drivers `image` (new), `basic`, `layout`, `setup`,
   `search` and `tree` (not `engine`: no Stockfish in that worktree; nothing
   engine-side changed), with the desktop unchanged.
+- **QOL-08 onboarding (2026-09-29, branch `qol-08-onboarding`, one commit,
+  not pushed or merged):** a welcome guide opens on a first run: start
+  (import your games / explore the sample games / open a database), your
+  engine (the detected Stockfish, or how to add one), a few tips. The
+  sample is 12 classic games with short notes, compiled into the app and
+  built into `Sample games.chessdb` in the app data folder on first use.
+  The import wizard makes a new database from one or more PGN files
+  (suggested in Documents, named after the first file), with progress,
+  Cancel, and a summary of warnings and skipped games. A "?" at the right
+  end of the status bar reopens the guide; the empty game list offers the
+  import and the sample. New driver `scripts/smoke/onboarding.js`; the
+  harness now starts other drivers as a returning user (see AGENTS.md).
+  Checks: fmt, clippy, 166 tests (+1 ignored), svelte-check, the build and
+  all seven drivers, with Stockfish and (onboarding) without; the 1M-game
+  parts didn't run (no `testdata/large/` in that worktree).
 - **macOS (2026-09-27):** the project now also lives on the user's Mac
   (Apple Silicon, macOS 26.5, see [Environment notes](#macos)). Everything
   passes there: fmt, clippy, 156 tests plus the ignored TWIC round trip,
@@ -110,6 +125,7 @@ that first.
 | **Settings** (new) | `settings.json` in the app config dir (engines, default engine, recent databases, frontend prefs). `CHESSDB_CONFIG_DIR` overrides the folder; the smoke harness uses its own | `app/src-tauri/src/settings.rs` |
 | **Tabs** (new) | Opening a game reuses the current tab if it has no unsaved changes, else opens a new tab (no discard prompt). Next/previous game replaces the tab (with the prompt). Analysis follows the active tab | `app/src/lib/stores/game.svelte.ts` |
 | **Reference database** (DB-13) | A path in settings (`referenceDatabase`). The backend opens it on its own handle, shared with the list when it's the same folder (`DbUse` flags in `AppState`: a database closes when neither the list nor the reference uses it). The tree picks its source (open or reference); "Find games" on the reference opens it in the list | `app/src-tauri/src/state.rs` |
+| **Onboarding** (QOL-08) | The guide opens while `welcomeDone` is unset and no database was ever opened. Sample games are compiled in (`app/src-tauri/data/sample-games.pgn`) and built into the app data folder, not Documents. `CHESSDB_CONFIG_DIR` holds app data too | `docs/stack.md` |
 | **Compaction** (new) | Rewrites into `*.new` files, commits with a `compact.commit` marker, renames; open finishes or rolls back. Game ids change; open tabs are remapped; the position index is rebuilt | `crates/chess-db/src/database.rs` |
 | **Board images** (QOL-06) | New Tauri-free crate `crates/chess-diagram`: an SVG of only paths (cburnett pieces, labels outlined from an embedded IBM Plex Sans Condensed), rasterized by `resvg`; the clipboard is written from Rust (arboard via `tauri-plugin-clipboard-manager`), the frontend has no clipboard permission. Images use the theme's light-mode colours in any mode | `docs/stack.md` |
 
@@ -126,7 +142,7 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11 ·
   ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16 ·
   QOL-01 (reopens the last database and remembers orientation, pane size,
-  tree visibility, analysis lines), 02, 03, 05, 06, 10.
+  tree visibility, analysis lines), 02, 03, 05, 06, 08, 10.
 - **Partial:**
   - DB-04: players, events, sites and annotators have lists with counts,
     "show games" and rename/merge. No sources or teams, and no per-player
@@ -296,6 +312,9 @@ clocks and evals), 16-core laptop:
   letters aren't accepted on import.
 
 **Engines**
+- ENG-09's auto-download/update isn't built: without a bundled or installed
+  Stockfish, the welcome guide says where to get one and offers "Add
+  engine…".
 - One analysis at a time (ENG-04 is P2). The blunder check uses the default
   engine and fixed thresholds (Lichess's). No engine I/O log view (logged at
   debug level only).
@@ -306,6 +325,9 @@ clocks and evals), 16-core laptop:
   legal-move dots, last move) under "Board appearance" in the nav bar, but
   only the cburnett piece set: more sets need vendored SVGs with checked
   licences (lichess's lila repo lists them in COPYING.md).
+- The toolbar needs about 1,420 px for one row (measured 2026-09-29); the
+  default window is 1,440, so one more toolbar button wraps it there. That's
+  why the welcome guide's "?" is in the status bar.
 - The toolbar wraps to two rows in windows narrower than about 1,400 px, and the nav row
   (now with next/previous game) is wider than very small boards. The layout
   driver passes at all five sizes.
@@ -342,6 +364,9 @@ clocks and evals), 16-core laptop:
   `wl-paste` on the private display read them. Windows and macOS clipboards
   are untested (B10 in `docs/windows-testing.md`); the native save dialog
   wasn't clicked through (the driver saves to a given path).
+- QOL-08: the guide's native dialogs ("Choose PGN files…", "Change…", "Add
+  engine…", "Open a database") weren't clicked; the driver sets what they
+  return. The `smoke: first-run` seeding in `run.ps1` wasn't run on Windows.
 - The cursor repair in `scripts/smoke/run.sh` (see below).
 
 ## Next steps

@@ -650,6 +650,19 @@ pub struct RecentDbDto {
     pub exists: bool,
 }
 
+/// State of the welcome guide (QOL-08).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OnboardingDto {
+    /// Open the guide at start-up: a first run.
+    pub show_welcome: bool,
+    /// Where the sample database is, or will be created.
+    pub sample_path: String,
+    /// Games in the sample database as shipped.
+    pub sample_games: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

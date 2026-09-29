@@ -29,7 +29,7 @@ pub fn thousands(n: u64) -> String {
     out
 }
 
-fn info(state: &AppState, handle: u32) -> AppResult<DbInfoDto> {
+pub(crate) fn info(state: &AppState, handle: u32) -> AppResult<DbInfoDto> {
     let db = state.db(handle)?;
     let filter = state
         .filters
@@ -64,7 +64,7 @@ pub async fn create_db(state: State<'_, AppState>, path: String) -> AppResult<Db
 
 /// The handle of `path` for `usage`: the open database if it's open
 /// already (a folder can only be opened once), else it's opened.
-fn open_for(state: &AppState, path: &Path, usage: DbUse) -> AppResult<u32> {
+pub(crate) fn open_for(state: &AppState, path: &Path, usage: DbUse) -> AppResult<u32> {
     let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if let Some(handle) = state.find_db(&path) {
         state.claim_db(handle, usage);

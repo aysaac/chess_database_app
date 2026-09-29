@@ -15,7 +15,7 @@ import { game } from "./game.svelte";
 import { jobs } from "./jobs.svelte";
 import { notices } from "./notify.svelte";
 
-const PGN_FILTER = [{ name: "PGN games", extensions: ["pgn"] }];
+export const PGN_FILTER = [{ name: "PGN games", extensions: ["pgn"] }];
 
 /**
  * Where file dialogs start: the Documents folder rather than the working
@@ -307,15 +307,31 @@ class DbStore {
     }
   }
 
+  /** Opens the sample games (QOL-08), creating the database the first time. */
+  async openSample(): Promise<boolean> {
+    try {
+      await this.#use(await api.openSampleDb());
+      return true;
+    } catch (e) {
+      notices.error(e);
+      return false;
+    }
+  }
+
   async createDialog() {
     const path = await save({ title: "Create a database", defaultPath: await inDocuments("My games.chessdb") });
     if (path) await this.createAt(path);
   }
 
+  /** Creates a database and shows it; throws if it can't be created. */
+  async create(path: string) {
+    await this.#use(await api.createDb(path));
+    notices.show(`Created ${this.info?.name}`);
+  }
+
   async createAt(path: string) {
     try {
-      await this.#use(await api.createDb(path));
-      notices.show(`Created ${this.info?.name}`);
+      await this.create(path);
     } catch (e) {
       notices.error(e);
     }
@@ -332,22 +348,27 @@ class DbStore {
     if (typeof path === "string") await this.importFrom(path);
   }
 
-  /** Imports a PGN file into the open database; resolves when done. */
-  async importFrom(path: string) {
-    if (!this.info) return;
+  /**
+   * Imports a PGN file into the open database; resolves when done, with
+   * whether the whole file was imported (false if cancelled or failed).
+   */
+  async importFrom(path: string): Promise<boolean> {
+    if (!this.info) return false;
     const handle = this.info.handle;
     try {
       this.importReport = null;
       const id = await api.importPgn(handle, path);
       this.#importJobs.add(id);
-      await jobs.waitFor(id);
+      const done = await jobs.waitFor(id);
       this.#importJobs.delete(id);
       if (this.info?.handle === handle) this.importReport = await api.importReport(handle);
       await this.refresh();
       if (this.sort.key !== "id") await this.setSort(this.sort, true);
       void this.ensureIndex();
+      return done.state === "done";
     } catch (e) {
       notices.error(e);
+      return false;
     }
   }
 

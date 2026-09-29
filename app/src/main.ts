@@ -16,17 +16,19 @@ const app = mount(App, { target: document.getElementById("app")! });
 // (see CHESSDB_SMOKE in src-tauri/src/lib.rs).
 if (import.meta.env.DEV) {
   void (async () => {
-    const [{ db }, { game }, { jobs }, { analysis }, { prefs }, { tree }, { api }, { invoke }] = await Promise.all([
-      import("./lib/stores/db.svelte"),
-      import("./lib/stores/game.svelte"),
-      import("./lib/stores/jobs.svelte"),
-      import("./lib/stores/analysis.svelte"),
-      import("./lib/stores/prefs.svelte"),
-      import("./lib/stores/tree.svelte"),
-      import("./lib/api"),
-      import("@tauri-apps/api/core"),
-    ]);
-    Object.assign(window, { __chessdb: { db, game, jobs, analysis, prefs, tree, api, invoke } });
+    const [{ db }, { game }, { jobs }, { analysis }, { prefs }, { tree }, { onboarding }, { api }, { invoke }] =
+      await Promise.all([
+        import("./lib/stores/db.svelte"),
+        import("./lib/stores/game.svelte"),
+        import("./lib/stores/jobs.svelte"),
+        import("./lib/stores/analysis.svelte"),
+        import("./lib/stores/prefs.svelte"),
+        import("./lib/stores/tree.svelte"),
+        import("./lib/stores/onboarding.svelte"),
+        import("./lib/api"),
+        import("@tauri-apps/api/core"),
+      ]);
+    Object.assign(window, { __chessdb: { db, game, jobs, analysis, prefs, tree, onboarding, api, invoke } });
   })();
 }
 

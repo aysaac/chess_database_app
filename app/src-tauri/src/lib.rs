@@ -86,12 +86,14 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            let config_dir = match std::env::var_os("CHESSDB_CONFIG_DIR") {
-                Some(dir) => std::path::PathBuf::from(dir),
-                None => app.path().app_config_dir()?,
+            // CHESSDB_CONFIG_DIR (test runs) holds the app's data as well,
+            // so a run never touches the user's folders.
+            let (config_dir, data_dir) = match std::env::var_os("CHESSDB_CONFIG_DIR") {
+                Some(dir) => (std::path::PathBuf::from(&dir), std::path::PathBuf::from(dir)),
+                None => (app.path().app_config_dir()?, app.path().app_data_dir()?),
             };
             log::info!("settings in {}", config_dir.display());
-            app.state::<AppState>().init_settings(config_dir);
+            app.state::<AppState>().init_dirs(config_dir, data_dir);
             let handle = app.handle().clone();
             app.state::<AppState>().jobs.set_listener(move |status| {
                 if let Err(e) = handle.emit(JOB_EVENT, JobDto::from(status)) {
@@ -169,6 +171,10 @@ pub fn run() {
             commands::settings::forget_recent_database,
             commands::settings::ui_prefs,
             commands::settings::set_ui_pref,
+            commands::onboarding::onboarding_status,
+            commands::onboarding::finish_welcome,
+            commands::onboarding::open_sample_db,
+            commands::onboarding::suggest_db_path,
             dev_log,
         ])
         .run(tauri::generate_context!())
