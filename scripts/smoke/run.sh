@@ -5,7 +5,9 @@
 # driver script. The driver runs inside the webview, drives the UI through
 # `window.__chessdb` (dev builds only) and reports via `[smoke] …` log lines,
 # ending with `[smoke] done` or `[smoke] FAILED: …`. Each
-# `[smoke] shot:<name>` line is captured as <out-dir>/shots/<name>.png.
+# `[smoke] shot:<name>` line is captured as <out-dir>/shots/<name>.png, and
+# each `[smoke] clip:<name>` line saves the private display's clipboard as
+# <out-dir>/clips/<name>.png (an image) or .txt (text), with wl-paste.
 #
 # The app runs on a private, invisible display (scripts/offscreen.sh: a
 # headless sway with its own sockets and D-Bus). The user's desktop is never
@@ -148,6 +150,28 @@ shoot() {
   fi
 }
 
+# The private display's clipboard (only there: never the user's, so not
+# with SMOKE_VISIBLE or on macOS). Prints the types on offer and saves the
+# PNG image, or else the text.
+clip() {
+  local name types
+  name=$(printf '%s' "$1" | tr -cd 'a-zA-Z0-9_-')
+  if ((MACOS)) || [[ -n "${SMOKE_VISIBLE:-}" ]] || ! command -v wl-paste >/dev/null; then
+    echo "    clipboard: not read (needs the private display and wl-paste)"
+    return 0
+  fi
+  mkdir -p "$OUT/clips"
+  local paste=(env -u DISPLAY WAYLAND_DISPLAY="$OFFSCREEN_WAYLAND_DISPLAY" wl-paste)
+  types=$("${paste[@]}" --list-types 2>/dev/null | tr '\n' ' ' || true)
+  echo "    clipboard types: ${types:-none}"
+  if [[ " $types " == *" image/png "* ]]; then
+    "${paste[@]}" --type image/png >"$OUT/clips/$name.png" && echo "    clipboard: $OUT/clips/$name.png"
+  elif [[ -n "$types" ]]; then
+    "${paste[@]}" --no-newline >"$OUT/clips/$name.txt" && echo "    clipboard: $OUT/clips/$name.txt"
+  fi
+  return 0
+}
+
 # Own session, so npm, vite, cargo, the app and its private bus can be
 # stopped together. Settings go to the output folder, so the user's own
 # settings stay untouched.
@@ -177,6 +201,7 @@ while ((SECONDS - start < TIMEOUT)); do
     echo "  $msg"
     case "$msg" in
       shot:*) shoot "${msg#shot:}" ;;
+      clip:*) clip "${msg#clip:}" ;;
       done) status=0; break 2 ;;
       FAILED*) break 2 ;;
     esac

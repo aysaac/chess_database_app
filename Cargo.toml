@@ -5,6 +5,7 @@ members = [
     "crates/chess-jobs",
     "crates/chess-db",
     "crates/chess-engine",
+    "crates/chess-diagram",
     "app/src-tauri",
 ]
 
@@ -19,6 +20,7 @@ chess-core = { path = "crates/chess-core" }
 chess-jobs = { path = "crates/chess-jobs" }
 chess-db = { path = "crates/chess-db" }
 chess-engine = { path = "crates/chess-engine" }
+chess-diagram = { path = "crates/chess-diagram" }
 
 shakmaty = "0.30"
 pgn-reader = "0.29"
@@ -44,4 +46,21 @@ opt-level = 3
 [profile.dev.package.chess-db]
 opt-level = 3
 [profile.dev.package.chess-engine]
+opt-level = 3
+# Board images (QOL-06): rasterizing and PNG encoding take seconds unoptimized.
+[profile.dev.package.chess-diagram]
+opt-level = 3
+[profile.dev.package.resvg]
+opt-level = 3
+[profile.dev.package.usvg]
+opt-level = 3
+[profile.dev.package.tiny-skia]
+opt-level = 3
+[profile.dev.package.tiny-skia-path]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
 opt-level = 3

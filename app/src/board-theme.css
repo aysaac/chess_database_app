@@ -89,56 +89,55 @@
 }
 
 /* Board colour themes (UI-01), chosen in "Board appearance". The attribute
-   sits on <html> for the boards, and on each swatch in the picker. */
+   sits on <html> for the boards, and on each swatch in the picker. Each
+   theme has its own colours (`-base`, shown in light mode) and dimmed ones
+   for dark mode. Board images (QOL-06) always use the base colours: they
+   mostly end up on white pages. Write them as #rrggbb, which is what the
+   image renderer reads. */
 [data-board-theme="tournament"] {
-  --board-light: #e6e2c8;
-  --board-dark: #6f8f6a;
+  --board-light-base: #e6e2c8;
+  --board-dark-base: #6f8f6a;
+  --board-light-dimmed: #cfcbb2;
+  --board-dark-dimmed: #5d7a59;
 }
 
 [data-board-theme="walnut"] {
-  --board-light: #eed7b4;
-  --board-dark: #b08462;
+  --board-light-base: #eed7b4;
+  --board-dark-base: #b08462;
+  --board-light-dimmed: #d2bc98;
+  --board-dark-dimmed: #8f6a4d;
 }
 
 [data-board-theme="slate"] {
-  --board-light: #dfe4e8;
-  --board-dark: #7f97a8;
+  --board-light-base: #dfe4e8;
+  --board-dark-base: #7f97a8;
+  --board-light-dimmed: #c3c9cd;
+  --board-dark-dimmed: #65798a;
 }
 
 [data-board-theme="stone"] {
-  --board-light: #dcdcd6;
-  --board-dark: #94948c;
+  --board-light-base: #dcdcd6;
+  --board-dark-base: #94948c;
+  --board-light-dimmed: #c0c0ba;
+  --board-dark-dimmed: #74746d;
 }
 
 [data-board-theme="coral"] {
-  --board-light: #f2dfd5;
-  --board-dark: #c27c6b;
+  --board-light-base: #f2dfd5;
+  --board-dark-base: #c27c6b;
+  --board-light-dimmed: #d6c2b8;
+  --board-dark-dimmed: #9e6152;
+}
+
+[data-board-theme] {
+  --board-light: var(--board-light-base);
+  --board-dark: var(--board-dark-base);
 }
 
 /* Dimmed so the board doesn't glare on a dark screen. */
 @media (prefers-color-scheme: dark) {
-  [data-board-theme="tournament"] {
-    --board-light: #cfcbb2;
-    --board-dark: #5d7a59;
-  }
-
-  [data-board-theme="walnut"] {
-    --board-light: #d2bc98;
-    --board-dark: #8f6a4d;
-  }
-
-  [data-board-theme="slate"] {
-    --board-light: #c3c9cd;
-    --board-dark: #65798a;
-  }
-
-  [data-board-theme="stone"] {
-    --board-light: #c0c0ba;
-    --board-dark: #74746d;
-  }
-
-  [data-board-theme="coral"] {
-    --board-light: #d6c2b8;
-    --board-dark: #9e6152;
+  [data-board-theme] {
+    --board-light: var(--board-light-dimmed);
+    --board-dark: var(--board-dark-dimmed);
   }
 }

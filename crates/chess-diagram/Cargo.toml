@@ -1,0 +1,15 @@
+[package]
+name = "chess-diagram"
+description = "Board diagrams: a position as an SVG or PNG image"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chess-core.workspace = true
+thiserror.workspace = true
+# SVG → pixels. No text, system fonts or raster images: the diagram's SVG has
+# only paths (coordinate labels are outlined with ttf-parser).
+resvg = { version = "0.48", default-features = false }
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }

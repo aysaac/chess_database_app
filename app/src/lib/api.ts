@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AnalysisDto } from "./bindings/AnalysisDto";
 import type { AnalysisStatusDto } from "./bindings/AnalysisStatusDto";
 import type { AppError } from "./bindings/AppError";
+import type { BoardImageDto } from "./bindings/BoardImageDto";
 import type { CommentSlotDto } from "./bindings/CommentSlotDto";
 import type { DbInfoDto } from "./bindings/DbInfoDto";
 import type { EngineDto } from "./bindings/EngineDto";
@@ -13,6 +14,7 @@ import type { GotoPositionDto } from "./bindings/GotoPositionDto";
 import type { GameViewDto } from "./bindings/GameViewDto";
 import type { HeaderQueryDto } from "./bindings/HeaderQueryDto";
 import type { HeadersDto } from "./bindings/HeadersDto";
+import type { ImageFormatDto } from "./bindings/ImageFormatDto";
 import type { ImportReportDto } from "./bindings/ImportReportDto";
 import type { JobDto } from "./bindings/JobDto";
 import type { LegalMoveDto } from "./bindings/LegalMoveDto";
@@ -99,6 +101,10 @@ export const api = {
   saveGame: (session: number, mode: SaveModeDto, handle: number | null = null) =>
     invoke<GameViewDto>("save_game", { session, mode, handle }),
   gamePgn: (session: number) => invoke<string>("game_pgn", { session }),
+  copyBoardImage: (session: number, image: BoardImageDto, format: ImageFormatDto) =>
+    invoke<void>("copy_board_image", { session, image, format }),
+  saveBoardImage: (session: number, image: BoardImageDto, path: string) =>
+    invoke<void>("save_board_image", { session, image, path }),
 
   cancelJob: (id: number) => invoke<boolean>("cancel_job", { id }),
   listJobs: () => invoke<JobDto[]>("list_jobs"),

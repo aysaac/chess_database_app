@@ -12,6 +12,7 @@ Status: **decided 2026-09-25** (frontend, license and platform policy added the 
 | License | **GPL-3.0-or-later** | Lets us build on the best chess libraries: `shakmaty`, `pgn-reader` and `@lichess-org/chessground` (all GPL-3) |
 | Platforms | **Linux first**, following the [cross-platform rules](#cross-platform-rules) | One codebase. Windows/macOS CI gets added once the repo is on GitHub |
 | Programmatic access (CLI, local API, remote control of the running app, MCP) | **Deferred** | Not needed for now; see [Deferred](#deferred-programmatic-access) |
+| Board images (QOL-06) | **Drawn in Rust** (`crates/chess-diagram`): an SVG built by hand, rasterized with `resvg`; put on the clipboard by `tauri-plugin-clipboard-manager` (arboard) | The same image on every platform and in unit tests, without a webview. The SVG is only paths: the cburnett pieces from chessground and coordinate labels outlined (with `ttf-parser`) from an embedded IBM Plex Sans Condensed, so it needs no fonts wherever it's pasted. WebKitGTK's async clipboard isn't dependable for images; arboard writes `image/png` on Wayland (data-control), X11, Windows and macOS. The frontend has no clipboard permissions: only Rust writes to it |
 
 ## Versions in use
 
@@ -23,6 +24,7 @@ Status: **decided 2026-09-25** (frontend, license and platform policy added the 
 | Svelte / Vite / TypeScript | 5.57 / 8.3 / 6.0 (svelte-check doesn't support TS 7 yet) |
 | Board | `@lichess-org/chessground` 10.2 (the old `chessground` npm package is deprecated) |
 | Rust → TypeScript types | `ts-rs` 12, generated into `app/src/lib/bindings/` by `npm run bindings` |
+| Board images | `resvg` 0.48 (no default features: no text, fonts or raster images), `ttf-parser` 0.25, `tauri-plugin-clipboard-manager` 2.3 |
 
 ## How Tauri splits the work
 
@@ -57,6 +59,7 @@ crates/
   chess-db/    storage format, import/export, sorting, search,
                position index, compaction                         (no Tauri)
   chess-engine/ UCI host, analysis driver, blunder check           (no Tauri)
+  chess-diagram/ board images: SVG and PNG of a position           (no Tauri)
 app/
   src-tauri/   Tauri commands/events wrapping the crates above
   src/         Svelte frontend

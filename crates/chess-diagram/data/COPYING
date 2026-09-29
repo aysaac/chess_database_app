@@ -1,0 +1,17 @@
+Third-party files in this folder
+================================
+
+pieces/cburnett/*.svg
+    The "cburnett" chess pieces by Colin M.L. Burnett (GPLv2 or later),
+    as embedded in @lichess-org/chessground 10.2.0
+    (assets/chessground.cburnett.css, GPL-3.0-or-later), the same set the
+    app's board shows. Extracted unchanged from the CSS's base64 data URIs.
+
+IBMPlexSansCondensed-SemiBold-latin.ttf
+    IBM Plex Sans Condensed SemiBold, Latin subset, Copyright 2019 IBM Corp.,
+    under the SIL Open Font License 1.1 (OFL.txt). Taken from
+    @fontsource/ibm-plex-sans-condensed 5.3.0
+    (files/ibm-plex-sans-condensed-latin-600-normal.woff), the font the
+    app's board coordinates use; the WOFF container was unpacked to a plain
+    TrueType file (tables unchanged). Only the outlines of a-h and 1-8 are
+    used, for the coordinate labels of board images.

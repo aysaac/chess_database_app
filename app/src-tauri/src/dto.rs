@@ -473,6 +473,33 @@ pub enum SaveModeDto {
     New,
 }
 
+/// How a board image (QOL-06) looks: the frontend passes the board's
+/// appearance. The position, last move, check and drawings come from the
+/// session.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BoardImageDto {
+    /// Width and height in pixels.
+    pub size: u32,
+    /// The side at the bottom: `"white"` or `"black"`.
+    pub orientation: String,
+    /// Square colours, `#rrggbb`.
+    pub light: String,
+    pub dark: String,
+    pub coordinates: bool,
+    /// Tint the squares of the last move.
+    pub last_move: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ImageFormatDto {
+    Png,
+    Svg,
+}
+
 /// An engine evaluation from White's point of view: centipawns or mate in
 /// N moves (negative: Black mates).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, TS)]

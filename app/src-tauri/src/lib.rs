@@ -76,6 +76,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().level(log::LevelFilter::Info).build())
         .plugin(tauri_plugin_dialog::init())
+        // Board images (QOL-06) are put on the clipboard from Rust only, so
+        // the frontend gets no clipboard permissions.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::default())
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Finished {
@@ -146,6 +149,8 @@ pub fn run() {
             commands::game::redo,
             commands::game::save_game,
             commands::game::game_pgn,
+            commands::image::copy_board_image,
+            commands::image::save_board_image,
             commands::jobs::cancel_job,
             commands::jobs::list_jobs,
             commands::engine::list_engines,

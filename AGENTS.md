@@ -16,6 +16,7 @@ Windows and macOS.
 | `crates/chess-jobs` | Background jobs: threads, throttled progress, cooperative cancellation |
 | `crates/chess-db` | Native database: file format, crash-safe commits, import/export, sorted views, header search, position index (`positions.rs`), compaction |
 | `crates/chess-engine` | UCI engine host, analysis driver thread, blunder check (`review.rs`); `src/bin/fake_uci.rs` is a toy engine for tests |
+| `crates/chess-diagram` | Board images (QOL-06): a position as SVG or PNG, drawn like the app's board (resvg); vendored pieces and font in `data/` (licences in `data/COPYING`) |
 | `app/src-tauri` | Tauri shell: commands (`src/commands/`), DTOs (`src/dto.rs`), view building (`src/view.rs`), state (`src/state.rs`), engines and analysis (`src/engines.rs`), settings (`src/settings.rs`) |
 | `app/src` | Svelte UI: `lib/api.ts` (typed commands), `lib/stores/` (state), `lib/components/`, `lib/bindings/` (generated types) |
 | `docs/feature-catalog.md` | Every ChessBase/Fritz feature, with IDs (`DB-01`, `ENG-02`…), priority tiers P0–P5 and dependencies. **Features are referred to by these IDs** |
@@ -94,7 +95,12 @@ desktop, so it's safe to run while they work.
   name lists, compaction, recent databases), `tree.js` (position index,
   opening tree, position search, opening names, reference database),
   `setup.js` (position editor), `goto.js` (QOL-10: Ctrl+V with a FEN, the
-  "Go to position" dialog). `search.js` and `tree.js` time the 1M-game database when `__BIG__`.
+  "Go to position" dialog), `image.js` (board images: the menu, copy as PNG
+  and SVG, save, a failed save). `search.js` and `tree.js` time the 1M-game database when `__BIG__`.
+- **Clipboard:** a driver logs `clip:<name>` to have the harness save the
+  private display's clipboard (`wl-paste`) as `<out-dir>/clips/<name>.png`
+  or `.txt`, and print the types on offer. Linux only; it never reads the
+  user's clipboard (not with `SMOKE_VISIBLE`). Look at the images.
 - **Never open native dialogs from a driver:** nobody can click them on the
   private display, so the driver hangs until it times out. Every driver
   starts with `game.confirmDiscard = async () => true`.
@@ -185,6 +191,10 @@ stay identical before, during and after the run.
 - `crates/chess-db/examples/import_bench.rs`: imports a PGN and times open,
   paging, sorting and random game reads. Use it to catch performance
   regressions.
+- `crates/chess-diagram/examples/render.rs`: draws a FEN as a board image
+  (`cargo run -p chess-diagram --example render -- out.png [FEN] [SIZE] [black]`,
+  or `out.svg`), with a sample arrow and highlights, to check diagrams
+  without the app.
 - `window.__chessdb` in `npm run tauri dev`: handy from the webview
   inspector (right-click → Inspect Element in dev builds).
 
@@ -276,6 +286,11 @@ stay identical before, during and after the run.
   (shared by the main board and the setup editor) as
   `.chessboard.cg-wrap.orientation-white …`; give a new board the
   `chessboard` class.
+- **Board colours come in pairs:** each theme in `board-theme.css` sets
+  `--board-light-base`/`--board-dark-base` (light mode) and `-dimmed`
+  (dark mode), and `--board-light`/`--board-dark` pick one. Board images
+  (QOL-06) read the `-base` ones in any mode and parse them in Rust, so
+  keep them `#rrggbb`.
 - **Game ids change on compaction.** Anything that stores `(handle, game)`
   must be remapped (`AppState::remap_sources`) or dropped (filters, sorts,
   the position index).

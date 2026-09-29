@@ -19,6 +19,15 @@ that first.
   svelte-check, build, and the smoke drivers `goto` (new), `tree`,
   `layout`, `setup`, `basic`, `search` (without the 1M-game parts; `engine`
   not run, no Stockfish in that worktree). The desktop stayed unchanged.
+- **QOL-06 board images (2026-09-29, branch `qol-06-copy-board-image`,
+  one commit, not pushed):** "Board image ▾" in the toolbar copies the
+  board as PNG or SVG, or saves either. The image is drawn in Rust by a new
+  crate, `crates/chess-diagram` (resvg), and put on the clipboard by
+  `tauri-plugin-clipboard-manager`. See [Board images](#new-board-images-qol-06-2026-09-29).
+  Checks: fmt, clippy, 175 Rust tests (+1 ignored), svelte-check, the
+  build, and the smoke drivers `image` (new), `basic`, `layout`, `setup`,
+  `search` and `tree` (not `engine`: no Stockfish in that worktree; nothing
+  engine-side changed), with the desktop unchanged.
 - **macOS (2026-09-27):** the project now also lives on the user's Mac
   (Apple Silicon, macOS 26.5, see [Environment notes](#macos)). Everything
   passes there: fmt, clippy, 156 tests plus the ignored TWIC round trip,
@@ -102,6 +111,7 @@ that first.
 | **Tabs** (new) | Opening a game reuses the current tab if it has no unsaved changes, else opens a new tab (no discard prompt). Next/previous game replaces the tab (with the prompt). Analysis follows the active tab | `app/src/lib/stores/game.svelte.ts` |
 | **Reference database** (DB-13) | A path in settings (`referenceDatabase`). The backend opens it on its own handle, shared with the list when it's the same folder (`DbUse` flags in `AppState`: a database closes when neither the list nor the reference uses it). The tree picks its source (open or reference); "Find games" on the reference opens it in the list | `app/src-tauri/src/state.rs` |
 | **Compaction** (new) | Rewrites into `*.new` files, commits with a `compact.commit` marker, renames; open finishes or rolls back. Game ids change; open tabs are remapped; the position index is rebuilt | `crates/chess-db/src/database.rs` |
+| **Board images** (QOL-06) | New Tauri-free crate `crates/chess-diagram`: an SVG of only paths (cburnett pieces, labels outlined from an embedded IBM Plex Sans Condensed), rasterized by `resvg`; the clipboard is written from Rust (arboard via `tauri-plugin-clipboard-manager`), the frontend has no clipboard permission. Images use the theme's light-mode colours in any mode | `docs/stack.md` |
 
 Still open (catalog §6): how important ChessBase `.cbh` import is (#2), the
 target scale of 1M vs 10M+ games (#3), and whether play-vs-engine (the Fritz
@@ -116,7 +126,7 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11 ·
   ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16 ·
   QOL-01 (reopens the last database and remembers orientation, pane size,
-  tree visibility, analysis lines), 02, 03, 05, 10.
+  tree visibility, analysis lines), 02, 03, 05, 06, 10.
 - **Partial:**
   - DB-04: players, events, sites and annotators have lists with counts,
     "show games" and rename/merge. No sources or teams, and no per-player
@@ -128,6 +138,35 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   - ENG-01: engines can be added, removed, made default and configured
     (common options plus "show all"), but there are no per-engine profiles.
   - UI-01: five board colour themes, but one piece set (cburnett).
+
+### New: board images (QOL-06, 2026-09-29)
+- **"Board image ▾"** (toolbar, after Copy FEN): Copy as PNG, Copy as SVG,
+  Save as file… (PNG or SVG by the extension; `.png` is added to a bare
+  name), and a size: Small 320, Medium 480 (default) or Large 800 px,
+  remembered (`boardImageSize`). The image is the position at the cursor as
+  the board shows it: orientation, theme, coordinates and last-move tint
+  (following "Board appearance"), check glow, and the game's arrows and
+  circles. The picker's arrows and the eval bar aren't included. The save
+  dialog suggests `White - Black after 23...Qe7.png` (`Board.png` at the
+  start).
+- **Colours:** the image always uses the theme's own colours, not the
+  dimmed dark-mode ones (images mostly land on white pages).
+  `board-theme.css` now sets `--board-light-base`/`--board-dark-base` and
+  `-dimmed` per theme; `--board-light`/`--board-dark` pick one.
+- **Rust:** `crates/chess-diagram` (`Diagram::to_svg`, `to_png`,
+  `to_rgba`) and `app/src-tauri/src/commands/image.rs`
+  (`copy_board_image`, `save_board_image`, temp file + rename). The SVG
+  carries the FEN as its `<title>`. librsvg (`rsvg-convert`) draws it the
+  same as resvg. A copy takes 50–100 ms from the click to the notice in
+  `tauri dev`, 800 px included (the rasterizer is optimized in dev builds).
+- **Tests:** 9 in the crate (colours, orientation, highlights, arrows,
+  labels, PNG header), 4 for the commands; `scripts/smoke/image.js` checks
+  the menu, both copies, saving, a failed save and the suggested names. The
+  harness has a new `clip:<name>` line that saves the private display's
+  clipboard (`wl-paste`) to `<out>/clips/`: the copies offer `image/png`
+  and text, and the saved clips were looked at.
+- `cargo run -p chess-diagram --example render -- out.png [FEN] [SIZE] [black]`
+  draws a FEN without the app.
 
 ### New in the second session (2026-09-26, late)
 - **Insert** in the variation dialog: the new move replaces the recorded
@@ -275,6 +314,13 @@ clocks and evals), 16-core laptop:
   now.)
 - Prettier isn't applied (the repo never was; `NotationLine.svelte` relies
   on exact whitespace), so don't run `npm run format` on everything.
+- Board images (QOL-06): "Copy as SVG" puts the markup on the clipboard as
+  text only (arboard has no `image/svg+xml`), so drawing programs that
+  want an SVG image need the saved file. No keyboard shortcut (the menu is
+  reachable by Tab). One piece set, like the board. The embedded font is
+  the fontsource Latin subset of IBM Plex Sans Condensed SemiBold (OFL 1.1,
+  like the fonts the frontend already bundles), unpacked from WOFF to TTF;
+  only its outlines of a–h and 1–8 reach the images.
 
 **Not verified yet**
 - Real pointer and keyboard input (dragging pieces, the setup editor's
@@ -292,6 +338,10 @@ clocks and evals), 16-core laptop:
   neither was installed and clicked through; on Windows the release exe
   starts. Linux bundles were never built.
 - Light mode was never screenshotted (the Mac can, once screenshots work).
+- Board images (QOL-06) pasted into real programs: on Linux only
+  `wl-paste` on the private display read them. Windows and macOS clipboards
+  are untested (B10 in `docs/windows-testing.md`); the native save dialog
+  wasn't clicked through (the driver saves to a given path).
 - The cursor repair in `scripts/smoke/run.sh` (see below).
 
 ## Next steps

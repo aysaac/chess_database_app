@@ -70,4 +70,16 @@ impl From<chess_core::Error> for AppError {
     }
 }
 
+impl From<chess_diagram::DiagramError> for AppError {
+    fn from(e: chess_diagram::DiagramError) -> AppError {
+        let code = match &e {
+            chess_diagram::DiagramError::BadColor(_) | chess_diagram::DiagramError::BadSize(_) => {
+                ErrorCode::InvalidInput
+            }
+            chess_diagram::DiagramError::Render(_) => ErrorCode::Internal,
+        };
+        AppError::new(code, e.to_string())
+    }
+}
+
 pub type AppResult<T> = Result<T, AppError>;

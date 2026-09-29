@@ -549,6 +549,26 @@ The first suspect is `analyzer_reports_engine_failure`
 after the fake engine crashes, and Windows tears processes down more slowly.
 If it fails, give it more time rather than removing the check.
 
+### B10. Board images (QOL-06)
+
+- [ ] Done
+
+"Board image ▾" in the toolbar copies the board through the clipboard
+plugin (arboard: `CF_DIBV5` plus a PNG format on Windows), which Linux
+can't check. With real input, on a position with an arrow and a circle
+(right-drag and right-click on the board):
+
+- **Copy as PNG**, then paste into Paint, Word and a chat app: the board,
+  its last-move tint and the drawings at the chosen size, not a black or
+  empty image.
+- **Copy as SVG**, then paste into Notepad: `<svg …>` markup; saved as
+  `.svg`, it opens in Edge and looks like the PNG.
+- **Save as file…**: the dialog starts in Documents with a name like
+  `White - Black after 5.Bb5.png`; saving as PNG and as SVG both work, and
+  a name without an extension gets `.png`.
+- `scripts\smoke\image.js` passes under `run.ps1` (it doesn't read the
+  clipboard there; the Linux harness does).
+
 ## Not on this list (decisions for the user)
 
 - **Signing** the installers, which removes the SmartScreen warning.

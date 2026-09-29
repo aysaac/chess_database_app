@@ -4,6 +4,7 @@
   import { game } from "../stores/game.svelte";
   import { tree } from "../stores/tree.svelte";
   import BlunderCheckDialog from "./BlunderCheckDialog.svelte";
+  import BoardImageMenu from "./BoardImageMenu.svelte";
   import EngineDialog from "./EngineDialog.svelte";
   import FenDialog from "./FenDialog.svelte";
   import SetupEditor from "./SetupEditor.svelte";
@@ -49,6 +50,7 @@
   <div class="group" role="group" aria-label="Share">
     <button disabled={!game.view} onclick={() => game.copyPgn()}>Copy PGN</button>
     <button disabled={!game.view} onclick={() => game.copyFen()}>Copy FEN</button>
+    <BoardImageMenu />
   </div>
   <div class="group" role="group" aria-label="Analysis">
     <button

@@ -1,15 +1,17 @@
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, save } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import type { CommentSlotDto } from "../bindings/CommentSlotDto";
 import type { GameViewDto } from "../bindings/GameViewDto";
 import type { GotoPositionDto } from "../bindings/GotoPositionDto";
 import type { HeadersDto } from "../bindings/HeadersDto";
+import type { ImageFormatDto } from "../bindings/ImageFormatDto";
 import type { NotationDto } from "../bindings/NotationDto";
 import type { NotationMoveDto } from "../bindings/NotationMoveDto";
 import type { ShapeDto } from "../bindings/ShapeDto";
 import type { StepDto } from "../bindings/StepDto";
 import type { VariationPolicyDto } from "../bindings/VariationPolicyDto";
-import { db } from "./db.svelte";
+import { board } from "./board.svelte";
+import { db, inDocuments } from "./db.svelte";
 import { notices } from "./notify.svelte";
 import { prefs } from "./prefs.svelte";
 
@@ -25,6 +27,28 @@ function moveAfter(line: NotationMoveDto[], id: number): NotationMoveDto | null 
     }
   }
   return undefined;
+}
+
+/** The move with node id `id`, anywhere in `line` or its variations. */
+function findMove(line: NotationMoveDto[], id: number): NotationMoveDto | undefined {
+  for (const m of line) {
+    if (m.id === id) return m;
+    for (const variation of m.variations) {
+      const hit = findMove(variation, id);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+/** A file name for a board image (QOL-06), e.g. "Carlsen - Caruana after 23...Qe7.png". */
+function boardImageName(view: GameViewDto, notation: NotationDto | null): string {
+  const { white, black } = view.headers;
+  const players = white && black ? `${white} - ${black}` : "Board";
+  const move = view.cursorPath.length ? findMove(notation?.moves ?? [], view.cursor) : undefined;
+  const after = move ? ` after ${move.moveNumber}${move.white ? "." : "..."}${move.san}` : "";
+  // Characters Windows doesn't allow in file names.
+  return `${players}${after}.png`.replace(/[\\/:*?"<>|]/g, "_");
 }
 
 /** Where a comment is stored: a node and a slot, with its current text. */
@@ -557,6 +581,55 @@ class GameStore {
     try {
       await navigator.clipboard.writeText(this.view.fen);
       notices.show("Copied the position as FEN");
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  /** Copies the board as a picture (QOL-06): a PNG image, or SVG markup as text. */
+  async copyBoardImage(format: ImageFormatDto) {
+    const session = this.session;
+    if (session === null) return;
+    const look = board.imageLook(this.orientation);
+    try {
+      await api.copyBoardImage(session, look, format);
+      notices.show(
+        format === "png"
+          ? `Copied the board as an image (${look.size} × ${look.size} pixels)`
+          : "Copied the board as SVG",
+      );
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  /** The file name suggested for the board image: players and last move. */
+  get boardImageName(): string {
+    return this.view ? boardImageName(this.view, this.notation) : "Board.png";
+  }
+
+  /** Asks where to save the board image; the file name's extension picks PNG or SVG. */
+  async saveBoardImage() {
+    if (!this.view) return;
+    const path = await save({
+      title: "Save board image",
+      filters: [
+        { name: "PNG image", extensions: ["png"] },
+        { name: "SVG image", extensions: ["svg"] },
+      ],
+      defaultPath: await inDocuments(this.boardImageName),
+    });
+    if (path) await this.saveBoardImageTo(path);
+  }
+
+  /** Saves the board image to `path` (a PNG unless it ends in .svg; .png is added if it has neither). */
+  async saveBoardImageTo(path: string) {
+    const session = this.session;
+    if (session === null) return;
+    const file = /\.(png|svg)$/i.test(path) ? path : `${path}.png`;
+    try {
+      await api.saveBoardImage(session, board.imageLook(this.orientation), file);
+      notices.show(`Saved the board image as ${file.split(/[\\/]/).pop()}`);
     } catch (e) {
       notices.error(e);
     }
