@@ -333,7 +333,8 @@ For each installer:
   clicks, drags, key presses) into `npm run tauri dev`, the user away
   from the PC; a throwaway driver logged the app's state after each
   step. Everything below works except three small bugs, now **A7**.
-  Dragging *feel* (smoothness) wasn't judged.
+  Dragging *feel*: the user tried the release build (A4 branch) at 120%
+  and found drags and clicks look and feel good, as on Linux.
 
 The smoke drivers can't do any of this (chessground ignores synthetic
 events). In the installed app or `npm run tauri dev`:
