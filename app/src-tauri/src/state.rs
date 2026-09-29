@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use chess_core::game::GameEditor;
 use chess_db::{Database, GameId, SortSpec, sorted_subset};
-use chess_jobs::JobManager;
+use chess_jobs::{JobId, JobManager};
 
 use crate::dto::ImportReportDto;
 use crate::engines::Analysis;
@@ -38,6 +38,27 @@ impl OpenDb {
             DbUse::List => &mut self.listed,
             DbUse::Reference => &mut self.reference,
         }
+    }
+}
+
+/// Running position index builds (SRCH-04), by database. A database closed
+/// while its build runs and opened again gets a new handle for the same
+/// `Database` (A5); a second build there would write the same temporary
+/// files and fail when the first one cleans up.
+#[derive(Default)]
+pub struct IndexBuilds(Vec<(Weak<Mutex<Database>>, JobId)>);
+
+impl IndexBuilds {
+    /// The build of `db` that's still running, if any.
+    pub fn running(&mut self, db: &SharedDb, jobs: &JobManager) -> Option<JobId> {
+        self.0.retain(|(weak, job)| {
+            weak.strong_count() > 0 && jobs.status(*job).is_some_and(|s| !s.state.is_finished())
+        });
+        self.0.iter().find(|(weak, _)| std::ptr::eq(weak.as_ptr(), Arc::as_ptr(db))).map(|(_, job)| *job)
+    }
+
+    pub fn add(&mut self, db: Weak<Mutex<Database>>, job: JobId) {
+        self.0.push((db, job));
     }
 }
 
@@ -102,6 +123,8 @@ pub struct AppState {
     sessions: Mutex<HashMap<u32, Session>>,
     next_session: AtomicU32,
     pub jobs: JobManager,
+    /// Lock order: `index_builds` before a database.
+    pub index_builds: Mutex<IndexBuilds>,
     pub settings: Mutex<Settings>,
     config_dir: OnceLock<PathBuf>,
     pub analysis: Mutex<Option<Analysis>>,
@@ -281,6 +304,39 @@ mod tests {
         assert!(!state.release_db(handle, DbUse::List));
         // The folder isn't locked any more.
         Database::open(&path).unwrap();
+    }
+
+    #[test]
+    fn a_reopened_database_shares_its_running_index_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let handle = state.add_db(Database::create(&dir.path().join("A")).unwrap(), DbUse::List);
+        let other = state.add_db(Database::create(&dir.path().join("B")).unwrap(), DbUse::List);
+        let db = state.db(handle).unwrap();
+        let (finish, finished) = std::sync::mpsc::channel::<()>();
+        let held = db.clone();
+        let job = state.jobs.spawn("index", "Indexing positions", move |_| {
+            let _held = held;
+            let _ = finished.recv();
+            Ok(String::new())
+        });
+        state.index_builds.lock().unwrap().add(Arc::downgrade(&db), job);
+        let path = db.lock().unwrap().path().canonicalize().unwrap();
+        drop(db);
+
+        // Closed and opened again while the build runs: the same build.
+        assert!(state.release_db(handle, DbUse::List));
+        let again = state.revive_db(&path).expect("the build still holds it");
+        let handle = state.add_shared(again, path, DbUse::List);
+        let db = state.db(handle).unwrap();
+        let mut builds = state.index_builds.lock().unwrap();
+        assert_eq!(builds.running(&db, &state.jobs), Some(job));
+        assert_eq!(builds.running(&state.db(other).unwrap(), &state.jobs), None, "another database");
+        drop(builds);
+
+        finish.send(()).unwrap();
+        state.jobs.wait(job);
+        assert_eq!(state.index_builds.lock().unwrap().running(&db, &state.jobs), None, "finished");
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! Position index (SRCH-04), opening tree (OPEN-01) and position search
 //! (SRCH-03) for the position on screen.
 
+use std::sync::Arc;
+
 use chess_core::notation::{san, uci};
 use chess_core::openings;
 use chess_core::position;
@@ -14,24 +16,33 @@ use crate::error::AppResult;
 use crate::state::{ActiveFilter, AppState};
 
 /// Brings the position index of `handle` up to date in a background job.
-/// `None` when it already is.
+/// `None` when it already is. A build already running for the database (it
+/// was reopened under a new handle, A5) is returned instead of a second one.
 #[tauri::command]
 pub async fn update_index(state: State<'_, AppState>, handle: u32) -> AppResult<Option<u64>> {
     let db = state.db(handle)?;
+    // Held until the new build is registered, so two calls can't both start one.
+    let mut builds = state.index_builds.lock().expect("index builds lock");
+    if let Some(job) = builds.running(&db, &state.jobs) {
+        return Ok(Some(job));
+    }
     {
         let db = db.lock().expect("db lock");
         if db.positions().plan(db.count()) == chess_db::IndexPlan::UpToDate {
             return Ok(None);
         }
     }
-    Ok(Some(state.jobs.spawn("index", "Indexing positions", move |ctx| {
+    let key = Arc::downgrade(&db);
+    let job = state.jobs.spawn("index", "Indexing positions", move |ctx| {
         let s = update_position_index(&db, ctx).map_err(to_job_error)?;
         if s.superseded {
             // The frontend asks again, which rebuilds for the new game ids.
             return Ok("The database was compacted; indexing again".to_owned());
         }
         Ok(format!("Indexed the positions of {} games", thousands(u64::from(s.games))))
-    })))
+    });
+    builds.add(key, job);
+    Ok(Some(job))
 }
 
 fn position_of(state: &AppState, session: u32) -> AppResult<Chess> {
