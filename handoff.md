@@ -351,7 +351,9 @@ Recommended order:
   on the way is #6 (all platforms). Part B is done except other scales in
   B6 and B8. An MSI installed after an NSIS one lands in the NSIS folder
   (B1). B2/B3 ran with real input (`SendInput`) while the user was away;
-  they found A4 (reload, print, find bar) and A7 (three small bugs). B4 found two bugs for every platform,
+  they found A4 (reload, print, find bar) and A7 (three small bugs).
+  Fixes: A4 #10, A5 #9, A6 #8, A7 #11. #4 conflicts with #6 and #9 in a
+  few lines; rebase whichever merges after #4. B4 found two bugs for every platform,
   now A5 and A6 in the to-do list.
 - From WSL, Windows programs inherit a PATH without
   `C:\Users\isaac\.cargo\bin`; prepend it in each `powershell.exe`
