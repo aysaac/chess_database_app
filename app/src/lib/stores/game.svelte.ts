@@ -2,6 +2,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import type { CommentSlotDto } from "../bindings/CommentSlotDto";
 import type { GameViewDto } from "../bindings/GameViewDto";
+import type { GotoPositionDto } from "../bindings/GotoPositionDto";
 import type { HeadersDto } from "../bindings/HeadersDto";
 import type { NotationDto } from "../bindings/NotationDto";
 import type { NotationMoveDto } from "../bindings/NotationMoveDto";
@@ -247,6 +248,28 @@ class GameStore {
 
   newGame(fen: string | null = null, mode: OpenMode = "auto") {
     return this.#show(() => api.newGame(fen), mode, null);
+  }
+
+  /**
+   * Goes to the position of a FEN in `text` (QOL-10): to the move where the
+   * game on screen reaches it, else to a new game from it (in this tab
+   * unless it has unsaved changes, as opening a game does). Null if that
+   * failed; the error is shown.
+   */
+  async gotoPosition(text: string): Promise<GotoPositionDto | null> {
+    try {
+      const result = await api.gotoPosition(this.session, text);
+      if (result.kind === "inGame") {
+        this.#resetTransient();
+        this.#apply(result.view);
+      } else if (result.kind === "newGame" && !(await this.newGame(result.fen))) {
+        return null;
+      }
+      return result;
+    } catch (e) {
+      notices.error(e);
+      return null;
+    }
   }
 
   /** Switches to another open game; a running analysis follows it. */

@@ -6,6 +6,7 @@
   import BoardNav from "./lib/components/BoardNav.svelte";
   import EvalBar from "./lib/components/EvalBar.svelte";
   import EvalGraph from "./lib/components/EvalGraph.svelte";
+  import FenPaste from "./lib/components/FenPaste.svelte";
   import GameHeader from "./lib/components/GameHeader.svelte";
   import GameTabs from "./lib/components/GameTabs.svelte";
   import MoveEntry from "./lib/components/MoveEntry.svelte";
@@ -172,6 +173,7 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
+<FenPaste />
 
 <div class="app" style:--list-h="{listShare * 100}%" style:--board="{boardSize}px">
   <Toolbar />

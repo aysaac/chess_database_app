@@ -6,8 +6,8 @@ use chess_core::shakmaty::{Position, Role, Square};
 use tauri::State;
 
 use crate::dto::{
-    CommentSlotDto, FenCheckDto, GameViewDto, HeadersDto, LegalMoveDto, PlayResultDto, SaveModeDto, ShapeDto,
-    StepDto, VariationPolicyDto,
+    CommentSlotDto, FenCheckDto, GameViewDto, GotoPositionDto, HeadersDto, LegalMoveDto, PlayResultDto,
+    SaveModeDto, ShapeDto, StepDto, VariationPolicyDto,
 };
 use crate::error::{AppError, AppResult};
 use crate::state::{AppState, Session};
@@ -43,6 +43,35 @@ pub async fn check_fen(fen: String) -> AppResult<FenCheckDto> {
         Ok(pos) => FenCheckDto { fen: position::to_fen(&pos), error: None },
         Err(e) => FenCheckDto { fen, error: Some(e.to_string()) },
     })
+}
+
+/// Goes to the position of a FEN pasted as `text` (QOL-10): a bare FEN, a
+/// PGN FEN tag or a Lichess analysis link. When the game in `session`
+/// reaches the position (main line first), its cursor moves there;
+/// otherwise the frontend starts a new game from it.
+#[tauri::command]
+pub async fn goto_position(
+    state: State<'_, AppState>,
+    session: Option<u32>,
+    text: String,
+) -> AppResult<GotoPositionDto> {
+    let Some(fen) = position::find_fen(&text) else { return Ok(GotoPositionDto::NoFen) };
+    let pos = match position::from_fen(&fen) {
+        Ok(pos) => pos,
+        Err(chess_core::Error::InvalidFen(error)) => return Ok(GotoPositionDto::Invalid { fen, error }),
+    };
+    if let Some(id) = session {
+        let view = state.with_session(id, |s| {
+            Ok(s.editor.game().find_position(&pos).map(|node| {
+                s.editor.goto(node);
+                game_view(id, s, false)
+            }))
+        })?;
+        if let Some(view) = view {
+            return Ok(GotoPositionDto::InGame { view: Box::new(view) });
+        }
+    }
+    Ok(GotoPositionDto::NewGame { fen: position::to_fen(&pos) })
 }
 
 #[tauri::command]

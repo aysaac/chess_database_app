@@ -12,7 +12,8 @@ indexed: boolean,
  */
 partial: boolean, 
 /**
- * The position is deeper than the indexed plies: games reaching it
- * later than that are missing (a full search finds them).
+ * Games may reach the position later than the indexed plies, so some
+ * can be missing (a full search finds them): its move number is past
+ * them, or the game starts from a set-up position.
  */
 beyondIndex: boolean, maxPly: number, };

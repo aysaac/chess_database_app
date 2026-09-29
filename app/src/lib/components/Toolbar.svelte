@@ -5,10 +5,12 @@
   import { tree } from "../stores/tree.svelte";
   import BlunderCheckDialog from "./BlunderCheckDialog.svelte";
   import EngineDialog from "./EngineDialog.svelte";
+  import FenDialog from "./FenDialog.svelte";
   import SetupEditor from "./SetupEditor.svelte";
   import RecentMenu from "./RecentMenu.svelte";
 
   let setup = $state(false);
+  let gotoDialog = $state(false);
   let engineDialog = $state(false);
   let blunderDialog = $state(false);
 </script>
@@ -26,6 +28,10 @@
   <div class="group" role="group" aria-label="Game">
     <button onclick={() => game.newGame()}>New game</button>
     <button title="Set up a position, or paste a FEN" onclick={() => (setup = true)}>Set up position…</button>
+    <button
+      title="Paste a FEN or Lichess link to see its position and opening tree (Ctrl+V outside a text box)"
+      onclick={() => (gotoDialog = true)}>Go to position…</button
+    >
     <button
       class:primary={game.view?.dirty}
       disabled={!game.view}
@@ -68,6 +74,10 @@
 
 {#if setup}
   <SetupEditor onClose={() => (setup = false)} />
+{/if}
+
+{#if gotoDialog}
+  <FenDialog onClose={() => (gotoDialog = false)} />
 {/if}
 
 <style>

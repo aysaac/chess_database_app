@@ -93,7 +93,8 @@ desktop, so it's safe to run while they work.
   `scripts/fetch-stockfish.sh`), `search.js` (filters, header search, tabs,
   name lists, compaction, recent databases), `tree.js` (position index,
   opening tree, position search, opening names, reference database),
-  `setup.js` (position editor). `search.js` and `tree.js` time the 1M-game database when `__BIG__`.
+  `setup.js` (position editor), `goto.js` (QOL-10: Ctrl+V with a FEN, the
+  "Go to position" dialog). `search.js` and `tree.js` time the 1M-game database when `__BIG__`.
 - **Never open native dialogs from a driver:** nobody can click them on the
   private display, so the driver hangs until it times out. Every driver
   starts with `game.confirmDiscard = async () => true`.
@@ -285,6 +286,12 @@ stay identical before, during and after the run.
   `aspect-ratio`.** The column only fit the nav bar, and the board spilled
   over the notation at full screen. `fitBoard()` in `App.svelte` now sizes the
   board in pixels from the workspace; keep its constants in step with the CSS.
+- **WebKit fires no `paste` event where nothing is editable**, and
+  `navigator.clipboard.readText()` needs clipboard access Tauri doesn't
+  enable. So Ctrl+V with a FEN (QOL-10) first moves the focus to a hidden
+  textarea (`FenPaste.svelte`); the paste lands there and the focus goes
+  back. Drivers can't press Ctrl+V: `goto.js` sends the keydown, then a
+  paste event with a stubbed `clipboardData`.
 - **Browsers cap element height** (~17–33M px). `GameList.svelte` scales the
   scrollbar above 8M px and handles wheel scrolling itself. Test big lists
   with the 1M-game database.

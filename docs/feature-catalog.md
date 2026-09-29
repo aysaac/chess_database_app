@@ -308,7 +308,7 @@ Two sides of one program:
 | QOL-07 | Remember column widths/sort/filters per DB | CB | P2 | INF-02 | |
 | QOL-08 | Onboarding: sample DB, bundled engine, first-run import wizard | FR | P2 | ENG-09 | |
 | QOL-09 | Share game via link / QR code (CB18) | CB | P4 | NET-03 | |
-| QOL-10 | Global "go to position": paste FEN anywhere to jump & tree-search it | — | P2 | SRCH-03 | |
+| QOL-10 | Global "go to position": paste FEN anywhere to jump & tree-search it | — | P2 | SRCH-03 | Done: Ctrl+V outside a text box or "Go to position…"; FEN, FEN tag or Lichess link |
 
 ### NET — Online & cloud
 
@@ -361,7 +361,7 @@ Two sides of one program:
 > **Status (2026-09-26, late):** every P0 item, and of P1: UI-01/02/03/05/07/09/16,
 > GAME-03…07/16/17, DB-02…06 (DB-04 and DB-07 in part), DB-13, SRCH-01…04/14, OPEN-01/11,
 > ENG-01/02/03/05/09, ANL-01/04, IO-08/11/12, INF-02/03/04, QOL-01/02/03/05.
-> Open P1 work: more piece sets (UI-01). See handoff.md.
+> Open P1 work: more piece sets (UI-01). **P2 (2026-09-29):** QOL-10. See handoff.md.
 
 
 | Phase | Goal | Contents |

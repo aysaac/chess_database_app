@@ -316,6 +316,26 @@ impl Game {
         None
     }
 
+    /// The first node whose position is `target`, ignoring the move
+    /// counters (QOL-10 "go to position"): on the main line if it's there,
+    /// else in a variation.
+    pub fn find_position(&self, target: &Chess) -> Option<NodeId> {
+        let want = position::hash(target);
+        // Pre-order, so the whole main line comes before any variation.
+        let mut stack = vec![(NodeId::ROOT, self.start_position())];
+        while let Some((id, pos)) = stack.pop() {
+            if position::hash(&pos) == want {
+                return Some(id);
+            }
+            for &child in self.node(id).children.iter().rev() {
+                let mut next = pos.clone();
+                next.play_unchecked(self.node(child).mv.expect("non-root node has a move"));
+                stack.push((child, next));
+            }
+        }
+        None
+    }
+
     /// Attached nodes in pre-order (root first, children in order).
     pub fn preorder(&self) -> Vec<NodeId> {
         let mut out = Vec::with_capacity(self.nodes.len());
@@ -392,6 +412,30 @@ mod tests {
             crate::position::to_fen(&g.position_at(c5)),
             "rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
         );
+    }
+
+    #[test]
+    fn finds_a_position_main_line_first() {
+        use crate::position::{from_fen, hash, to_fen};
+        let mut g = Game::default();
+        // 1. Nf3 e5 2. e4 (main line) and 1. e4 e5 2. Nf3 (a variation) reach
+        // the same position; 1. Nf3 Nf6 2. Ng1 Ng8 goes back to the start.
+        let main = line(&mut g, NodeId::ROOT, &["g1f3", "e7e5", "e2e4"]);
+        let var = line(&mut g, NodeId::ROOT, &["e2e4", "e7e5", "g1f3"]);
+        let nf3 = g.path(main)[0];
+        let back = line(&mut g, nf3, &["g8f6", "f3g1", "f6g8"]);
+        assert_eq!(hash(&g.position_at(back)), hash(&Chess::default()));
+        assert_eq!(g.find_position(&Chess::default()), Some(NodeId::ROOT));
+        let pos = g.position_at(var);
+        assert_eq!(g.find_position(&pos), Some(main), "the main line comes first");
+        let e4 = g.path(var)[0];
+        assert_eq!(g.find_position(&g.position_at(e4)), Some(e4), "found in a variation");
+        // The move counters don't matter; castling rights do.
+        let fen = to_fen(&pos);
+        assert_eq!(g.find_position(&from_fen(&fen.replace(" 1 2", " 0 9")).unwrap()), Some(main));
+        assert_eq!(g.find_position(&from_fen(&fen.replace("KQkq", "Qkq")).unwrap()), None);
+        g.node_mut(NodeId::ROOT).children.clear();
+        assert_eq!(g.find_position(&pos), None, "detached lines aren't searched");
     }
 
     #[test]

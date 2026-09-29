@@ -9,6 +9,7 @@ import type { DbInfoDto } from "./bindings/DbInfoDto";
 import type { EngineDto } from "./bindings/EngineDto";
 import type { FenCheckDto } from "./bindings/FenCheckDto";
 import type { GamePage } from "./bindings/GamePage";
+import type { GotoPositionDto } from "./bindings/GotoPositionDto";
 import type { GameViewDto } from "./bindings/GameViewDto";
 import type { HeaderQueryDto } from "./bindings/HeaderQueryDto";
 import type { HeadersDto } from "./bindings/HeadersDto";
@@ -65,6 +66,8 @@ export const api = {
   newGame: (fen: string | null = null) => invoke<GameViewDto>("new_game", { fen }),
   closeSession: (session: number) => invoke<void>("close_session", { session }),
   checkFen: (fen: string) => invoke<FenCheckDto>("check_fen", { fen }),
+  gotoPosition: (session: number | null, text: string) =>
+    invoke<GotoPositionDto>("goto_position", { session, text }),
   activateSession: (session: number) => invoke<GameViewDto>("activate_session", { session }),
   gameView: (session: number) => invoke<GameViewDto>("game_view_cmd", { session }),
   gotoNode: (session: number, node: number) => invoke<GameViewDto>("goto_node", { session, node }),

@@ -129,6 +129,7 @@ pub fn run() {
             commands::game::close_session,
             commands::game::activate_session,
             commands::game::check_fen,
+            commands::game::goto_position,
             commands::game::game_view_cmd,
             commands::game::goto_node,
             commands::game::step,

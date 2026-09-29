@@ -765,8 +765,9 @@ pub struct TreeDto {
     pub indexed: bool,
     /// Some new or edited games couldn't be included (index update pending).
     pub partial: bool,
-    /// The position is deeper than the indexed plies: games reaching it
-    /// later than that are missing (a full search finds them).
+    /// Games may reach the position later than the indexed plies, so some
+    /// can be missing (a full search finds them): its move number is past
+    /// them, or the game starts from a set-up position.
     pub beyond_index: bool,
     pub max_ply: u16,
 }
@@ -817,6 +818,21 @@ pub struct NameListDto {
 pub struct FenCheckDto {
     pub fen: String,
     pub error: Option<String>,
+}
+
+/// Where a pasted FEN leads (QOL-10 "go to position").
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum GotoPositionDto {
+    /// The game on screen reaches the position; its cursor moved there.
+    InGame { view: Box<GameViewDto> },
+    /// The game doesn't reach it: start a new game from `fen` (normalized).
+    NewGame { fen: String },
+    /// The text has no FEN in it.
+    NoFen,
+    /// The FEN isn't a legal position; `error` says why in plain words.
+    Invalid { fen: String, error: String },
 }
 
 /// A problem found in one game while importing.

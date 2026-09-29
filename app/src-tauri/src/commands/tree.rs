@@ -92,7 +92,10 @@ fn row(stats: &TreeStats, white_to_move: bool, mv: Option<(String, String)>) -> 
 /// `handle`.
 #[tauri::command]
 pub async fn opening_tree(state: State<'_, AppState>, handle: u32, session: u32) -> AppResult<TreeDto> {
-    let pos = position_of(&state, session)?;
+    let (pos, set_up) = state.with_session(session, |s| {
+        let game = s.editor.game();
+        Ok((game.position_at(s.editor.cursor()), game.setup.is_some()))
+    })?;
     let db = state.db(handle)?;
     let tree = tauri::async_runtime::spawn_blocking({
         let pos = pos.clone();
@@ -111,7 +114,9 @@ pub async fn opening_tree(state: State<'_, AppState>, handle: u32, session: u32)
         moves,
         indexed,
         partial: tree.partial,
-        beyond_index: ply_of(&pos) > u32::from(tree.max_ply),
+        // A set-up position's move number is whatever its FEN says (often
+        // "1" for a pasted one, QOL-10), so it can't rule out later plies.
+        beyond_index: set_up || ply_of(&pos) > u32::from(tree.max_ply),
         max_ply: tree.max_ply,
     })
 }

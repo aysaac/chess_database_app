@@ -1,11 +1,24 @@
 # Handoff
 
-State of the project as of **2026-09-28**, for the next agent.
+State of the project as of **2026-09-29**, for the next agent.
 Conventions, commands and utilities are in [AGENTS.md](AGENTS.md); read
 that first.
 
 ## TL;DR
 
+- **QOL-10 "go to position" (2026-09-29, first P2 item)**, one commit on
+  branch `qol-10-paste-fen` (not merged, not pushed). Ctrl+V outside a
+  text box, or **Go to position…** in the toolbar, takes a FEN, a PGN
+  `[FEN "…"]` tag, an EPD line or a Lichess analysis link. If the game on
+  screen reaches the position (main line first, move counters ignored),
+  the cursor goes there; otherwise it opens as a new game (in the tab
+  unless it has unsaved changes, as opening a game does). The opening tree
+  opens on it. A game from a set-up position now always offers the full
+  search when the index has no game for it, since its move number comes
+  from a FEN (often a made-up "1"). Checks: fmt, clippy, 163 tests,
+  svelte-check, build, and the smoke drivers `goto` (new), `tree`,
+  `layout`, `setup`, `basic`, `search` (without the 1M-game parts; `engine`
+  not run, no Stockfish in that worktree). The desktop stayed unchanged.
 - **macOS (2026-09-27):** the project now also lives on the user's Mac
   (Apple Silicon, macOS 26.5, see [Environment notes](#macos)). Everything
   passes there: fmt, clippy, 156 tests plus the ignored TWIC round trip,
@@ -103,7 +116,7 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11 ·
   ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16 ·
   QOL-01 (reopens the last database and remembers orientation, pane size,
-  tree visibility, analysis lines), 02, 03, 05.
+  tree visibility, analysis lines), 02, 03, 05, 10.
 - **Partial:**
   - DB-04: players, events, sites and annotators have lists with counts,
     "show games" and rename/merge. No sources or teams, and no per-player
@@ -141,6 +154,20 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
 - **Folding variations** (UI-03): click a top-level variation's left rule
   or a nested one's "(" to fold it into a stub; the move menu has collapse
   this / all and expand all.
+
+### Go to position (QOL-10, 2026-09-29)
+- **Ctrl+V** anywhere outside a text box with a FEN on the clipboard, or
+  **Go to position…** in the toolbar (a box to paste into). Accepted: a
+  FEN (also only the placement, or placement plus side to move), a PGN
+  FEN tag, an EPD line, a Lichess analysis link (`_` or `%20` for spaces).
+- The board goes to the move where the game on screen reaches the
+  position, else to a new game from it; the opening tree opens. The status
+  bar says which ("This game reaches that position at 5…c6; went there").
+  No FEN on the clipboard, or an illegal position, gets a plain message.
+- How: `position::find_fen` and `Game::find_position` (chess-core), the
+  `goto_position` command, `gotoPosition.ts`, `FenPaste.svelte` (the
+  Ctrl+V path; see the WebKit gotcha in AGENTS.md) and `FenDialog.svelte`
+  (reused for the dialog).
 
 ### What the user can do now (new this session)
 - **Analyze** (toolbar, Ctrl+Shift+A): Stockfish runs with 1–5 lines, depth,
@@ -243,15 +270,20 @@ clocks and evals), 16-core laptop:
 - The toolbar wraps to two rows in windows narrower than about 1,400 px, and the nav row
   (now with next/previous game) is wider than very small boards. The layout
   driver passes at all five sizes.
-- `CommentDialog.svelte` and now `FenDialog.svelte` are unused (the setup
-  editor replaced the FEN dialog). The user hasn't approved deleting them.
+- `CommentDialog.svelte` is unused. The user hasn't approved deleting it.
+  (`FenDialog.svelte`, also unused before, is the "Go to position" dialog
+  now.)
 - Prettier isn't applied (the repo never was; `NotationLine.svelte` relies
   on exact whitespace), so don't run `npm run format` on everything.
 
 **Not verified yet**
 - Real pointer and keyboard input (dragging pieces, the setup editor's
   palette and square clicks, right-click menus, shortcuts, native file
-  dialogs). chessground ignores synthetic events, so the smoke drivers can't
+  dialogs). That includes a real Ctrl+V with a FEN (QOL-10): `goto.js`
+  sends the keydown and a paste event itself. The paste target relies on
+  the webview pasting into the element focused during keydown (WebKitGTK
+  and WebView2 do; on macOS, Cmd+V goes through the Edit menu, so check
+  it there). chessground ignores synthetic events, so the smoke drivers can't
   click the board.
 - Real input could now be tested on the Mac (`cliclick`), once the
   terminal has Accessibility permission.
@@ -279,7 +311,7 @@ Recommended order:
    [docs/windows-testing.md](docs/windows-testing.md) and sends PRs; they
    are reviewed here with the Linux smoke harness before merging.
 5. Then catalog Phase 3 (P2): ENG-04/06/07/08/14, ANL-02/03/06, OPEN-02/03/05,
-   REF-01/02, NET-01/07, SRCH-05/06/08/12…
+   REF-01/02, NET-01/07, SRCH-05/06/08/12… (QOL-10 is done, on its branch.)
 
 ## Environment notes
 

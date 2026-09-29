@@ -46,6 +46,66 @@ pub fn from_fen(fen: &str) -> Result<Chess, Error> {
     })
 }
 
+/// Finds a FEN in pasted text (QOL-10 "go to position"): a bare FEN, one in
+/// a PGN `[FEN "…"]` tag or an EPD line, or a link that ends in one with `_`
+/// or `%20` for spaces, as Lichess analysis links do. Returns the first
+/// piece placement (eight ranks of eight squares) with the fields after it,
+/// plainly spaced for [`from_fen`], or `None` when the text has none.
+pub fn find_fen(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let is_board = |b: u8| b == b'/' || (b'1'..=b'8').contains(&b) || b"pnbrqkPNBRQK".contains(&b);
+    let is_rank = |r: &[u8]| {
+        !r.is_empty()
+            && r.iter().map(|&b| if b.is_ascii_digit() { u32::from(b - b'0') } else { 1 }).sum::<u32>() == 8
+    };
+    let mut i = 0;
+    while i < bytes.len() {
+        if !is_board(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && is_board(bytes[i]) {
+            i += 1;
+        }
+        // The run's parts between slashes, as (start, end) offsets; a link
+        // path can put a word like "n/" before the placement.
+        let mut parts = Vec::new();
+        let mut from = start;
+        for part in text[start..i].split('/') {
+            parts.push((from, from + part.len()));
+            from += part.len() + 1;
+        }
+        if let Some(ranks) = parts.windows(8).find(|w| w.iter().all(|&(a, b)| is_rank(&bytes[a..b]))) {
+            let (board_start, board_end) = (ranks[0].0, ranks[7].1);
+            return Some(with_fields(&text[board_start..board_end], &text[board_end..]));
+        }
+    }
+    None
+}
+
+/// `board` followed by the FEN fields at the start of `rest`, which ends at
+/// the line's end or the quote, `?` or `;` closing a tag, link or EPD
+/// operation.
+fn with_fields(board: &str, rest: &str) -> String {
+    let rest = rest.replace("%20", " ");
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, ' ' | '\t' | '_' | '-')))
+        .unwrap_or(rest.len());
+    let mut fields = rest[..end].split([' ', '\t', '_']).filter(|f| !f.is_empty());
+    let mut fen = board.to_owned();
+    // Side to move, castling and en passant as written (`from_fen` explains
+    // a bad one), then the move counters, but only numbers: EPD operations
+    // can follow instead.
+    let mut push = |field: &str| {
+        fen.push(' ');
+        fen.push_str(field);
+    };
+    fields.by_ref().take(3).for_each(&mut push);
+    fields.take(2).take_while(|f| f.bytes().all(|b| b.is_ascii_digit())).for_each(push);
+    fen
+}
+
 pub fn to_fen(pos: &Chess) -> String {
     Fen::from_position(pos, EnPassantMode::Legal).to_string()
 }
@@ -201,6 +261,46 @@ mod tests {
         assert!(err("4k3/4R3/8/8/8/8/8/4K3 w - - 0 1").contains("the side that just moved is in check"));
         assert!(err("4k3/8/8/8/8/8/8/4K3 x - - 0 1").contains("side to move"));
         assert!(err("P3k3/8/8/8/8/8/8/4K3 w - - 0 1").contains("pawns can't"));
+    }
+
+    #[test]
+    fn finds_a_fen_in_pasted_text() {
+        let e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+        let found = |t: &str| find_fen(t);
+        assert_eq!(found(e4).as_deref(), Some(e4));
+        assert_eq!(found(&format!("  {e4}\r\n")).as_deref(), Some(e4));
+        assert_eq!(found(&format!("FEN: {e4}")).as_deref(), Some(e4));
+        // Lichess links: underscores or %20 for spaces, a query after them.
+        let url = "https://lichess.org/analysis/standard/rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR_b_KQkq_-_0_1?color=white";
+        assert_eq!(found(url).as_deref(), Some(e4));
+        let url = "https://lichess.org/analysis/fromPosition/rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR%20b%20KQkq%20-%200%201";
+        assert_eq!(found(url).as_deref(), Some(e4));
+        // A PGN's FEN tag, not the moves after it.
+        let pgn = format!("[Event \"Study\"]\n[SetUp \"1\"]\n[FEN \"{e4}\"]\n\n1... e5 2. Nf3 *\n");
+        assert_eq!(found(&pgn).as_deref(), Some(e4));
+        // EPD: four fields, then operations.
+        let epd = "rnbqkb1r/pppp1ppp/5n2/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - bm Nxe5; id \"x\";";
+        assert_eq!(
+            found(epd).as_deref(),
+            Some("rnbqkb1r/pppp1ppp/5n2/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq -")
+        );
+        // Only the placement, or part of the fields: from_fen fills in the rest.
+        assert_eq!(found("8/8/4k3/8/8/4K3/8/8").as_deref(), Some("8/8/4k3/8/8/4K3/8/8"));
+        assert_eq!(found("8/8/4k3/8/8/4K3/8/8 b").as_deref(), Some("8/8/4k3/8/8/4K3/8/8 b"));
+        assert!(from_fen(&found("8/8/4k3/8/8/4K3/8/8 b").unwrap()).is_ok());
+        // A bad field is kept, so from_fen can say what's wrong with it.
+        assert!(
+            from_fen(&found("4k3/8/8/8/8/8/8/4K3 x - - 0 1").unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("side to move")
+        );
+        // No placement of eight full ranks: no FEN.
+        assert_eq!(found("1. e4 e5 2. Nf3 Nc6 1/2-1/2"), None);
+        assert_eq!(found("8/8/8/8/8/8/4K3 w - - 0 1"), None);
+        assert_eq!(found("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBN w"), None);
+        assert_eq!(found("hello"), None);
+        assert_eq!(found(""), None);
     }
 
     #[test]
