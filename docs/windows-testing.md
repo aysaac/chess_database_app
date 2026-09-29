@@ -215,7 +215,11 @@ debug builds; if so, apply it in release builds only.
 
 ### A5. Closing a database while a job uses it blocks reopening it
 
-- [x] Done in #9 (2026-09-28).
+- [x] Done in #9 (2026-09-28). The reopened handle then got a second
+  position index build next to the running one; both wrote
+  `positions.runN.tmp`, and the second failed when the first cleaned up.
+  `update_index` now returns the build still running for the database.
+  Checked on Linux with 1M games (import, close, reopen at once).
 
 **Problem** (found in B4, not Windows-specific). `release_db` (`state.rs`)
 drops the database from the open list, but a running job (the position
