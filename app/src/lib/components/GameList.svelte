@@ -180,6 +180,9 @@
   });
 
   function onKey(e: KeyboardEvent) {
+    // Ctrl+Up/Down open the previous/next game (QOL-03), from the list too:
+    // focus stays here after opening a game from it.
+    if ((e.ctrlKey || e.metaKey) && (e.key === "ArrowUp" || e.key === "ArrowDown")) return;
     const page = Math.max(1, Math.floor(viewH / ROW) - 1);
     const cur = selected ?? first - 1;
     const moves: Record<string, number> = {
@@ -211,7 +214,15 @@
     game.view?.source?.db === db.info?.handle && game.view?.source?.game === r.id;
 </script>
 
-<svelte:window onmousedown={() => (menu = null)} />
+<svelte:window
+  onmousedown={() => (menu = null)}
+  onkeydown={(e) => {
+    if (menu && e.key === "Escape") {
+      e.preventDefault();
+      menu = null;
+    }
+  }}
+/>
 
 <section class="list" aria-label="Games">
   {#if db.info}<FilterBar />{/if}

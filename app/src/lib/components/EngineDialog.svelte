@@ -2,6 +2,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import type { UciOptionDto } from "../bindings/UciOptionDto";
   import { analysis } from "../stores/analysis.svelte";
+  import { inDocuments } from "../stores/db.svelte";
   import Modal from "./Modal.svelte";
 
   let { onClose }: { onClose: () => void } = $props();
@@ -35,7 +36,12 @@
   const others = $derived(offered.filter((o) => !COMMON.includes(o.name)));
 
   async function addEngine() {
-    const path = await open({ multiple: false, directory: false, title: "Choose a UCI engine program" });
+    const path = await open({
+      multiple: false,
+      directory: false,
+      title: "Choose a UCI engine program",
+      defaultPath: await inDocuments(),
+    });
     if (typeof path !== "string") return;
     busy = true;
     const before = new Set(analysis.engines.map((e) => e.id));
