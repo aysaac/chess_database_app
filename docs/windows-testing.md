@@ -173,7 +173,9 @@ board. That was checked in zoomed screenshots and isn't visible.
 
 ### A4. WebView2 browser shortcuts (only if B3 finds a problem)
 
-- [ ] **Needed** (B3, 2026-09-28): F5, Ctrl+R and Ctrl+Shift+R reload the
+- [x] **Done in #10**: release builds turn off `AreBrowserAcceleratorKeysEnabled`
+  (debug builds keep them for DevTools); checked with real key presses.
+  Found by B3 (2026-09-28): F5, Ctrl+R and Ctrl+Shift+R reload the
   page (unsaved edits on screen are lost), Ctrl+P opens print preview,
   with the board focused and in a text field; Ctrl+F in a text field
   opens the find bar. Zoom keys, Ctrl+wheel and Alt+arrows do nothing; the
@@ -201,7 +203,7 @@ debug builds; if so, apply it in release builds only.
 
 ### A5. Closing a database while a job uses it blocks reopening it
 
-- [ ] Done
+- [x] Done in #9 (2026-09-28).
 
 **Problem** (found in B4, not Windows-specific). `release_db` (`state.rs`)
 drops the database from the open list, but a running job (the position
@@ -220,7 +222,7 @@ it could become part of `search.js`.
 
 ### A6. Compacting while the position index builds
 
-- [ ] Done
+- [x] Done in #8 (2026-09-28).
 
 **Problem** (found in B4, not Windows-specific). `update_position_index`
 (`positions.rs`) plans under the database lock, builds without it, then
@@ -240,7 +242,7 @@ compaction). A unit test runs a compaction between the two phases.
 
 ### A7. Small bugs from B2 (every platform)
 
-- [ ] Done
+- [x] Done in #11 (2026-09-28).
 
 1. **The game list's right-click menu ignores Escape**
    (`GameList.svelte`); it only closes on a click elsewhere. The
