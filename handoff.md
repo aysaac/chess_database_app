@@ -6,9 +6,22 @@ that first.
 
 ## TL;DR
 
-- **QOL-10 "go to position" (2026-09-29, first P2 item)**, one commit on
-  branch `qol-10-paste-fen` (not merged, not pushed). Ctrl+V outside a
-  text box, or **Go to position…** in the toolbar, takes a FEN, a PGN
+- **Five P2 quality-of-life features merged into `main` (2026-09-29):**
+  QOL-04, 06, 07, 08 and 10, each built on its own branch from the same
+  `main` and described in the bullets below. They were reviewed and
+  cherry-picked one commit each in the order 10, 06, 08, 07, 04. The
+  conflicts were in the docs, `dto.rs`, `settings.rs`, `GameList.svelte`
+  (row selection, column resizing and the empty list's buttons now live
+  together) and `db.svelte.ts`. QOL-07's tests now call QOL-08's
+  `AppState::init_dirs`. One fix on top: a database created by copying
+  games into it forgets any list view saved for its path, as `create_db`
+  does. Checks on the merged result: fmt, clippy, 202 Rust tests plus the
+  TWIC round trip, svelte-check, the build, and all 11 smoke drivers with
+  their 1M-game parts and Stockfish (`goto`, `image`, `onboarding`, `view`,
+  `drag`, `basic`, `layout`, `search`, `tree`, `setup`, `engine`), with the
+  desktop unchanged. Not pushed yet.
+- **QOL-10 "go to position" (2026-09-29, first P2 item, merged).** Ctrl+V
+  outside a text box, or **Go to position…** in the toolbar, takes a FEN, a PGN
   `[FEN "…"]` tag, an EPD line or a Lichess analysis link. If the game on
   screen reaches the position (main line first, move counters ignored),
   the cursor goes there; otherwise it opens as a new game (in the tab
@@ -19,17 +32,15 @@ that first.
   svelte-check, build, and the smoke drivers `goto` (new), `tree`,
   `layout`, `setup`, `basic`, `search` (without the 1M-game parts; `engine`
   not run, no Stockfish in that worktree). The desktop stayed unchanged.
-- **QOL-06 board images (2026-09-29, branch `qol-06-copy-board-image`,
-  one commit, not pushed):** "Board image ▾" in the toolbar copies the
-  board as PNG or SVG, or saves either. The image is drawn in Rust by a new
+- **QOL-06 board images (2026-09-29, merged):** "Board image ▾" in the
+  toolbar copies the board as PNG or SVG, or saves either. The image is drawn in Rust by a new
   crate, `crates/chess-diagram` (resvg), and put on the clipboard by
   `tauri-plugin-clipboard-manager`. See [Board images](#new-board-images-qol-06-2026-09-29).
   Checks: fmt, clippy, 175 Rust tests (+1 ignored), svelte-check, the
   build, and the smoke drivers `image` (new), `basic`, `layout`, `setup`,
   `search` and `tree` (not `engine`: no Stockfish in that worktree; nothing
   engine-side changed), with the desktop unchanged.
-- **QOL-08 onboarding (2026-09-29, branch `qol-08-onboarding`, one commit,
-  not pushed or merged):** a welcome guide opens on a first run: start
+- **QOL-08 onboarding (2026-09-29, merged):** a welcome guide opens on a first run: start
   (import your games / explore the sample games / open a database), your
   engine (the detected Stockfish, or how to add one), a few tips. The
   sample is 12 classic games with short notes, compiled into the app and
@@ -43,7 +54,7 @@ that first.
   Checks: fmt, clippy, 166 tests (+1 ignored), svelte-check, the build and
   all seven drivers, with Stockfish and (onboarding) without; the 1M-game
   parts didn't run (no `testdata/large/` in that worktree).
-- **QOL-07 (2026-09-29, branch `qol-07-remember-db-view`):** the game list
+- **QOL-07 (2026-09-29, merged):** the game list
   remembers its sort order, column widths and filter per database and puts
   them back when the database is opened again. Columns can now be resized:
   drag a header's right edge, Shift+←/→ on a focused header, double-click
@@ -58,8 +69,7 @@ that first.
   `tauri dev`. Also fixed: the Opening column had no header label. All
   checks and the smoke drivers except `engine.js` (no Stockfish in that
   worktree) passed on Linux.
-- **QOL-04 (2026-09-29, P2)** on branch `qol-04-drag-games` (one commit,
-  not pushed, not merged). Select several games in the list and drag them
+- **QOL-04 (2026-09-29, P2, merged).** Select several games in the list and drag them
   onto another database (copy; Shift moves), onto the board or onto the
   tab strip (they open). It also completes DB-06, which only had
   delete/restore/compact: copying and moving between databases, also from
