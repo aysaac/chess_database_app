@@ -520,7 +520,12 @@ pub async fn copy_games(
     if created {
         let path = dest.lock().expect("db lock").path().to_path_buf();
         let path = dunce::canonicalize(&path).unwrap_or(path);
-        state.update_settings(|s| s.remember_database(&path));
+        // Like `create_db`: a new database starts with the default list
+        // (QOL-07), even where an old one was.
+        state.update_settings(|s| {
+            s.remember_database(&path);
+            s.forget_db_view(&path);
+        });
     }
     let moving = mode == CopyModeDto::Move;
     let label =
