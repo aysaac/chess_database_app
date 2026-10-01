@@ -27,7 +27,7 @@
       (reference.info ? reference.info.handle === db.info.handle : reference.path === db.info.path),
   );
   const title = $derived(
-    "Reference database: what the opening tree reads" +
+    "Reference database: what the Reference tab and the opening tree read" +
       (reference?.error ? `. ${reference.name} couldn't be opened: ${reference.error}` : ""),
   );
 </script>

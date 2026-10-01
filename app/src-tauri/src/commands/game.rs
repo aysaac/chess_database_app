@@ -15,11 +15,25 @@ use crate::error::{AppError, AppResult, ErrorCode};
 use crate::state::{AppState, Session};
 use crate::view::game_view;
 
+/// Opens a game in a new session, at the start or, with `ply`, that many
+/// moves into its main line (the Reference tab opens games where they reach
+/// the position, OPEN-14).
 #[tauri::command]
-pub async fn open_game(state: State<'_, AppState>, handle: u32, game: u32) -> AppResult<GameViewDto> {
+pub async fn open_game(
+    state: State<'_, AppState>,
+    handle: u32,
+    game: u32,
+    ply: Option<u32>,
+) -> AppResult<GameViewDto> {
     let db = state.db(handle)?;
     let loaded = db.lock().expect("db lock").read_game(game)?;
-    let id = state.add_session(Session::new(GameEditor::new(loaded), Some((handle, game))));
+    let mut editor = GameEditor::new(loaded);
+    for _ in 0..ply.unwrap_or(0) {
+        if !editor.forward() {
+            break;
+        }
+    }
+    let id = state.add_session(Session::new(editor, Some((handle, game))));
     state.with_session(id, |s| Ok(game_view(id, s, true)))
 }
 

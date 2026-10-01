@@ -352,7 +352,7 @@ fn game_entries(
 
 /// Reads games `ids` in batches and runs `work` on each one in parallel.
 /// `sink` gets each batch's results in id order.
-fn for_each_game<T: Send>(
+pub(crate) fn for_each_game<T: Send>(
     db: &Mutex<Database>,
     ids: &[GameId],
     progress: &dyn Progress,
@@ -367,7 +367,10 @@ fn for_each_game<T: Send>(
             let db = db.lock().expect("db lock");
             batch
                 .iter()
-                .map(|&id| Ok((id, db.record(id)?, db.read_blob(id)?)))
+                .map(|&id| {
+                    let rec = db.record(id)?;
+                    Ok((id, rec, db.blob_of(&rec)?))
+                })
                 .collect::<Result<_, DbError>>()?
         };
         let chunk = raw.len().div_ceil(threads).max(1);
@@ -689,7 +692,7 @@ pub struct TreeStats {
 }
 
 impl TreeStats {
-    fn add(&mut self, g: &GameStat, white_to_move: bool) {
+    pub(crate) fn add(&mut self, g: &GameStat, white_to_move: bool) {
         self.games += 1;
         match g.result {
             1 => self.white_wins += 1,
@@ -741,22 +744,34 @@ pub fn position_tree(db: &Mutex<Database>, pos: &Chess) -> Result<PositionTree, 
             by_move[usize::from(e.next)].add(g, white);
         }
     }
-    let mut moves: Vec<(Option<Move>, TreeStats)> = by_move
-        .into_iter()
+    let moves = ranked_moves(pos, &by_move).into_iter().map(|(next, m)| (m, by_move[next].clone())).collect();
+    let games = hits.entries.iter().map(|e| e.game).collect();
+    Ok(PositionTree { total, moves, games, partial: hits.partial, max_ply: hits.max_ply })
+}
+
+/// The moves of a tally by move byte (`by_move[next]`), most games first,
+/// then the most recently played: each move's byte and the move (`None`
+/// for games that ended in the position). The opening tree and the
+/// Reference tab (OPEN-14) list them in this order.
+pub(crate) fn ranked_moves(pos: &Chess, by_move: &[TreeStats; 256]) -> Vec<(usize, Option<Move>)> {
+    let mut moves: Vec<(usize, Option<Move>)> = by_move
+        .iter()
         .enumerate()
         .filter(|(_, s)| s.games > 0)
-        .filter_map(|(next, stats)| {
+        .filter_map(|(next, _)| {
             if next == usize::from(NO_MOVE) {
-                Some((None, stats))
+                Some((next, None))
             } else {
                 // A hash collision could give an impossible move; skip it.
-                move_at(pos, next as u8).map(|m| (Some(m), stats))
+                move_at(pos, next as u8).map(|m| (next, Some(m)))
             }
         })
         .collect();
-    moves.sort_by(|a, b| b.1.games.cmp(&a.1.games).then(a.1.last_year.cmp(&b.1.last_year).reverse()));
-    let games = hits.entries.iter().map(|e| e.game).collect();
-    Ok(PositionTree { total, moves, games, partial: hits.partial, max_ply: hits.max_ply })
+    moves.sort_by(|a, b| {
+        let (a, b) = (&by_move[a.0], &by_move[b.0]);
+        b.games.cmp(&a.games).then(a.last_year.cmp(&b.last_year).reverse())
+    });
+    moves
 }
 
 #[cfg(test)]

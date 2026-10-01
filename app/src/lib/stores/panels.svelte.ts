@@ -34,10 +34,11 @@ export const PANEL_TITLES: Record<PanelId, string> = {
 const PANEL_IDS = Object.keys(PANEL_TITLES) as PanelId[];
 
 /**
- * Today's layout: Notation and Opening tree as tabs on the right, above the
- * engine analysis, and the game list at the bottom. Sizes and shares aren't
- * applied before docking (UI-04): the right side takes the width the board
- * leaves, and the list keeps its own divider (the `listShare` pref).
+ * Today's layout: Notation, Opening tree and Reference (OPEN-14) as tabs on
+ * the right, above the engine analysis, and the game list at the bottom.
+ * Sizes and shares aren't applied before docking (UI-04): the right side
+ * takes the width the board leaves, and the list keeps its own divider (the
+ * `listShare` pref).
  */
 export function defaultLayout(): Layout {
   const empty = (): Zone => ({ size: 0, groups: [] });
@@ -48,7 +49,7 @@ export function defaultLayout(): Layout {
       right: {
         size: 0.6,
         groups: [
-          { panels: ["notation", "tree"], active: "notation", share: 0.75 },
+          { panels: ["notation", "tree", "reference"], active: "notation", share: 0.75 },
           { panels: ["analysis"], active: "analysis", share: 0.25 },
         ],
       },

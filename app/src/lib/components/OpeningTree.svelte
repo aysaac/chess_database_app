@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { TreeRowDto } from "../bindings/TreeRowDto";
-  import { figurine, formatCount } from "../format";
+  import { figurine } from "../format";
   import { db } from "../stores/db.svelte";
   import { game } from "../stores/game.svelte";
   import { tree } from "../stores/tree.svelte";
+  import StatsCells from "./StatsCells.svelte";
+  import StatsHead from "./StatsHead.svelte";
 
   // Only while the tab is showing (UI-19): query when it's shown, then again
   // when the position, the database or its index changes.
@@ -21,7 +22,6 @@
   });
 
   const data = $derived(tree.current);
-  const pct = (n: number, of: number) => (of ? Math.round((n / of) * 100) : 0);
 
   // The source picker: the open database or the reference database. The
   // reference itself is chosen in the ribbon (DB-13).
@@ -30,10 +30,6 @@
   function onSource(e: Event) {
     const value = (e.currentTarget as HTMLSelectElement).value;
     if (value === "open" || value === "reference") tree.source = value;
-  }
-
-  function scoreTitle(r: TreeRowDto) {
-    return `White won ${formatCount(r.whiteWins)}, drew ${formatCount(r.draws)}, Black won ${formatCount(r.blackWins)}`;
   }
 </script>
 
@@ -83,18 +79,11 @@
     </p>
   {:else if data}
     <div class="scroll">
-      <table>
+      <table class="stats-table">
         <thead>
           <tr>
             <th scope="col">Move</th>
-            <th scope="col" class="num">Games</th>
-            <th scope="col" class="num" title="Score for the side to move">Score</th>
-            <th scope="col" class="bar-col">White · draw · Black</th>
-            <th scope="col" class="num" title="Average Elo of the players who chose the move"
-              >Elo</th
-            >
-            <th scope="col" class="num" title="Performance rating with the move">Perf</th>
-            <th scope="col" class="num" title="Last played">Year</th>
+            <StatsHead perf />
           </tr>
         </thead>
         <tbody>
@@ -109,38 +98,14 @@
                   <span class="soft">Game ends</span>
                 {/if}
               </td>
-              <td class="num">{formatCount(r.games)}</td>
-              <td class="num">{Math.round(r.score * 100)}%</td>
-              <td class="bar-col">
-                <span class="bar" title={scoreTitle(r)}>
-                  <span class="w" style:width="{pct(r.whiteWins, r.games)}%"></span><span
-                    class="d"
-                    style:width="{pct(r.draws, r.games)}%"
-                  ></span><span class="b" style:width="{pct(r.blackWins, r.games)}%"></span>
-                </span>
-              </td>
-              <td class="num">{r.avgElo ?? ""}</td>
-              <td class="num">{r.performance ?? ""}</td>
-              <td class="num">{r.lastYear ?? ""}</td>
+              <StatsCells row={r} perf />
             </tr>
           {/each}
         </tbody>
         <tfoot>
           <tr>
             <th scope="row">Total</th>
-            <td class="num">{formatCount(data.total.games)}</td>
-            <td class="num">{Math.round(data.total.score * 100)}%</td>
-            <td class="bar-col">
-              <span class="bar" title={scoreTitle(data.total)}>
-                <span class="w" style:width="{pct(data.total.whiteWins, data.total.games)}%"
-                ></span><span class="d" style:width="{pct(data.total.draws, data.total.games)}%"
-                ></span><span class="b" style:width="{pct(data.total.blackWins, data.total.games)}%"
-                ></span>
-              </span>
-            </td>
-            <td class="num">{data.total.avgElo ?? ""}</td>
-            <td class="num">{data.total.performance ?? ""}</td>
-            <td class="num">{data.total.lastYear ?? ""}</td>
+            <StatsCells row={data.total} perf />
           </tr>
         </tfoot>
       </table>
@@ -195,71 +160,6 @@
     min-height: 0;
     overflow-y: auto;
     padding: 0 10px 0 14px;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  /* Columns shrink to their content; the result bar takes the rest. */
-  th,
-  td {
-    width: 1%;
-    padding: 2px 10px 2px 0;
-    text-align: left;
-    white-space: nowrap;
-  }
-
-  thead th {
-    position: sticky;
-    top: 0;
-    background: var(--paper);
-    color: var(--ink-soft);
-    font-weight: 500;
-  }
-
-  tfoot th,
-  tfoot td {
-    border-top: 1px solid var(--rule);
-    font-weight: 600;
-  }
-
-  .num {
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .move {
-    padding: 0 4px;
-    font-family: "Source Serif 4 Variable", var(--font-figurine), serif;
-    font-size: 15px;
-    font-weight: 600;
-  }
-
-  .bar-col {
-    width: auto;
-    min-width: 90px;
-  }
-
-  .bar {
-    display: flex;
-    height: 10px;
-    border-radius: 2px;
-    overflow: hidden;
-    border: 1px solid var(--rule);
-  }
-
-  .w {
-    background: var(--eval-white);
-  }
-
-  .d {
-    background: color-mix(in srgb, var(--eval-white) 45%, var(--eval-black));
-  }
-
-  .b {
-    background: var(--eval-black);
   }
 
   .note {

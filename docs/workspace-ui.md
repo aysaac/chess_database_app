@@ -428,6 +428,45 @@ A new smoke driver `reference.js`:
 - With no reference set, the tab reads the open database and shows the note.
 - With `__BIG__`, time the starting position and a deep one.
 
+### As built (2026-10-01)
+
+Built as specified, on branch `open-14-reference-tab`. Where the spec left
+a choice, this is what was taken (ask the user if one looks wrong):
+
+- **Hot ↓** also needs the move to have had at least 5 recent games at its
+  share over all years (that share × the position's recent games). Without
+  it, every rare move with no recent game got ↓. ↑ is as specified. Both
+  compare the shares exactly, in integers.
+- **Lines:** a first move always starts a line, however few its games;
+  past the first move a line goes on only while 5 games follow. A line
+  ends where none of its continuations has 5 games, or where its games
+  end. Ties (most games first) go to the newer line (last year played),
+  then the moves table's order.
+- **Main line:** at each ply the most played move, ties to the newer one,
+  then the moves table's order; it needs 20 games and a tenth of the
+  position's games at every ply. The main line is clickable too (it shows
+  on the mini board).
+- **Best players:** ties at the same Elo go to the newer game.
+- **Top games:** ties at the same average go to the newer year, then the
+  game added later. Games without a year come after those with one.
+- **Mini board:** follows the main board's orientation. In the top games,
+  ←/→ step the mini board (not the main one), since the selected game is
+  what they'd expect to step; ↑/↓, Home/End and PageUp/PageDown move the
+  selection, as the spec says for ↑/↓.
+- **Sizes:** the dividers save `referenceSizes` (shares of the tab's
+  height for the moves and the lines; default 30% and 25%).
+- **Narrow:** below 560 px the top games and the mini board stack; below
+  480 px the moves table drops the White/draw/Black bar and the year, and
+  the lines their year and Elo.
+- **While a position loads,** the last view of the same database stays,
+  dimmed and inert, so the tab doesn't flash on every move.
+- **Lines cache:** in memory, by database handle, position and database
+  state (its change counter and indexed games), 32 positions. A hidden tab
+  cancels a running lines job; a move cancels the one for the position it
+  left.
+- **Opening a top game** at its ply uses a new optional `ply` argument of
+  `open_game`.
+
 ## 4. UI-04 Docking to the four sides
 
 **The layout**

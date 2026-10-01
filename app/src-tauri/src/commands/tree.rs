@@ -46,27 +46,42 @@ pub async fn update_index(state: State<'_, AppState>, handle: u32) -> AppResult<
     Ok(Some(job))
 }
 
-fn position_of(state: &AppState, session: u32) -> AppResult<Chess> {
+pub(crate) fn position_of(state: &AppState, session: u32) -> AppResult<Chess> {
     state.with_session(session, |s| Ok(s.editor.game().position_at(s.editor.cursor())))
 }
 
+/// The position on screen in `session`, and whether its game starts from a
+/// set-up position.
+pub(crate) fn position_and_setup(state: &AppState, session: u32) -> AppResult<(Chess, bool)> {
+    state.with_session(session, |s| {
+        let game = s.editor.game();
+        Ok((game.position_at(s.editor.cursor()), game.setup.is_some()))
+    })
+}
+
 /// Plies from the standard start to `pos` (by move number).
-fn ply_of(pos: &Chess) -> u32 {
+pub(crate) fn ply_of(pos: &Chess) -> u32 {
     (pos.fullmoves().get() - 1) * 2 + u32::from(pos.turn().is_black())
 }
 
-fn row(stats: &TreeStats, white_to_move: bool, mv: Option<(String, String)>) -> TreeRowDto {
-    let (wins, losses) = if white_to_move {
-        (stats.white_wins, stats.black_wins)
-    } else {
-        (stats.black_wins, stats.white_wins)
-    };
-    let decided = wins + losses + stats.draws;
-    let score = if decided == 0 {
-        0.5
-    } else {
-        (f64::from(wins) + 0.5 * f64::from(stats.draws)) / f64::from(decided)
-    };
+/// Whether games reaching `pos` may do so past the indexed plies, so some
+/// can be missing (a full search finds them): its move number is past them,
+/// or the game starts from a set-up position, whose move number is whatever
+/// its FEN says (often "1" for a pasted one, QOL-10).
+pub(crate) fn beyond_index(pos: &Chess, set_up: bool, max_ply: u16) -> bool {
+    set_up || ply_of(pos) > u32::from(max_ply)
+}
+
+/// Score for the side to move, 0…1 (0.5 when no game was decided).
+pub(crate) fn side_score(white_wins: u32, draws: u32, black_wins: u32, white_to_move: bool) -> f64 {
+    let (wins, losses) = if white_to_move { (white_wins, black_wins) } else { (black_wins, white_wins) };
+    let decided = wins + losses + draws;
+    if decided == 0 { 0.5 } else { (f64::from(wins) + 0.5 * f64::from(draws)) / f64::from(decided) }
+}
+
+pub(crate) fn tree_row(stats: &TreeStats, white_to_move: bool, mv: Option<(String, String)>) -> TreeRowDto {
+    let decided = stats.white_wins + stats.black_wins + stats.draws;
+    let score = side_score(stats.white_wins, stats.draws, stats.black_wins, white_to_move);
     let avg = |sum: u64, n: u32| (n > 0).then(|| (sum / u64::from(n)) as u32);
     let opp = avg(stats.opp_elo_sum, stats.opp_elo_count);
     // Performance: average opponent plus the rating difference the score
@@ -93,10 +108,7 @@ fn row(stats: &TreeStats, white_to_move: bool, mv: Option<(String, String)>) -> 
 /// `handle`.
 #[tauri::command]
 pub async fn opening_tree(state: State<'_, AppState>, handle: u32, session: u32) -> AppResult<TreeDto> {
-    let (pos, set_up) = state.with_session(session, |s| {
-        let game = s.editor.game();
-        Ok((game.position_at(s.editor.cursor()), game.setup.is_some()))
-    })?;
+    let (pos, set_up) = position_and_setup(&state, session)?;
     let db = state.db(handle)?;
     let tree = tauri::async_runtime::spawn_blocking({
         let pos = pos.clone();
@@ -106,18 +118,19 @@ pub async fn opening_tree(state: State<'_, AppState>, handle: u32, session: u32)
     .map_err(|e| crate::error::AppError::new(crate::error::ErrorCode::Internal, e.to_string()))??;
     let indexed = state.db(handle)?.lock().expect("db lock").positions().is_built();
     let white = pos.turn().is_white();
-    let moves =
-        tree.moves.iter().map(|(m, stats)| row(stats, white, m.map(|m| (uci(m), san(&pos, m))))).collect();
+    let moves = tree
+        .moves
+        .iter()
+        .map(|(m, stats)| tree_row(stats, white, m.map(|m| (uci(m), san(&pos, m)))))
+        .collect();
     Ok(TreeDto {
         fen: position::to_fen(&pos),
         opening: openings::at_position(&pos).map(OpeningDto::from),
-        total: row(&tree.total, white, None),
+        total: tree_row(&tree.total, white, None),
         moves,
         indexed,
         partial: tree.partial,
-        // A set-up position's move number is whatever its FEN says (often
-        // "1" for a pasted one, QOL-10), so it can't rule out later plies.
-        beyond_index: set_up || ply_of(&pos) > u32::from(tree.max_ply),
+        beyond_index: beyond_index(&pos, set_up, tree.max_ply),
         max_ply: tree.max_ply,
     })
 }

@@ -12,6 +12,7 @@ mod io;
 mod names;
 pub mod positions;
 pub mod record;
+pub mod reference;
 mod search;
 mod sort;
 
@@ -23,8 +24,12 @@ pub use export::export_pgn;
 pub use import::{ImportSummary, ImportWarning, game_label, import_pgn, import_reader};
 pub use names::NameTable;
 pub use positions::{
-    IndexPlan, IndexSummary, PositionIndex, PositionTree, TreeStats, find_position, position_tree,
-    scan_position, update_position_index,
+    IndexPlan, IndexSummary, PositionHits, PositionIndex, PositionTree, TreeStats, find_position,
+    position_tree, scan_position, update_position_index,
+};
+pub use reference::{
+    BestPlayer, Hot, Line, LineStats, ReferenceLines, ReferenceMove, ReferenceOverview, TopGame, Trend,
+    game_mainline, reference_lines, reference_overview,
 };
 pub use search::{EloMode, GameSet, HeaderQuery, ResultFilter, fold, games_with_name, search_headers};
 pub use sort::{SortKey, SortSpec, build_sort, page_ids, sorted_subset};

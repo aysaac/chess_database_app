@@ -5,8 +5,9 @@
   import ListPane from "./ListPane.svelte";
   import NotationPanel from "./NotationPanel.svelte";
   import OpeningTree from "./OpeningTree.svelte";
+  import ReferencePanel from "./ReferencePanel.svelte";
 
-  // What a panel (UI-19) shows. The Reference tab (OPEN-14) isn't built yet.
+  // What a panel (UI-19) shows.
   let { id }: { id: PanelId } = $props();
 </script>
 
@@ -14,6 +15,9 @@
   <NotationPanel />
 {:else if id === "tree"}
   <OpeningTree />
+{:else if id === "reference"}
+  <!-- The Reference tab (OPEN-14). -->
+  <ReferencePanel />
 {:else if id === "analysis"}
   <!-- The engine's lines (ENG-02), while it runs. -->
   {#if analysis.status.running || analysis.starting}<AnalysisPane />{/if}

@@ -11,8 +11,9 @@ use std::time::Instant;
 use chess_core::position::parse_uci;
 use chess_core::shakmaty::{Chess, Position};
 use chess_db::{
-    Database, HeaderQuery, NoProgress, ResultFilter, SortKey, SortSpec, build_sort, import_pgn, page_ids,
-    position_tree, search_headers, update_position_index,
+    Database, HeaderQuery, NoProgress, ResultFilter, SortKey, SortSpec, build_sort, find_position,
+    import_pgn, page_ids, position_tree, reference_lines, reference_overview, search_headers,
+    update_position_index,
 };
 
 fn peak_rss_mb() -> Option<f64> {
@@ -148,6 +149,35 @@ fn run(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
             t.elapsed().as_secs_f64() * 1e3,
             tree.total.games,
             tree.moves.len()
+        );
+    }
+
+    // The Reference tab (OPEN-14): the fast part, then the lines, which
+    // read every game reaching the position.
+    for (label, line) in [
+        ("start", &[][..]),
+        ("1.e4", &["e2e4"][..]),
+        ("1.d4 d5 2.c4", &["d2d4", "d7d5", "c2c4"][..]),
+        ("Sicilian 2.Nf3 d6", &["e2e4", "c7c5", "g1f3", "d7d6"][..]),
+        ("Najdorf", &["e2e4", "c7c5", "g1f3", "d7d6", "d2d4", "c5d4", "f3d4", "g8f6", "b1c3", "a7a6"][..]),
+    ] {
+        let mut pos = Chess::default();
+        for u in line {
+            let m = parse_uci(&pos, u).ok_or("bad move")?;
+            pos.play_unchecked(m);
+        }
+        let t = Instant::now();
+        let overview = reference_overview(&db, &pos)?;
+        let fast = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let hits = find_position(&db, &pos)?;
+        let lines = reference_lines(&db, &pos, &hits, &NoProgress)?;
+        println!(
+            "reference {label:<18} overview {fast:.1} ms, lines {:.0} ms ({} games, {} lines, main line {} plies)",
+            t.elapsed().as_secs_f64() * 1e3,
+            overview.total.games,
+            lines.lines.len(),
+            lines.main_line.map_or(0, |l| l.moves.len())
         );
     }
 

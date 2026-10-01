@@ -25,10 +25,13 @@ class Jobs {
     }
     this.running = this.running.filter((j) => j.id !== job.id);
     this.#finished.set(job.id, job);
+    // The Reference tab's lines (OPEN-14) are counted, and cancelled, as
+    // the board moves; the tab shows how that went.
+    const silent = job.kind === "reference";
     if (job.state === "failed") notices.show(`${job.label} failed: ${job.error}`, "error");
-    else if (job.state === "cancelled") notices.show(`${job.label} was cancelled`);
+    else if (job.state === "cancelled" && !silent) notices.show(`${job.label} was cancelled`);
     // Sorting and indexing happen on their own; only their failures are news.
-    else if (job.message && !["sort", "index", "filter"].includes(job.kind)) notices.show(job.message);
+    else if (job.message && !silent && !["sort", "index", "filter"].includes(job.kind)) notices.show(job.message);
     this.#waiters.get(job.id)?.forEach((resolve) => resolve(job));
     this.#waiters.delete(job.id);
   }

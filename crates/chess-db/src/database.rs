@@ -879,9 +879,20 @@ impl Database {
         Ok(self.stats.as_deref().expect("just loaded"))
     }
 
+    /// The per-game stats [`game_stats`](Self::game_stats) loaded (empty
+    /// before then), through a shared borrow so records can be read while
+    /// they're in use.
+    pub(crate) fn loaded_stats(&self) -> &[GameStat] {
+        self.stats.as_deref().unwrap_or_default()
+    }
+
     /// The encoded game (see [`crate::blob`]).
     pub fn read_blob(&self, id: GameId) -> Result<Vec<u8>, DbError> {
-        let rec = self.record(id)?;
+        self.blob_of(&self.record(id)?)
+    }
+
+    /// The encoded game of a record already read.
+    pub(crate) fn blob_of(&self, rec: &IndexRecord) -> Result<Vec<u8>, DbError> {
         let mut blob = vec![0u8; rec.blob_len as usize];
         read_exact_at(&self.blob, &mut blob, rec.blob_offset)?;
         Ok(blob)

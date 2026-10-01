@@ -14,7 +14,7 @@ Windows and macOS.
 |---|---|
 | `crates/chess-core` | Chess domain: rules glue over `shakmaty`, notation, game tree (`game/mod.rs`), editing session with undo (`game/editor.rs`), PGN reader and writer (`pgn/`) |
 | `crates/chess-jobs` | Background jobs: threads, throttled progress, cooperative cancellation |
-| `crates/chess-db` | Native database: file format, crash-safe commits, import/export, sorted views, header search, position index (`positions.rs`), compaction |
+| `crates/chess-db` | Native database: file format, crash-safe commits, import/export, sorted views, header search, position index (`positions.rs`), the Reference tab's queries (`reference.rs`), compaction |
 | `crates/chess-engine` | UCI engine host, analysis driver thread, blunder check (`review.rs`); `src/bin/fake_uci.rs` is a toy engine for tests |
 | `crates/chess-diagram` | Board images (QOL-06): a position as SVG or PNG, drawn like the app's board (resvg); vendored pieces and font in `data/` (licences in `data/COPYING`) |
 | `app/src-tauri` | Tauri shell: commands (`src/commands/`), DTOs (`src/dto.rs`), view building (`src/view.rs`), state (`src/state.rs`), engines and analysis (`src/engines.rs`), settings (`src/settings.rs`) |
@@ -76,7 +76,7 @@ desktop, so it's safe to run while they work.
 
 - **How it works:** debug builds only. `app/src-tauri/src/lib.rs` evaluates the file in
   `CHESSDB_SMOKE` after page load. `app/src/main.ts` exposes
-  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, onboarding, notices, api, invoke }`. The driver calls the
+  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, reference, onboarding, notices, api, invoke }`. The driver calls the
   stores exactly as the UI does and reports through the `dev_log` command
   as `[smoke] …` lines.
 - **Default driver:** `scripts/smoke/basic.js`. It imports the fixtures, sorts, opens a
@@ -105,15 +105,21 @@ desktop, so it's safe to run while they work.
   reopening), `drag.js` (selecting several games, dragging them onto another
   database, the board and the tab strip, Shift to move, Escape, the list
   menu's copy dialog, copying into a new and into the reference database;
-  QOL-04/DB-06), `panels.js` (UI-19: the Notation and Opening tree tabs,
-  the eval graph in Notation, the tree querying only while its tab shows,
-  the move popovers from the tree tab, the keyboard, and the active tab
-  restored after a reload, also from the old `treeVisible` pref),
+  QOL-04/DB-06), `panels.js` (UI-19: the Notation, Opening tree and
+  Reference tabs, the eval graph in Notation, the tree querying only while
+  its tab shows, the move popovers from the tree tab, the keyboard, and the
+  active tab restored after a reload, also from the old `treeVisible` pref),
   `ribbon.js` (UI-18 and IO-08: the groups, Copy game then Paste game
   through the real clipboard, Paste position, the messages for a clipboard
   without a game, Ctrl+V with a PGN, the New game menu and Ctrl+N, the
   reference dropdown, and narrower widths: labels drop, then groups
-  collapse into dropdowns). `search.js`, `tree.js` and `view.js` time the 1M-game
+  collapse into dropdowns), `reference.js` (OPEN-14, on the fixture
+  `testdata/pgn/reference.pgn` with known counts: the moves with Hot and
+  Best players, the main line and lines, the top games' order, playing a
+  move, the mini board stepping on its own and resetting when the board
+  moves, opening a top game where it reaches the position, the dividers,
+  the stacked narrow layout, the note without a reference database).
+  `search.js`, `tree.js`, `view.js` and `reference.js` time the 1M-game
   database when `__BIG__`; `drag.js` times copying it.
 - **Reloading:** the harness runs the driver again after every page load,
   so a driver can test what a restart restores with `location.reload()`.
@@ -364,6 +370,16 @@ stay identical before, during and after the run.
   gesture ends at the first `await`. Copy game and Copy position write
   through Rust (`copy_text`), and the paste buttons read through it
   (`clipboard_text`); only Ctrl+V uses the page's paste event.
+- **Table cells from a child component miss the parent's scoped CSS.**
+  The moves tables of the opening tree and the Reference tab share their
+  cells (`StatsHead.svelte`, `StatsCells.svelte`), so their styles are
+  global, under `.stats-table` in `app.css`; a table that changes them
+  uses `:global(…)` (`ReferenceMoves.svelte`). For a column that takes
+  the rest of a WebKit table, give it `width: 100%; max-width: 0`: a
+  fixed width on another column doesn't stop that one taking it.
+- **The Reference tab's lines job is quiet.** Its kind (`reference`) gets
+  no notice when done or cancelled (`jobs.svelte.ts`): the tab cancels it
+  whenever the board leaves the position, and shows its own progress.
 - **Svelte 5 props are live getters.** A dialog shown by `{#if thing}` with
   `prop={thing.x}` throws once its `onClose` sets `thing = null` and it then
   reads `prop`. Copy props into locals before calling `onClose`

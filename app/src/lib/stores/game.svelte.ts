@@ -261,14 +261,27 @@ class GameStore {
     }
   }
 
-  /** Opens a game; `listIndex` is its row in the game list, if opened from there. */
-  async open(handle: number, game: number, listIndex: number | null = null, mode: OpenMode = "auto") {
+  /**
+   * Opens a game; `listIndex` is its row in the game list, if opened from
+   * there. With `ply`, it opens that many moves into its main line (the
+   * Reference tab opens games where they reach the position, OPEN-14).
+   */
+  async open(
+    handle: number,
+    game: number,
+    listIndex: number | null = null,
+    mode: OpenMode = "auto",
+    ply: number | null = null,
+  ) {
     const already = this.tabs.find((t) => t.view.source?.db === handle && t.view.source.game === game);
     if (already && mode !== "tab") {
       already.listIndex = listIndex ?? already.listIndex;
-      return this.activate(already.session);
+      await this.activate(already.session);
+      const move = ply ? this.notation?.moves[ply - 1] : undefined;
+      if (move) await this.goto(move.id);
+      return;
     }
-    await this.#show(() => api.openGame(handle, game), mode, listIndex);
+    await this.#show(() => api.openGame(handle, game, ply), mode, listIndex);
   }
 
   /**

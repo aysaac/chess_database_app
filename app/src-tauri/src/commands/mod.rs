@@ -7,5 +7,6 @@ pub mod image;
 pub mod jobs;
 pub mod names;
 pub mod onboarding;
+pub mod reference;
 pub mod settings;
 pub mod tree;

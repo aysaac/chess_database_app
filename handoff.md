@@ -1,10 +1,37 @@
 # Handoff
 
-State of the project as of **2026-09-30**, for the next agent.
+State of the project as of **2026-10-01**, for the next agent.
 Conventions, commands and utilities are in [AGENTS.md](AGENTS.md); read
 that first.
 
 ## TL;DR
+
+- **OPEN-14 Reference tab (2026-10-01, branch `open-14-reference-tab`,
+  step 3 of [docs/workspace-ui.md](docs/workspace-ui.md), built on `main`
+  after the UI-19/UI-18 merge; not merged yet).** The third panel tab, next
+  to Notation and Opening tree, with a Reference button in the ribbon's View
+  group. It reads the reference database, or the open one with the note
+  "Reading <name>: no reference database is set. Choose one in the ribbon."
+  Four parts: the moves table with **Hot** (bar and ↑/↓) and **Best
+  players**; the **main line** and up to 12 **lines**; the **top 100
+  games** by average Elo; a view-only **mini board**. Details, and the
+  choices the spec left open, in
+  [New: the Reference tab](#new-the-reference-tab-open-14-2026-10-01).
+  Checks: fmt, clippy, 235 Rust tests plus the ignored TWIC round trip,
+  svelte-check (0 errors, 0 warnings), the build, and all 14 smoke drivers
+  off-screen with their 1M-game parts and Stockfish: the new
+  `reference.js`, `panels`, `ribbon`, `layout`, `basic`, `tree`, `goto`,
+  `search`, `setup`, `image`, `onboarding`, `view`, `drag`, `engine`;
+  `reference`, `panels`, `layout` and `ribbon` also in light mode
+  (`GTK_THEME=Adwaita`). The desktop stayed unchanged (read-only `hyprctl`
+  snapshots).
+  Performance on 1M games in `tauri dev`: moves, Hot, Best players and top
+  games 35 ms at the start position (92 ms the very first time, loading
+  the per-game stats), 18 ms after 1.e4, 4–13 ms deeper (target 200 ms);
+  lines 79 ms for a 36,333-game position and 10–42 ms for smaller ones
+  (target 500 ms under 50,000 games); as jobs, 1.6 s at the start and
+  0.9 s after 1.e4, then instant from the cache (more in
+  [Measured performance](#measured-performance)).
 
 - **UI-19 panel tabs (2026-09-30, branch `ui-19-panel-tabs`, step 1 of
   [docs/workspace-ui.md](docs/workspace-ui.md)).** The column beside the
@@ -234,6 +261,7 @@ that first.
 | **Compaction** (new) | Rewrites into `*.new` files, commits with a `compact.commit` marker, renames; open finishes or rolls back. Game ids change; open tabs are remapped; the position index is rebuilt | `crates/chess-db/src/database.rs` |
 | **Board images** (QOL-06) | New Tauri-free crate `crates/chess-diagram`: an SVG of only paths (cburnett pieces, labels outlined from an embedded IBM Plex Sans Condensed), rasterized by `resvg`; the clipboard is written from Rust (arboard via `tauri-plugin-clipboard-manager`), the frontend has no clipboard permission. Images use the theme's light-mode colours in any mode | `docs/stack.md` |
 | **Panel layout** (UI-19) | `Layout` (four sides → groups of panels → the active one, with sizes) in `stores/panels.svelte.ts`, saved as the `layout` UI pref (version 1). Until docking (UI-04) the app always uses the default layout and restores only each group's active tab; sizes aren't applied. Every panel stays mounted (hidden with `hidden`); a hidden panel does no work | `docs/workspace-ui.md` |
+| **Reference tab** (OPEN-14) | One pass over the index hits and the in-memory `GameStat`s gives the moves, Hot, Best players and top games (records read only for what's shown). The lines read each game's next 10 plies, packed in `u128`s sorted into an implicit trie; from 50,000 games a `chess-jobs` job, cached in memory (32 positions) until the database changes. Choices the spec left open: docs/workspace-ui.md "As built" | `crates/chess-db/src/reference.rs` |
 | **Ribbon and clipboard** (UI-18, IO-08) | The ribbon picks each group's form (full, compact, collapsed) by arithmetic on the widths of a hidden, inert copy of every group in every form, so the live buttons never move to be measured. Clipboard text is read (`clipboard_text`) and written (`copy_text`) in Rust; only Ctrl+V uses the page's paste event. `paste_game` opens the first game in place of a clean session, else in a new one. Icons are vendored Lucide (ISC). The ribbon's View group calls `panels.show(…)` (UI-19) rather than a tree-only toggle | `docs/stack.md`, `docs/workspace-ui.md` |
 
 Still open (catalog §6): how important ChessBase `.cbh` import is (#2), the
@@ -246,9 +274,8 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
 
 ### Features (by catalog ID)
 - **Delivered:** INF-01…04 · CORE-01…04 · GAME-01…07, 16, 17 ·
-  IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11 ·
-  ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16, 18, 19
-  (19: Notation and Opening tree; Reference comes with OPEN-14) ·
+  IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11, 14 ·
+  ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16, 18, 19 ·
   QOL-01 (reopens the last database and remembers orientation, pane size,
   the active panel tab, analysis lines), 02, 03, 04, 05, 06, 07, 08, 10.
 - **Partial:**
@@ -262,6 +289,78 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   - ENG-01: engines can be added, removed, made default and configured
     (common options plus "show all"), but there are no per-engine profiles.
   - UI-01: five board colour themes, but one piece set (cburnett).
+
+### New: the Reference tab (OPEN-14, 2026-10-01)
+- **What the user sees:** a **Reference** panel tab after Notation and
+  Opening tree (also View ▸ Reference in the ribbon). Its header has the
+  database, the opening and the number of games, and Find games. Below,
+  three sections with dividers (drag them, or focus one and press ↑/↓;
+  double-click resets; sizes saved as the `referenceSizes` pref):
+  - **Moves** (3a): the tree's columns (Games, Score, the White/draw/Black
+    bar, Elo, Year; the row cells are shared with the tree through
+    `StatsHead`/`StatsCells`), then **Hot**: a bar with the move's share
+    of the games from the last three years of the database, ↑/↓ when that
+    share moved, and a tooltip "38% of games from 2018–2020 (70% over all
+    years)"; and **Best players**: up to four surnames, full name and Elo
+    as tooltip. A move plays on the main board.
+  - **Main variations** (3b): "Main line: 1.e4 e5 2.Nf3 … (20 games)", then
+    up to 12 lines grouped by first move (a rule between groups), with
+    games, score, last year and average Elo. Clicking one shows it on the
+    mini board. For positions reached by 50,000 games or more they're
+    counted by a job: "Counting the lines of 585,292 games… 42%" with
+    Cancel; moving on cancels it quietly.
+  - **Top games and the mini board** (3c, 3d): the 100 strongest games
+    (average Elo of both players). Click or ↑/↓ shows one on the mini
+    board, where ⏮ ◀ ▶ ⏭ (and ←/→/Home/End on it, ←/→ in the list) step
+    through it; ⟲ goes back to the board's position, as any move on the
+    main board does. Enter or a double-click opens the game on the main
+    board where it reaches the position (in this tab unless it has unsaved
+    changes); its menu also opens it in a new tab. Side by side when the
+    tab is wide, stacked under 560 px (a container query); under 480 px
+    the moves table drops the bar and year.
+  - While a new position loads, the last one stays dimmed, so the tab
+    doesn't flash. Past the indexed plies it shows the tree's note and its
+    "Search every move of every game".
+- **Rust (chess-db, `reference.rs`):** `reference_overview` (tree stats,
+  Hot, Best players and top games in one pass over the index hits and the
+  in-memory `GameStat`s; names are read only for the strongest candidates,
+  64 at a time until four players, and records only for the 100 games
+  shown) and `reference_lines` (reads each game's next 10 plies after the
+  position with the new `blob::mainline_window`, through `for_each_game`;
+  packs them into `u128`s that sort like the lines, so the lines' trie is
+  ranges of one sorted array; the main line filters by ply). Also
+  `game_mainline` for the mini board, `ranked_moves` shared with
+  `position_tree`, and `Database::blob_of` (one record read per game in
+  `for_each_game` instead of two, which the index build uses too). 10 unit
+  tests on `testdata/pgn/reference.pgn` (56 games made for known counts:
+  generated, the groups described in the test) and generated databases:
+  ties, missing Elos and years, deleted games, games ending inside the 6
+  plies, the 10-ply and 10% rules, the 12-line cap, exact Hot thresholds.
+- **Tauri (`commands/reference.rs`):** `reference_view(handle, session)`,
+  `reference_lines(handle, session)` (the lines, or a job id below
+  `ReferenceLinesDto`; ask again when the job is done: it put them in
+  `AppState::lines`, an LRU of 32 keyed by handle, position hash, the
+  database's change counter and indexed games) and `game_line(handle, game,
+  session)` (positions as FEN/SAN/UCI/move number, and where the game
+  reaches the board's position, by hash). `open_game` takes an optional
+  `ply`. DTOs: `ReferenceDto`, `ReferenceMoveDto`, `HotDto`, `TrendDto`,
+  `BestPlayerDto`, `TopGameDto`, `LinesDto`, `ReferenceLineDto`,
+  `LinePositionDto`, `GameLineDto`, `ReferenceLinesDto`.
+- **Frontend:** `stores/reference.svelte.ts` (the `#seq` guard as in the
+  tree store; queries only while `panels.isShowing("reference")`; a hidden
+  tab or a new position cancels the lines job it started, and if the board
+  comes back before that job ends it starts again), `ReferencePanel`,
+  `ReferenceMoves`, `ReferenceLines`, `TopGames`, `MiniBoard` (a second,
+  view-only chessground with the `chessboard` class, sized in whole device
+  pixels like the main board). The reference dropdown's tooltip now says
+  "what the Reference tab and the opening tree read".
+- **Choices the spec left open** are listed in docs/workspace-ui.md under
+  "As built": ↓ needs 5 recent games expected at the move's old share; a
+  first move always makes a line; tie-breaks; ←/→ in the top games step
+  the mini board.
+- **Tests:** `scripts/smoke/reference.js` (see AGENTS.md); `panels.js` now
+  expects three tabs (End reaches Reference) and `ribbon.js` checks the
+  View group's three buttons.
 
 ### New: panel tabs (UI-19, 2026-09-30)
 - **What the user sees:** a tab strip over the column beside the board,
@@ -582,6 +681,8 @@ clocks and evals), 16-core laptop:
 | Opening tree: start / 1.e4 / Najdorf | 34 ms (first use, loads per-game stats) / 6.7 ms / 0.1 ms |
 | In the dev app (`tauri dev`) | index ready 14 s after a 1M import; tree 250 ms first, ~100 ms after 1.e4; position search (585k games) 45 ms |
 | Copy 1M games to a new database (DB-06, `drag.js`) | 13.2 s in the dev app, with other agents' smoke runs loading the machine (blobs copied as is, nothing decoded) |
+| Reference tab (OPEN-14), release (`import_bench`) | Moves + Hot + Best players + top games: 19.5 ms at the start (1M games), 13 ms after 1.e4, 0.8–1.7 ms deeper. Lines: 1.4 s at the start, 0.75 s after 1.e4 (jobs), 58 ms for 1.d4 d5 2.c4 (36,333 games), 26 ms for 1.e4 c5 2.Nf3 d6 (15,921), 6 ms for the Najdorf (3,101) |
+| Reference tab in `tauri dev` (`reference.js`, round trips through IPC) | Moves + Hot + Best players + top games: 92 ms the first time (loads the per-game stats), then 35 ms at the start, 18 ms after 1.e4, 4–13 ms deeper (target 200 ms). Lines: 79 ms for 36,333 games, 42 ms for 15,921, 10 ms for 3,101 (target 500 ms under 50,000 games); as jobs 1.64 s at the start, 0.86 s after 1.e4; 1–6 ms from the cache. The tab on screen at the start: 125–130 ms |
 
 ### How the pieces talk (additions)
 - **Analysis:** `start_analysis` starts an `Analyzer` (`chess-engine`) on
@@ -662,6 +763,14 @@ clocks and evals), 16-core laptop:
 - Panel tabs (UI-19): the layout's sizes aren't used before docking
   (UI-04); the right side always takes the width the board leaves and the
   list keeps its own `listShare` divider.
+- Reference tab (OPEN-14): the lines cache is in memory only (a restart
+  counts the start position's lines again, a job of ~2 s on 1M games). The
+  top games can't be re-sorted by column (the spec's first pass), and in a
+  narrow tab they scroll sideways. The mini board shows no check and no
+  arrows. Best players are by Elo in the game only (no FIDE-ID merging of
+  name variants; DB-09). The moves and lines tables are reached by Tab
+  (each move and line is a button), not by arrow keys like the top games.
+  No Popularity or Endgames sub-tabs (T-2).
 - `CommentDialog.svelte` is unused. The user hasn't approved deleting it.
   (`FenDialog.svelte`, also unused before, is the "Go to position" dialog
   now.)
@@ -695,9 +804,13 @@ clocks and evals), 16-core laptop:
   on macOS (`.app` and DMG) and Windows (MSI and NSIS installers), but
   neither was installed and clicked through; on Windows the release exe
   starts. Linux bundles were never built.
-- Light mode: only `panels.js`, `ribbon.js` and `layout.js` were
-  screenshotted in it (2026-09-30/10-01, `GTK_THEME=Adwaita`, see
+- Light mode: only `panels.js`, `ribbon.js`, `layout.js` and `reference.js`
+  were screenshotted in it (2026-09-30/10-01, `GTK_THEME=Adwaita`, see
   AGENTS.md); the other drivers' screens haven't been.
+- The Reference tab (OPEN-14) with real input: the dividers were dragged
+  with synthetic pointer events, and the keys sent by the driver. Real
+  WebKitGTK/WebView2 pointer delivery while dragging past the divider is
+  untested (the same window-listener pattern as the list's column edges).
 - The ribbon (UI-18) with real input: `ribbon.js` clicks with `.click()`
   and sends keydowns itself, so a real Tab walk, a real Ctrl+N (WebView2
   debug builds keep the browser's shortcuts on; check that Ctrl+N doesn't
@@ -724,9 +837,11 @@ Recommended order:
    steps 1 (UI-19 panel tabs) and 2 (UI-18 ribbon, with IO-08 paste game and
    the reference dropdown) are built and merged (2026-10-01; see
    [New: panel tabs](#new-panel-tabs-ui-19-2026-09-30) and
-   [New: the ribbon](#new-the-ribbon-ui-18-2026-09-30)). Next: step 3,
-   OPEN-14 (the Reference tab, most of the Rust work), then step 4, UI-04
-   (docking).
+   [New: the ribbon](#new-the-ribbon-ui-18-2026-09-30)). Step 3, OPEN-14
+   (the Reference tab), is built on branch `open-14-reference-tab`, to be
+   reviewed and merged ([New: the Reference tab](#new-the-reference-tab-open-14-2026-10-01)).
+   Next: step 4, UI-04 (docking). T-4 (what the Opening tree is for, now
+   that the Reference tab has its moves) is for the user to decide.
 2. **Ask the user** about open question #3 (1M vs 10M+ games), and
    whether to set up CI on the GitHub repo.
 3. **P1 polish left (on hold, the user said not now):**

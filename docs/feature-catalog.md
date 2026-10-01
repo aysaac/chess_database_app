@@ -152,7 +152,7 @@ Two sides of one program:
 | DB-10 | Classification keys: user-editable hierarchies for openings, themes, tactics, strategy, endgames; auto-classify | CB | P3 | DB-01, SRCH-05 | ChessBase "Keys" |
 | DB-11 | Game flags / user colors / marks | CB | P2 | DB-01 | |
 | DB-12 | Integrity check & repair | CB | P2 | DB-01 | |
-| DB-13 | **Reference database** concept: one designated big DB that powers tree, prep, novelties | CB | P1 | DB-02 | Conceptual glue for L4 features. Chosen in the ribbon's reference dropdown since UI-18 (2026-09-30); the tree picks the open or the reference database |
+| DB-13 | **Reference database** concept: one designated big DB that powers tree, prep, novelties | CB | P1 | DB-02 | Conceptual glue for L4 features. Chosen in the ribbon's reference dropdown since UI-18 (2026-09-30); the tree picks the open or the reference database; the Reference tab (OPEN-14) reads it |
 | DB-14 | Clip database (scratch DB for collecting games quickly) | CB | P2 | DB-06 | |
 | DB-15 | Physical sort / renumber DB | CB | P4 | DB-01 | |
 | DB-16 | Tournament cross-tables (round-robin & Swiss), standings, performance ratings | CB | P2 | DB-04 | |
@@ -196,7 +196,7 @@ Two sides of one program:
 | OPEN-11 | ECO classification & opening names (auto-assign on import) | CB+FR | P1 | CORE-04 | Open data: lichess-org/chess-openings (CC0) |
 | OPEN-12 | Engine evals shown in tree (cloud/Let's Check) | CB | P3 | OPEN-01, NET-08 | |
 | OPEN-13 | Tree statistics inline in notation (game counts next to moves) | CB | P3 | OPEN-01 | |
-| OPEN-14 | Reference tab: moves with "hot" and best players, main variations, top games by rating, mini board | CB | P2 | OPEN-01, DB-13, UI-19 | Spec: [workspace-ui.md](workspace-ui.md). Overlaps OPEN-09, which keeps plans and novelties |
+| OPEN-14 | Reference tab: moves with "hot" and best players, main variations, top games by rating, mini board | CB | P2 | OPEN-01, DB-13, UI-19 | Done (2026-10-01): the third panel tab, reading the reference database (or the open one, with a note). Moves with Hot (↑/↓) and Best players, the main line and up to 12 lines (a job from ~50,000 games, cached), the top 100 games by average Elo, a view-only mini board. Resizable sections, stacked when narrow. Spec: [workspace-ui.md](workspace-ui.md). Overlaps OPEN-09, which keeps plans and novelties |
 | OPEN-15 | Reference tab sub-tabs: Popularity, Endgames | CB | P3 | OPEN-14 | Ticket T-2 in [workspace-ui.md](workspace-ui.md); ask the user what each shows |
 
 ### ENG — Engines & tablebases
@@ -296,8 +296,8 @@ Two sides of one program:
 | UI-15 | Status bar with background-task progress | CB | P2 | INF-01 | |
 | UI-16 | Context menus everywhere | CB+FR | P1 | — | |
 | UI-17 | Touch-friendly mode | CB | P4 | UI-01 | |
-| UI-18 | Ribbon toolbar: labelled groups (Clipboard, Game, Reference, Analysis, Database, View) that collapse on narrow windows | CB | P2 | — | Done (2026-09-30): one row at any width; labels drop, then groups collapse into dropdowns from the right. View shows the Notation and Opening tree tabs (UI-19). Spec: [workspace-ui.md](workspace-ui.md) |
-| UI-19 | Panel tabs beside the board (Notation, Opening tree, Reference) | CB | P2 | UI-03 | Notation and Opening tree done (2026-09-30): the tree queries only while its tab shows; the active tab is saved in the `layout` pref. Reference comes with OPEN-14. Spec: [workspace-ui.md](workspace-ui.md) |
+| UI-18 | Ribbon toolbar: labelled groups (Clipboard, Game, Reference, Analysis, Database, View) that collapse on narrow windows | CB | P2 | — | Done (2026-09-30): one row at any width; labels drop, then groups collapse into dropdowns from the right. View shows the Notation, Opening tree and Reference tabs (UI-19, OPEN-14). Spec: [workspace-ui.md](workspace-ui.md) |
+| UI-19 | Panel tabs beside the board (Notation, Opening tree, Reference) | CB | P2 | UI-03 | Done: Notation and Opening tree (2026-09-30), Reference (2026-10-01, OPEN-14). A tab queries only while it shows; the active tab is saved in the `layout` pref. Spec: [workspace-ui.md](workspace-ui.md) |
 
 ### QOL — Quality of life
 
@@ -373,7 +373,7 @@ Two sides of one program:
 > database), QOL-08 (welcome guide, sample games, import wizard), QOL-10 (go to a pasted
 > position), UI-19 (panel tabs: Notation, with the eval graph, and Opening tree beside the
 > board; 2026-09-30), UI-18 (the ribbon, with IO-08's paste game and the reference
-> dropdown; 2026-09-30).
+> dropdown; 2026-09-30), OPEN-14 (the Reference tab, the third panel tab; 2026-10-01).
 
 
 | Phase | Goal | Contents |

@@ -873,6 +873,185 @@ pub struct TreeDto {
     pub max_ply: u16,
 }
 
+/// Whether a move is played more (↑) or less (↓) lately than over all
+/// years (the Reference tab's Hot, OPEN-14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TrendDto {
+    Up,
+    Down,
+}
+
+impl From<chess_db::Trend> for TrendDto {
+    fn from(t: chess_db::Trend) -> TrendDto {
+        match t {
+            chess_db::Trend::Up => TrendDto::Up,
+            chess_db::Trend::Down => TrendDto::Down,
+        }
+    }
+}
+
+/// How much a move is played lately (OPEN-14 Hot).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HotDto {
+    /// Games with the move from the recent years.
+    pub recent: u32,
+    /// Its share of the position's recent games (the bar), 0…1.
+    pub share: f64,
+    /// Its share of the position's games over all years, 0…1.
+    pub all_share: f64,
+    pub trend: Option<TrendDto>,
+}
+
+/// One of the strongest players who chose a move, at their Elo then.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BestPlayerDto {
+    pub name: String,
+    /// What the column shows: the surname of a "Surname, First name".
+    pub surname: String,
+    pub elo: u16,
+}
+
+/// A row of the Reference tab's moves table: the opening tree's columns
+/// plus Hot and Best players.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReferenceMoveDto {
+    pub row: TreeRowDto,
+    pub hot: Option<HotDto>,
+    pub best: Vec<BestPlayerDto>,
+}
+
+/// A game reaching the position (the Reference tab's top games).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TopGameDto {
+    pub id: u32,
+    pub white: String,
+    pub white_elo: Option<u16>,
+    pub black: String,
+    pub black_elo: Option<u16>,
+    pub result: String,
+    pub year: Option<u16>,
+    pub event: String,
+    /// Ply where the game first reaches the position.
+    pub ply: u16,
+}
+
+/// The Reference tab (OPEN-14) at a position: moves with Hot and Best
+/// players, and the top games. The lines come separately
+/// (`ReferenceLinesDto`), as they take longer.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReferenceDto {
+    pub fen: String,
+    pub opening: Option<OpeningDto>,
+    pub total: TreeRowDto,
+    pub moves: Vec<ReferenceMoveDto>,
+    /// The years Hot counts as recent (none when no game has a year).
+    pub recent_from: Option<u16>,
+    pub recent_to: Option<u16>,
+    /// Strongest first (average Elo of both players), at most 100.
+    pub top_games: Vec<TopGameDto>,
+    /// As in `TreeDto`.
+    pub indexed: bool,
+    pub partial: bool,
+    pub beyond_index: bool,
+    pub max_ply: u16,
+}
+
+/// A position of a line or a game, as the mini board shows it.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LinePositionDto {
+    pub fen: String,
+    /// The move that led here, in SAN and UCI (castling as `e1g1`); none for
+    /// the first position.
+    pub san: Option<String>,
+    pub uci: Option<String>,
+    /// Plies from the first position.
+    pub ply: u32,
+    /// Number of the move that led here, and whether White played it.
+    pub move_number: u32,
+    pub white: bool,
+}
+
+/// A line from the Reference tab's main variations (OPEN-14).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReferenceLineDto {
+    /// The position on the board first, then one per move.
+    pub positions: Vec<LinePositionDto>,
+    /// Games that followed the whole line.
+    pub games: u32,
+    pub white_wins: u32,
+    pub draws: u32,
+    pub black_wins: u32,
+    /// Score for the side to move at the position on the board, 0…1.
+    pub score: f64,
+    pub last_year: Option<u16>,
+    /// Average Elo of both players.
+    pub avg_elo: Option<u32>,
+}
+
+/// The main line and the lines from a position.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LinesDto {
+    pub fen: String,
+    /// Games whose moves were counted.
+    pub games: u32,
+    pub main_line: Option<ReferenceLineDto>,
+    pub lines: Vec<ReferenceLineDto>,
+}
+
+/// The lines, or the job counting them (ask again when it's done).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum ReferenceLinesDto {
+    Ready {
+        lines: Box<LinesDto>,
+    },
+    Job {
+        #[ts(type = "number")]
+        job: u64,
+        /// Games it reads.
+        games: u32,
+    },
+}
+
+/// A game's main line for the Reference tab's mini board.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GameLineDto {
+    pub id: u32,
+    pub white: String,
+    pub white_elo: Option<u16>,
+    pub black: String,
+    pub black_elo: Option<u16>,
+    pub result: String,
+    pub year: Option<u16>,
+    pub event: String,
+    /// The start position, then one per move.
+    pub positions: Vec<LinePositionDto>,
+    /// The first of `positions` that is the position on the board (0 when
+    /// the game's main line doesn't reach it).
+    pub start: u32,
+}
+
 /// Which name table: players, events (tournaments), sites or annotators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

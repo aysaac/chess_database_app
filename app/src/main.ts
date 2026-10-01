@@ -24,6 +24,7 @@ if (import.meta.env.DEV) {
       { prefs },
       { tree },
       { panels },
+      { reference },
       { onboarding },
       { notices },
       { api },
@@ -36,13 +37,14 @@ if (import.meta.env.DEV) {
       import("./lib/stores/prefs.svelte"),
       import("./lib/stores/tree.svelte"),
       import("./lib/stores/panels.svelte"),
+      import("./lib/stores/reference.svelte"),
       import("./lib/stores/onboarding.svelte"),
       import("./lib/stores/notify.svelte"),
       import("./lib/api"),
       import("@tauri-apps/api/core"),
     ]);
     Object.assign(window, {
-      __chessdb: { db, game, jobs, analysis, prefs, tree, panels, onboarding, notices, api, invoke },
+      __chessdb: { db, game, jobs, analysis, prefs, tree, panels, reference, onboarding, notices, api, invoke },
     });
   })();
 }

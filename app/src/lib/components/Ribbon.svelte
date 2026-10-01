@@ -292,6 +292,14 @@
       aria-pressed={panels.isShowing("tree")}
       onclick={() => panels.show("tree")}
     />
+    <RibbonButton
+      icon="library"
+      label="Reference"
+      title="Show the Reference tab: the moves, main variations and top games of the reference database"
+      {compact}
+      aria-pressed={panels.isShowing("reference")}
+      onclick={() => panels.show("reference")}
+    />
   </div>
 {/snippet}
 

@@ -86,41 +86,76 @@ fn skip_str(r: &mut ByteReader<'_>) -> Result<(), DbError> {
     Ok(())
 }
 
-/// The main line of a blob without building the game tree: the set-up
-/// position, if any, and the main line's move bytes (decode them with
-/// [`move_at`]). Much cheaper than [`decode_game`]; the position index uses it.
-pub fn mainline(blob: &[u8]) -> Result<(Option<Chess>, Vec<u8>), DbError> {
-    let mut r = ByteReader::new(blob);
+/// Reads a blob's header, leaving `r` at the moves; the set-up FEN, if any.
+fn skip_header(r: &mut ByteReader<'_>) -> Result<Option<String>, DbError> {
     let version = r.u8()?;
     if version != BLOB_VERSION {
         return Err(DbError::Corrupt(format!("unknown blob version {version}")));
     }
-    let setup = if r.u8()? & FLAG_SETUP != 0 {
-        let fen = r.str()?;
-        Some(position::from_fen(&fen).map_err(|e| DbError::Corrupt(e.to_string()))?)
-    } else {
-        None
-    };
+    let fen = if r.u8()? & FLAG_SETUP != 0 { Some(r.str()?) } else { None };
     for _ in 0..3 {
-        skip_str(&mut r)?;
+        skip_str(r)?;
     }
     for _ in 0..r.varint()? * 2 {
-        skip_str(&mut r)?;
+        skip_str(r)?;
     }
-    let mut moves = Vec::with_capacity(blob.len());
+    Ok(fen)
+}
+
+/// Feeds the main line's move bytes to `each` until it returns false or
+/// the game ends, skipping variations.
+fn walk_mainline(r: &mut ByteReader<'_>, mut each: impl FnMut(u8) -> bool) -> Result<(), DbError> {
     let mut depth = 0u32;
     loop {
         match r.u8()? {
-            END_GAME if depth == 0 => return Ok((setup, moves)),
+            END_GAME if depth == 0 => return Ok(()),
             END_GAME => return Err(DbError::Corrupt("unterminated variation".into())),
             BEGIN_VAR => depth += 1,
             END_VAR => {
                 depth = depth.checked_sub(1).ok_or_else(|| DbError::Corrupt("unbalanced variation".into()))?
             }
-            b if depth == 0 => moves.push(b),
+            b if depth == 0 && !each(b) => return Ok(()),
             _ => {}
         }
     }
+}
+
+/// The main line of a blob without building the game tree: the set-up
+/// position, if any, and the main line's move bytes (decode them with
+/// [`move_at`]). Much cheaper than [`decode_game`]; the position index uses it.
+pub fn mainline(blob: &[u8]) -> Result<(Option<Chess>, Vec<u8>), DbError> {
+    let mut r = ByteReader::new(blob);
+    let setup = match skip_header(&mut r)? {
+        Some(fen) => Some(position::from_fen(&fen).map_err(|e| DbError::Corrupt(e.to_string()))?),
+        None => None,
+    };
+    let mut moves = Vec::with_capacity(blob.len());
+    walk_mainline(&mut r, |b| {
+        moves.push(b);
+        true
+    })?;
+    Ok((setup, moves))
+}
+
+/// Up to `take` main-line move bytes from ply `skip` on (fewer where the
+/// game ends), appended to `out`. Cheaper still than [`mainline`]: no
+/// set-up position is parsed and the walk stops once it has them. The
+/// Reference tab's lines (OPEN-14) read the moves after a position with it.
+pub fn mainline_window(blob: &[u8], skip: usize, take: usize, out: &mut Vec<u8>) -> Result<(), DbError> {
+    let mut r = ByteReader::new(blob);
+    skip_header(&mut r)?;
+    if take == 0 {
+        return Ok(());
+    }
+    let mut ply = 0usize;
+    let end = skip.saturating_add(take);
+    walk_mainline(&mut r, |b| {
+        if ply >= skip {
+            out.push(b);
+        }
+        ply += 1;
+        ply < end
+    })
 }
 
 /// The Date, Round and ECO strings of a blob, read without decoding the
@@ -518,6 +553,27 @@ mod tests {
         }
         assert_eq!(sans, ["bxa8=N", "Ke7", "O-O-O", "gxh1=Q"]);
         assert_eq!(move_at(&Chess::default(), 20), None, "20 legal moves at the start");
+    }
+
+    #[test]
+    fn mainline_window_reads_a_slice_of_the_main_line() {
+        let pgn = "1. e4 (1. d4 d5) e5 2. Nf3 {x} Nc6 (2... d6 3. d4) 3. Bb5 a6 *";
+        let blob = encode_game(&read_pgn_str(pgn).remove(0));
+        let (_, all) = mainline(&blob).unwrap();
+        assert_eq!(all.len(), 6);
+        let window = |skip, take| {
+            let mut out = vec![0xAA];
+            mainline_window(&blob, skip, take, &mut out).unwrap();
+            out[1..].to_vec()
+        };
+        assert_eq!(window(0, 10), all, "the whole line when it's shorter");
+        assert_eq!(window(2, 3), all[2..5]);
+        assert_eq!(window(4, 6), all[4..], "fewer where the game ends");
+        assert_eq!(window(6, 6), Vec::<u8>::new(), "nothing after the last move");
+        assert_eq!(window(9, 6), Vec::<u8>::new());
+        assert_eq!(window(1, 0), Vec::<u8>::new());
+        assert_eq!(window(0, 0), Vec::<u8>::new());
+        assert!(mainline_window(&[9, 0], 0, 1, &mut Vec::new()).is_err(), "a bad blob");
     }
 
     #[test]

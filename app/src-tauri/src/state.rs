@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -7,7 +7,7 @@ use chess_core::game::GameEditor;
 use chess_db::{Database, GameId, SortSpec, sorted_subset};
 use chess_jobs::{JobId, JobManager};
 
-use crate::dto::ImportReportDto;
+use crate::dto::{ImportReportDto, LinesDto};
 use crate::engines::Analysis;
 use crate::error::{AppError, AppResult};
 use crate::settings::{DbView, FilterStep, SavedFilter, Settings};
@@ -59,6 +59,63 @@ impl IndexBuilds {
 
     pub fn add(&mut self, db: Weak<Mutex<Database>>, job: JobId) {
         self.0.push((db, job));
+    }
+}
+
+/// What a Reference tab result (OPEN-14) was counted for: a database handle
+/// (handles are never reused), a position (its hash) and the state of the
+/// database then. Any change to the games, or more of them indexed, makes a
+/// new key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinesKey {
+    pub handle: u32,
+    pub position: u64,
+    pub generation: u64,
+    pub indexed: GameId,
+}
+
+impl LinesKey {
+    pub fn new(handle: u32, position: u64, db: &Database) -> LinesKey {
+        LinesKey { handle, position, generation: db.generation(), indexed: db.positions().covered() }
+    }
+}
+
+/// Lines cached at most.
+const LINES_CACHED: usize = 32;
+
+/// The Reference tab's lines (OPEN-14): the most recently counted, and the
+/// jobs counting them for common positions.
+#[derive(Default)]
+pub struct LinesCache {
+    /// Most recently used first.
+    cached: VecDeque<(LinesKey, LinesDto)>,
+    /// Running jobs, with the number of games each reads.
+    jobs: Vec<(LinesKey, JobId, u32)>,
+}
+
+impl LinesCache {
+    pub fn get(&mut self, key: &LinesKey) -> Option<LinesDto> {
+        let i = self.cached.iter().position(|(k, _)| k == key)?;
+        let entry = self.cached.remove(i)?;
+        let lines = entry.1.clone();
+        self.cached.push_front(entry);
+        Some(lines)
+    }
+
+    pub fn put(&mut self, key: LinesKey, lines: LinesDto) {
+        self.cached.retain(|(k, _)| *k != key);
+        self.cached.push_front((key, lines));
+        self.cached.truncate(LINES_CACHED);
+    }
+
+    /// The job still counting the lines for `key`, and how many games it reads.
+    pub fn running(&mut self, key: &LinesKey, jobs: &JobManager) -> Option<(JobId, u32)> {
+        self.jobs.retain(|(_, job, _)| jobs.status(*job).is_some_and(|s| !s.state.is_finished()));
+        self.jobs.iter().find(|(k, _, _)| k == key).map(|&(_, job, games)| (job, games))
+    }
+
+    pub fn add_job(&mut self, key: LinesKey, job: JobId, games: u32) {
+        self.jobs.push((key, job, games));
     }
 }
 
@@ -143,6 +200,10 @@ pub struct AppState {
     pub analysis: Mutex<Option<Analysis>>,
     /// The last import into each database (by handle), while it had warnings.
     pub import_reports: Mutex<HashMap<u32, ImportReportDto>>,
+    /// The Reference tab's counted lines (OPEN-14). Held only to read or
+    /// store them (and to ask `jobs` about its jobs), never while taking a
+    /// database or session lock.
+    pub lines: Mutex<LinesCache>,
 }
 
 impl AppState {

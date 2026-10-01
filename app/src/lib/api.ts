@@ -11,6 +11,7 @@ import type { DbInfoDto } from "./bindings/DbInfoDto";
 import type { DbViewDto } from "./bindings/DbViewDto";
 import type { EngineDto } from "./bindings/EngineDto";
 import type { FenCheckDto } from "./bindings/FenCheckDto";
+import type { GameLineDto } from "./bindings/GameLineDto";
 import type { GamePage } from "./bindings/GamePage";
 import type { GotoPositionDto } from "./bindings/GotoPositionDto";
 import type { GameViewDto } from "./bindings/GameViewDto";
@@ -28,6 +29,8 @@ import type { PastedGameDto } from "./bindings/PastedGameDto";
 import type { PlayResultDto } from "./bindings/PlayResultDto";
 import type { RecentDbDto } from "./bindings/RecentDbDto";
 import type { ReferenceDbDto } from "./bindings/ReferenceDbDto";
+import type { ReferenceDto } from "./bindings/ReferenceDto";
+import type { ReferenceLinesDto } from "./bindings/ReferenceLinesDto";
 import type { SaveModeDto } from "./bindings/SaveModeDto";
 import type { ShapeDto } from "./bindings/ShapeDto";
 import type { SortSpecDto } from "./bindings/SortSpecDto";
@@ -76,8 +79,15 @@ export const api = {
     invoke<DbInfoDto>("search_position", { handle, session }),
   scanPositionGames: (handle: number, session: number) =>
     invoke<number>("scan_position_games", { handle, session }),
+  referenceView: (handle: number, session: number) =>
+    invoke<ReferenceDto>("reference_view", { handle, session }),
+  referenceLines: (handle: number, session: number) =>
+    invoke<ReferenceLinesDto>("reference_lines", { handle, session }),
+  gameLine: (handle: number, game: number, session: number) =>
+    invoke<GameLineDto>("game_line", { handle, game, session }),
 
-  openGame: (handle: number, game: number) => invoke<GameViewDto>("open_game", { handle, game }),
+  openGame: (handle: number, game: number, ply: number | null = null) =>
+    invoke<GameViewDto>("open_game", { handle, game, ply }),
   newGame: (fen: string | null = null) => invoke<GameViewDto>("new_game", { fen }),
   closeSession: (session: number) => invoke<void>("close_session", { session }),
   checkFen: (fen: string) => invoke<FenCheckDto>("check_fen", { fen }),

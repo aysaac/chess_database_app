@@ -51,7 +51,7 @@
     tab(id)?.getAttribute("aria-selected") === "true" &&
     tab(id)?.tabIndex === 0 &&
     shown(panel(id)) &&
-    ["notation", "tree"].filter((o) => o !== id).every((o) => !shown(panel(o)) && tab(o).tabIndex === -1);
+    ["notation", "tree", "reference"].filter((o) => o !== id).every((o) => !shown(panel(o)) && tab(o).tabIndex === -1);
   window.addEventListener("error", (e) => log("window error: " + e.message));
   window.addEventListener("unhandledrejection", (e) =>
     log("unhandled rejection: " + (e.reason?.message ?? JSON.stringify(e.reason))),
@@ -76,12 +76,12 @@
   try {
     if (phase === "tabs") {
       await log("start");
-      // Fresh settings: Notation shows, the Opening tree tab is next to it.
+      // Fresh settings: Notation shows, the Opening tree and Reference (OPEN-14) tabs are next to it.
       const strip = $(".game-column [role='tablist']");
       expect(strip?.getAttribute("aria-label") === "Panels", "a panel tab strip in the game column");
       const tabs = [...strip.querySelectorAll("[role='tab']")];
       const labels = tabs.map((t) => t.querySelector(".label:not([aria-hidden])")?.textContent.trim()).join(" | ");
-      expect(labels === "Notation | Opening tree", "Notation and Opening tree tabs, got " + labels);
+      expect(labels === "Notation | Opening tree | Reference", "Notation, Opening tree and Reference tabs, got " + labels);
       for (const t of tabs) {
         const p = document.getElementById(t.getAttribute("aria-controls"));
         expect(p?.getAttribute("role") === "tabpanel" && p.getAttribute("aria-labelledby") === t.id,
@@ -162,7 +162,9 @@
         ["ArrowLeft", "notation", "← shows Notation"],
         ["ArrowRight", "tree", "→ shows Opening tree"],
         ["Home", "notation", "Home shows Notation"],
-        ["End", "tree", "End shows Opening tree"],
+        ["End", "reference", "End shows Reference, the last tab"],
+        ["ArrowLeft", "tree", "← back to Opening tree"],
+        ["ArrowRight", "reference", "→ shows Reference"],
         ["ArrowRight", "notation", "→ wraps to Notation"],
       ]) {
         key(document.activeElement, k);
@@ -233,7 +235,7 @@
       await until(() => prefs.raw("layout") !== undefined, "the prefs loaded");
       await wait(300);
       expect(showing("notation"), "the default layout, with Notation showing");
-      expect(tab("tree") && tab("notation"), "both tabs there");
+      expect(tab("tree") && tab("notation") && tab("reference"), "all three tabs there");
       sessionStorage.removeItem(PHASE);
       await log("done");
       return;

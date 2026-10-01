@@ -1,0 +1,535 @@
+[Event "Reference fixture"]
+[Date "2019.01.01"]
+[White "Carlsen, Magnus"]
+[Black "Nepomniachtchi, Ian"]
+[Result "1-0"]
+[WhiteElo "2850"]
+[BlackElo "2820"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 1-0
+
+[Event "Reference fixture"]
+[Date "2015.01.01"]
+[White "Carlsen, Magnus"]
+[Black "Aronian, Levon"]
+[Result "1/2-1/2"]
+[WhiteElo "2840"]
+[BlackElo "2780"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2014.01.01"]
+[White "Caruana, Fabiano"]
+[Black "Vachier-Lagrave, Maxime"]
+[Result "1-0"]
+[WhiteElo "2820"]
+[BlackElo "2760"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 1-0
+
+[Event "Reference fixture"]
+[Date "2019.01.01"]
+[White "So, Wesley"]
+[Black "Grischuk, Alexander"]
+[Result "1/2-1/2"]
+[WhiteElo "2800"]
+[BlackElo "2780"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2015.01.01"]
+[White "Nakamura, Hikaru"]
+[Black "Mamedyarov, Shakhriyar"]
+[Result "0-1"]
+[WhiteElo "2800"]
+[BlackElo "2780"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 0-1
+
+[Event "Reference fixture"]
+[Date "2020.01.01"]
+[White "Ding, Liren"]
+[Black "Svidler, Peter"]
+[Result "1-0"]
+[WhiteElo "2790"]
+[BlackElo "2700"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 1-0
+
+[Event "Reference fixture"]
+[Date "2020.01.01"]
+[White "Club player 01"]
+[Black "Club player 02"]
+[Result "0-1"]
+[WhiteElo "2400"]
+[BlackElo "2350"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 0-1
+
+[Event "Reference fixture"]
+[Date "2010.01.01"]
+[White "Club player 03"]
+[Black "Club player 04"]
+[Result "1-0"]
+[WhiteElo "2300"]
+[BlackElo "2250"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 1-0
+
+[Event "Reference fixture"]
+[Date "2011.01.01"]
+[White "Club player 05"]
+[Black "Club player 06"]
+[Result "1/2-1/2"]
+[WhiteElo "2200"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2012.01.01"]
+[White "Club player 07"]
+[Black "Club player 08"]
+[Result "1-0"]
+[BlackElo "2150"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 1-0
+
+[Event "Reference fixture"]
+[Date "2013.01.01"]
+[White "Club player 09"]
+[Black "Club player 10"]
+[Result "0-1"]
+[WhiteElo "2100"]
+[BlackElo "2100"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 0-1
+
+[Event "Reference fixture"]
+[Date "2009.01.01"]
+[White "Club player 11"]
+[Black "Club player 12"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 1-0
+
+[Event "Reference fixture"]
+[Date "2008.01.01"]
+[White "Club player 13"]
+[Black "Club player 14"]
+[Result "1-0"]
+[WhiteElo "2050"]
+[BlackElo "2000"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O f6 1-0
+
+[Event "Reference fixture"]
+[Date "2007.01.01"]
+[White "Club player 15"]
+[Black "Club player 16"]
+[Result "1/2-1/2"]
+[WhiteElo "2000"]
+[BlackElo "1950"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O f6 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2006.01.01"]
+[White "Club player 17"]
+[Black "Club player 18"]
+[Result "0-1"]
+[WhiteElo "1950"]
+[BlackElo "1900"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O f6 0-1
+
+[Event "Reference fixture"]
+[Date "2005.01.01"]
+[White "Club player 19"]
+[Black "Club player 20"]
+[Result "1-0"]
+[WhiteElo "1900"]
+[BlackElo "1850"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O f6 1-0
+
+[Event "Reference fixture"]
+[Date "2004.01.01"]
+[White "Club player 21"]
+[Black "Club player 22"]
+[Result "1-0"]
+[WhiteElo "1850"]
+[BlackElo "1800"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O f6 1-0
+
+[Event "Reference fixture"]
+[Date "2003.01.01"]
+[White "Club player 23"]
+[Black "Club player 24"]
+[Result "1/2-1/2"]
+[WhiteElo "1800"]
+[BlackElo "1750"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O f6 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2002.01.01"]
+[White "Club player 25"]
+[Black "Club player 26"]
+[Result "0-1"]
+[WhiteElo "1750"]
+[BlackElo "1700"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O f6 0-1
+
+[Event "Reference fixture"]
+[Date "2001.01.01"]
+[White "Club player 27"]
+[Black "Club player 28"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O f6 1-0
+
+[Event "Reference fixture"]
+[Date "2012.01.01"]
+[White "Club player 29"]
+[Black "Club player 30"]
+[Result "1-0"]
+[WhiteElo "1700"]
+[BlackElo "1650"]
+
+1. e4 e5 2. Bc4 1-0
+
+[Event "Reference fixture"]
+[Date "2013.01.01"]
+[White "Club player 31"]
+[Black "Club player 32"]
+[Result "0-1"]
+[WhiteElo "1650"]
+[BlackElo "1600"]
+
+1. e4 e5 2. Bc4 0-1
+
+[Event "Reference fixture"]
+[Date "2014.01.01"]
+[White "Club player 33"]
+[Black "Club player 34"]
+[Result "1/2-1/2"]
+[WhiteElo "1600"]
+[BlackElo "1550"]
+
+1. e4 e5 2. Bc4 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2006.01.01"]
+[White "Club player 35"]
+[Black "Club player 36"]
+[Result "0-1"]
+[WhiteElo "2250"]
+[BlackElo "2200"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 0-1
+
+[Event "Reference fixture"]
+[Date "2007.01.01"]
+[White "Club player 37"]
+[Black "Club player 38"]
+[Result "0-1"]
+[WhiteElo "2240"]
+[BlackElo "2190"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 0-1
+
+[Event "Reference fixture"]
+[Date "2008.01.01"]
+[White "Club player 39"]
+[Black "Club player 40"]
+[Result "1-0"]
+[WhiteElo "2230"]
+[BlackElo "2180"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 1-0
+
+[Event "Reference fixture"]
+[Date "2009.01.01"]
+[White "Club player 41"]
+[Black "Club player 42"]
+[Result "1/2-1/2"]
+[WhiteElo "2220"]
+[BlackElo "2170"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2010.01.01"]
+[White "Club player 43"]
+[Black "Club player 44"]
+[Result "0-1"]
+[WhiteElo "2210"]
+[BlackElo "2160"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 0-1
+
+[Event "Reference fixture"]
+[Date "2018.01.01"]
+[White "Carlsen, Magnus"]
+[Black "Club player 45"]
+[Result "1-0"]
+[WhiteElo "2830"]
+[BlackElo "2500"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Bb4 1-0
+
+[Event "Reference fixture"]
+[Date "2008.01.01"]
+[White "Club player 46"]
+[Black "Club player 47"]
+[Result "1/2-1/2"]
+[WhiteElo "2150"]
+[BlackElo "2100"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Bb4 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2009.01.01"]
+[White "Club player 48"]
+[Black "Club player 49"]
+[Result "0-1"]
+[WhiteElo "2140"]
+[BlackElo "2090"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Bb4 0-1
+
+[Event "Reference fixture"]
+[Date "2010.01.01"]
+[White "Club player 50"]
+[Black "Club player 51"]
+[Result "1-0"]
+[WhiteElo "2130"]
+[BlackElo "2080"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Bb4 1-0
+
+[Event "Reference fixture"]
+[Date "2011.01.01"]
+[White "Club player 52"]
+[Black "Club player 53"]
+[Result "1/2-1/2"]
+[WhiteElo "2120"]
+[BlackElo "2070"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Bb4 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2012.01.01"]
+[White "Club player 54"]
+[Black "Club player 55"]
+[Result "0-1"]
+[WhiteElo "2110"]
+[BlackElo "2060"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Bb4 0-1
+
+[Event "Reference fixture"]
+[Date "2012.01.01"]
+[White "Club player 56"]
+[Black "Club player 57"]
+[Result "1-0"]
+[WhiteElo "2050"]
+[BlackElo "2000"]
+
+1. e4 c6 2. d4 d5 1-0
+
+[Event "Reference fixture"]
+[Date "2013.01.01"]
+[White "Club player 58"]
+[Black "Club player 59"]
+[Result "1/2-1/2"]
+[WhiteElo "2040"]
+[BlackElo "1990"]
+
+1. e4 c6 2. d4 d5 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2014.01.01"]
+[White "Club player 60"]
+[Black "Club player 61"]
+[Result "0-1"]
+[WhiteElo "2030"]
+[BlackElo "1980"]
+
+1. e4 c6 2. d4 d5 0-1
+
+[Event "Reference fixture"]
+[Date "2015.01.01"]
+[White "Club player 62"]
+[Black "Club player 63"]
+[Result "1-0"]
+[WhiteElo "2020"]
+[BlackElo "1970"]
+
+1. e4 c6 2. d4 d5 1-0
+
+[Event "Reference fixture"]
+[Date "2016.01.01"]
+[White "Club player 64"]
+[Black "Club player 65"]
+[Result "1/2-1/2"]
+[WhiteElo "2010"]
+[BlackElo "1960"]
+
+1. e4 c6 2. d4 d5 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2020.01.01"]
+[White "Kramnik, Vladimir"]
+[Black "Topalov, Veselin"]
+[Result "1/2-1/2"]
+[WhiteElo "2810"]
+[BlackElo "2820"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2018.01.01"]
+[White "Anand, Viswanathan"]
+[Black "Unknown, Player"]
+[Result "1-0"]
+[WhiteElo "2790"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 1-0
+
+[Event "Reference fixture"]
+[Date "2019.01.01"]
+[White "Club player 66"]
+[Black "Club player 67"]
+[Result "0-1"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 0-1
+
+[Event "Reference fixture"]
+[Date "2019.01.01"]
+[White "Club player 68"]
+[Black "Club player 69"]
+[Result "1-0"]
+[BlackElo "2300"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 1-0
+
+[Event "Reference fixture"]
+[Date "2020.01.01"]
+[White "Club player 70"]
+[Black "Club player 71"]
+[Result "1/2-1/2"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2017.01.01"]
+[White "Club player 72"]
+[Black "Club player 73"]
+[Result "0-1"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 0-1
+
+[Event "Reference fixture"]
+[Date "2019.01.01"]
+[White "Kramnik, Vladimir"]
+[Black "Club player 74"]
+[Result "1-0"]
+[WhiteElo "2800"]
+[BlackElo "2750"]
+
+1. d4 Nf6 2. c4 1-0
+
+[Event "Reference fixture"]
+[Date "2018.01.01"]
+[White "Giri, Anish"]
+[Black "Club player 75"]
+[Result "1/2-1/2"]
+[WhiteElo "2780"]
+[BlackElo "2400"]
+
+1. d4 Nf6 2. c4 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2020.01.01"]
+[White "Club player 76"]
+[Black "Club player 77"]
+[Result "0-1"]
+
+1. d4 Nf6 2. c4 0-1
+
+[Event "Reference fixture"]
+[Date "2015.01.01"]
+[White "Club player 78"]
+[Black "Club player 79"]
+[Result "1-0"]
+
+1. d4 Nf6 2. Nf3 1-0
+
+[Event "Reference fixture"]
+[Date "2016.01.01"]
+[White "Club player 80"]
+[Black "Club player 81"]
+[Result "1/2-1/2"]
+
+1. d4 Nf6 2. Nf3 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "1999.01.01"]
+[White "Kasparov, Garry"]
+[Black "Karpov, Anatoly"]
+[Result "1-0"]
+[WhiteElo "2851"]
+[BlackElo "2780"]
+
+1. c4 e5 2. Nc3 Nf6 1-0
+
+[Event "Reference fixture"]
+[Date "2000.01.01"]
+[White "Kasparov, Garry"]
+[Black "Club player 82"]
+[Result "1-0"]
+[WhiteElo "2849"]
+[BlackElo "2700"]
+
+1. c4 e5 2. Nc3 Nf6 1-0
+
+[Event "Reference fixture"]
+[Date "2001.01.01"]
+[White "Short, Nigel"]
+[Black "Club player 83"]
+[Result "1/2-1/2"]
+[WhiteElo "2690"]
+[BlackElo "2600"]
+
+1. c4 e5 2. Nc3 Nf6 1/2-1/2
+
+[Event "Reference fixture"]
+[Date "2002.01.01"]
+[White "Timman, Jan"]
+[Black "Club player 84"]
+[Result "0-1"]
+[WhiteElo "2650"]
+[BlackElo "2550"]
+
+1. c4 e5 2. Nc3 Nf6 0-1
+
+[Event "Reference fixture"]
+[Date "2003.01.01"]
+[White "Club player 85"]
+[Black "Club player 86"]
+[Result "1-0"]
+
+1. c4 e5 2. Nc3 Nf6 1-0
+
+[Event "Reference fixture"]
+[Date "????.??.??"]
+[White "Club player 87"]
+[Black "Club player 88"]
+[Result "*"]
+
+1. Nf3 d5 *
