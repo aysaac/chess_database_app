@@ -74,6 +74,27 @@
       const spareY = work.bottom - nav.bottom - 4;
       const spareX = notation.width - 320;
       expect(Math.min(spareY, spareX) < 16 || board.width === 160, `${label}: board filling its space`);
+      // Nothing is wider than the window (the game list's columns used to
+      // widen everything in narrow windows).
+      for (const sel of [".ribbon", ".workspace", ".games", ".tabs"]) {
+        expect(rect(sel).right <= whole.right + 0.5, `${label}: ${sel} inside the window, ends at ${rect(sel).right}`);
+      }
+      // The ribbon (UI-18): one row, every group whole and inside it.
+      const ribbon = rect(".ribbon");
+      const groups = [...document.querySelectorAll(".ribbon > .groups > .group")];
+      expect(groups.length === 6, `${label}: six ribbon groups, got ${groups.length}`);
+      for (const g of groups) {
+        const r = g.getBoundingClientRect();
+        expect(r.right <= ribbon.right + 0.5 && Math.abs(r.top - groups[0].getBoundingClientRect().top) < 1,
+          `${label}: ribbon group ${g.dataset.group} on the one row and inside it (${r.left}–${r.right} of ${ribbon.right})`);
+        for (const b of g.querySelectorAll("button")) {
+          const br = b.getBoundingClientRect();
+          expect(br.right <= r.right + 0.5 && br.bottom <= r.bottom + 0.5, `${label}: ${b.getAttribute("aria-label")} inside its group`);
+        }
+      }
+      expect(ribbon.height < 110, `${label}: the ribbon is one row high, got ${ribbon.height}`);
+      await log(`  ribbon ${Math.round(ribbon.width)}x${Math.round(ribbon.height)}: ` +
+        groups.map((g) => `${g.dataset.group} ${g.dataset.form}`).join(", "));
       await wait(300);
       await log("shot:layout-" + label);
       await wait(1500);

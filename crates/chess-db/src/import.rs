@@ -43,7 +43,9 @@ pub struct ImportSummary {
     pub cancelled: bool,
 }
 
-fn label(h: &Headers) -> String {
+/// How a game is named in warnings: `White – Black`, or the event when both
+/// players are unknown.
+pub fn game_label(h: &Headers) -> String {
     if h.white.is_empty() && h.black.is_empty() {
         return h.event.clone();
     }
@@ -112,7 +114,7 @@ pub fn import_reader<R: Read>(
         summary.warning_count += parsed.warnings.len() as u64;
         let first = summary.warnings.len();
         let who = match (&parsed.game, parsed.warnings.is_empty()) {
-            (Some(g), false) => label(&g.headers),
+            (Some(g), false) => game_label(&g.headers),
             _ => String::new(),
         };
         for w in parsed.warnings {

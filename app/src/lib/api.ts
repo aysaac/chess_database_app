@@ -24,6 +24,7 @@ import type { ListSelectionDto } from "./bindings/ListSelectionDto";
 import type { NameKindDto } from "./bindings/NameKindDto";
 import type { NameListDto } from "./bindings/NameListDto";
 import type { OnboardingDto } from "./bindings/OnboardingDto";
+import type { PastedGameDto } from "./bindings/PastedGameDto";
 import type { PlayResultDto } from "./bindings/PlayResultDto";
 import type { RecentDbDto } from "./bindings/RecentDbDto";
 import type { ReferenceDbDto } from "./bindings/ReferenceDbDto";
@@ -113,6 +114,10 @@ export const api = {
   saveGame: (session: number, mode: SaveModeDto, handle: number | null = null) =>
     invoke<GameViewDto>("save_game", { session, mode, handle }),
   gamePgn: (session: number) => invoke<string>("game_pgn", { session }),
+  pasteGame: (session: number | null, text: string) =>
+    invoke<PastedGameDto>("paste_game", { session, text }),
+  clipboardText: () => invoke<string | null>("clipboard_text"),
+  copyText: (text: string) => invoke<void>("copy_text", { text }),
   copyBoardImage: (session: number, image: BoardImageDto, format: ImageFormatDto) =>
     invoke<void>("copy_board_image", { session, image, format }),
   saveBoardImage: (session: number, image: BoardImageDto, path: string) =>

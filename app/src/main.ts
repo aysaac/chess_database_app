@@ -25,6 +25,7 @@ if (import.meta.env.DEV) {
       { tree },
       { panels },
       { onboarding },
+      { notices },
       { api },
       { invoke },
     ] = await Promise.all([
@@ -36,11 +37,12 @@ if (import.meta.env.DEV) {
       import("./lib/stores/tree.svelte"),
       import("./lib/stores/panels.svelte"),
       import("./lib/stores/onboarding.svelte"),
+      import("./lib/stores/notify.svelte"),
       import("./lib/api"),
       import("@tauri-apps/api/core"),
     ]);
     Object.assign(window, {
-      __chessdb: { db, game, jobs, analysis, prefs, tree, panels, onboarding, api, invoke },
+      __chessdb: { db, game, jobs, analysis, prefs, tree, panels, onboarding, notices, api, invoke },
     });
   })();
 }

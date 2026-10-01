@@ -129,7 +129,7 @@ Two sides of one program:
 | IO-05 | .cbv (compressed ChessBase archive) read | CB | P4 | IO-03 | |
 | IO-06 | Opening books: Polyglot .bin read/write; ChessBase .ctg read | CB+FR | P2 (bin) / P4 (ctg) | CORE-04 | CTG is proprietary, Polyglot is open |
 | IO-07 | EPD read/write with opcodes (test suites, engine matches) | CB+FR | P3 | CORE-03 | |
-| IO-08 | Clipboard: copy/paste FEN, PGN, whole game, position image | CB+FR | P1 | IO-01/02 | |
+| IO-08 | Clipboard: copy/paste FEN, PGN, whole game, position image | CB+FR | P1 | IO-01/02 | Done (2026-09-30, with UI-18): Copy game/position, Board image (QOL-06), Paste position (QOL-10) and Paste game in the ribbon; Ctrl+V takes a position or a PGN game. The clipboard is read and written in Rust |
 | IO-09 | Drag-and-drop PGN/files onto the app to open/import | CB | P2 | IO-01 | |
 | IO-10 | Import from URL (Lichess/Chess.com game or study link) | — | P2 | NET-01 | Not in CB. Cheap and much liked |
 | IO-11 | Export filtered/selected games | CB | P1 | IO-02, SRCH-14 | |
@@ -146,13 +146,13 @@ Two sides of one program:
 | DB-04 | Normalized entity indexes: **players, tournaments, annotators, sources, teams**, each with its own list and games-of-entity view | CB | P1 | DB-01 | Core ChessBase idea: rename a player once and every game updates |
 | DB-05 | Edit headers; bulk edit / find-and-replace across selection | CB | P1 | DB-04 | |
 | DB-06 | Copy/move/delete games between DBs; soft delete, undelete, pack/compact | CB | P1 | DB-01 | |
-| DB-07 | Database library window: folders, favorites, icons per DB type (openings, training, corr, repertoire…), recent, properties (count/size) | CB | P1 | DB-02 | |
+| DB-07 | Database library window: folders, favorites, icons per DB type (openings, training, corr, repertoire…), recent, properties (count/size) | CB | P1 | DB-02 | Partial: recent databases (Recent and the reference dropdown in the ribbon, the empty list), size and count in the status bar. No library window or folders; favourites are T-3 in [workspace-ui.md](workspace-ui.md) |
 | DB-08 | Duplicate detection & removal (exact + fuzzy: players/date/move prefix; keep best-annotated) | CB | P2 | DB-01, CORE-04 | CB's "Double game killer" |
 | DB-09 | Name normalization: spelling database, merge player/tournament entities, typo detection | CB | P2 | DB-04 | Matters a lot when merging TWIC + Lichess |
 | DB-10 | Classification keys: user-editable hierarchies for openings, themes, tactics, strategy, endgames; auto-classify | CB | P3 | DB-01, SRCH-05 | ChessBase "Keys" |
 | DB-11 | Game flags / user colors / marks | CB | P2 | DB-01 | |
 | DB-12 | Integrity check & repair | CB | P2 | DB-01 | |
-| DB-13 | **Reference database** concept: one designated big DB that powers tree, prep, novelties | CB | P1 | DB-02 | Conceptual glue for L4 features |
+| DB-13 | **Reference database** concept: one designated big DB that powers tree, prep, novelties | CB | P1 | DB-02 | Conceptual glue for L4 features. Chosen in the ribbon's reference dropdown since UI-18 (2026-09-30); the tree picks the open or the reference database |
 | DB-14 | Clip database (scratch DB for collecting games quickly) | CB | P2 | DB-06 | |
 | DB-15 | Physical sort / renumber DB | CB | P4 | DB-01 | |
 | DB-16 | Tournament cross-tables (round-robin & Swiss), standings, performance ratings | CB | P2 | DB-04 | |
@@ -296,7 +296,7 @@ Two sides of one program:
 | UI-15 | Status bar with background-task progress | CB | P2 | INF-01 | |
 | UI-16 | Context menus everywhere | CB+FR | P1 | — | |
 | UI-17 | Touch-friendly mode | CB | P4 | UI-01 | |
-| UI-18 | Ribbon toolbar: labelled groups (Clipboard, Game, Reference, Analysis, Database, View) that collapse on narrow windows | CB | P2 | — | Spec: [workspace-ui.md](workspace-ui.md) |
+| UI-18 | Ribbon toolbar: labelled groups (Clipboard, Game, Reference, Analysis, Database, View) that collapse on narrow windows | CB | P2 | — | Done (2026-09-30): one row at any width; labels drop, then groups collapse into dropdowns from the right. View shows the Notation and Opening tree tabs (UI-19). Spec: [workspace-ui.md](workspace-ui.md) |
 | UI-19 | Panel tabs beside the board (Notation, Opening tree, Reference) | CB | P2 | UI-03 | Notation and Opening tree done (2026-09-30): the tree queries only while its tab shows; the active tab is saved in the `layout` pref. Reference comes with OPEN-14. Spec: [workspace-ui.md](workspace-ui.md) |
 
 ### QOL — Quality of life
@@ -308,7 +308,7 @@ Two sides of one program:
 | QOL-03 | Next/previous game in current list/filter without leaving board | CB | P1 | SRCH-14 | |
 | QOL-04 | Drag games between DBs / onto board | CB | P2 | DB-06 | Done 2026-09-29 (pointer drags; Shift moves) |
 | QOL-05 | Cancellable long operations with ETA | CB | P1 | INF-01 | |
-| QOL-06 | Copy board as image (PNG/SVG) | CB+FR | P2 | UI-01 | **Done** (2026-09-29): "Board image ▾" in the toolbar copies PNG or SVG, or saves either; theme colours, coordinates, last move, check and drawings; three sizes |
+| QOL-06 | Copy board as image (PNG/SVG) | CB+FR | P2 | UI-01 | **Done** (2026-09-29): "Board image ▾" in the ribbon copies PNG or SVG, or saves either; theme colours, coordinates, last move, check and drawings; three sizes |
 | QOL-07 | Remember column widths/sort/filters per DB | CB | P2 | INF-02 | |
 | QOL-08 | Onboarding: sample DB, bundled engine, first-run import wizard | FR | P2 | ENG-09 | Done: welcome guide on first run, 12 classic sample games, engine check, PGN → new database wizard |
 | QOL-09 | Share game via link / QR code (CB18) | CB | P4 | NET-03 | |
@@ -372,7 +372,8 @@ Two sides of one program:
 > QOL-06 (board as a PNG/SVG image), QOL-07 (list sort, column widths and filter per
 > database), QOL-08 (welcome guide, sample games, import wizard), QOL-10 (go to a pasted
 > position), UI-19 (panel tabs: Notation, with the eval graph, and Opening tree beside the
-> board; 2026-09-30).
+> board; 2026-09-30), UI-18 (the ribbon, with IO-08's paste game and the reference
+> dropdown; 2026-09-30).
 
 
 | Phase | Goal | Contents |

@@ -1,7 +1,8 @@
-// Smoke-test driver for board images (QOL-06): the "Board image" menu, copying
-// the board as PNG and SVG (the harness saves the private display's clipboard
-// on `clip:<name>` as <out>/clips/), saving files (no native dialog: the path
-// is given directly) and a failed save.
+// Smoke-test driver for board images (QOL-06): the "Board image" menu (in the
+// ribbon's Clipboard group, UI-18), copying the board as PNG and SVG (the
+// harness saves the private display's clipboard on `clip:<name>` as
+// <out>/clips/), saving files (no native dialog: the path is given directly)
+// and a failed save.
 (async () => {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   while (!window.__chessdb) await wait(100);
@@ -34,7 +35,7 @@
   const noticeError = () => $(".notice")?.classList.contains("error") ?? false;
   const menu = () => $(".image-menu [role='menu']");
   const openMenu = async () => {
-    if (!menu()) button("Board image ▾").click();
+    if (!menu()) button("Board image").click();
     await until(() => menu(), "the board image menu opens");
   };
   const choose = async (text) => {

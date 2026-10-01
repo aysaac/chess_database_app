@@ -23,6 +23,43 @@ that first.
   `engine.js` wasn't run: in the main checkout `app/src-tauri/binaries` is
   a symlink to itself (dated 2026-09-29 18:44), so there's no Stockfish.
   Run `scripts/fetch-stockfish.sh` again once that link is removed.
+- **UI-18 ribbon (2026-09-30, branch `ui-18-ribbon`, step 2 of
+  docs/workspace-ui.md, built from `main` without UI-19).** One band under
+  the game tabs replaces the toolbar: labelled groups Clipboard, Game,
+  Reference, Analysis, Database and View, with Lucide icons. It never
+  wraps: groups from the right lose their small buttons' labels, then
+  collapse into dropdowns. It finishes IO-08 (**Paste game** from a button
+  or Ctrl+V, Copy game/Copy position, Paste position) and moves the
+  reference database (DB-13, DB-07) into a dropdown of recent databases;
+  the tree's select keeps only "open" and "reference". **Ctrl+N** is New
+  game. Details and the notes for merging with `ui-19-panel-tabs` in
+  [New: the ribbon](#new-the-ribbon-ui-18-2026-09-30). Also fixed: in
+  windows narrower than ~1,000 px the game list widened the whole app past
+  the window. Checks: fmt, clippy, 209 Rust tests (+1 ignored),
+  svelte-check, the build, and 11 smoke drivers off-screen with their
+  1M-game parts: the new `ribbon.js`, `basic`, `layout`, `goto`, `setup`,
+  `image`, `search`, `tree`, `view`, `drag`, `onboarding`. `ribbon` and
+  `layout` also ran in light mode (`GTK_THEME=Adwaita`). The desktop
+  stayed unchanged. `engine.js` wasn't run: `app/src-tauri/binaries` in
+  the main checkout is a symlink to itself (as the UI-19 agent found), so
+  there's no Stockfish; nothing engine-side changed.
+- **UI-19/UI-18 merged (2026-10-01, branch `ui-integration`).** Each was
+  built independently from the same `main`, per
+  [docs/workspace-ui.md](docs/workspace-ui.md)'s note that steps 2 and 3
+  don't depend on step 1. Cherry-picked UI-19 first, then UI-18, with
+  conflicts in `AGENTS.md`, `App.svelte` (imports, `.games` CSS),
+  `tree.svelte.ts` (additive: `referenceTarget` plus the tab-aware
+  `refresh()`), `main.ts` (the dev `window.__chessdb` export list),
+  `docs/feature-catalog.md` and this file. `Toolbar.svelte` was a
+  modify/delete (UI-19 touched it, UI-18 deleted it for `Ribbon.svelte`):
+  took the deletion, then updated `Ribbon.svelte`'s View group to call
+  `panels.show("notation"|"tree")` with `aria-pressed={panels.isShowing(…)}`
+  instead of the old `tree.visible`/`tree.toggle()`, and added a Notation
+  button there (the `history` icon; `file-text` wasn't vendored). Fixed the
+  same leftover `tree.visible`/`tree.toggle()` calls in `scripts/smoke/ribbon.js`
+  (three places) to use `panels.show`/`panels.isShowing`. Full checks and
+  all smoke drivers must be re-run on the merged tree before this lands on
+  `main` (see the checks note right after this bullet is finished).
 - **Five P2 quality-of-life features merged into `main` (2026-09-29):**
   QOL-04, 06, 07, 08 and 10, each built on its own branch from the same
   `main` and described in the bullets below. They were reviewed and
@@ -182,6 +219,7 @@ that first.
 | **Compaction** (new) | Rewrites into `*.new` files, commits with a `compact.commit` marker, renames; open finishes or rolls back. Game ids change; open tabs are remapped; the position index is rebuilt | `crates/chess-db/src/database.rs` |
 | **Board images** (QOL-06) | New Tauri-free crate `crates/chess-diagram`: an SVG of only paths (cburnett pieces, labels outlined from an embedded IBM Plex Sans Condensed), rasterized by `resvg`; the clipboard is written from Rust (arboard via `tauri-plugin-clipboard-manager`), the frontend has no clipboard permission. Images use the theme's light-mode colours in any mode | `docs/stack.md` |
 | **Panel layout** (UI-19) | `Layout` (four sides → groups of panels → the active one, with sizes) in `stores/panels.svelte.ts`, saved as the `layout` UI pref (version 1). Until docking (UI-04) the app always uses the default layout and restores only each group's active tab; sizes aren't applied. Every panel stays mounted (hidden with `hidden`); a hidden panel does no work | `docs/workspace-ui.md` |
+| **Ribbon and clipboard** (UI-18, IO-08) | The ribbon picks each group's form (full, compact, collapsed) by arithmetic on the widths of a hidden, inert copy of every group in every form, so the live buttons never move to be measured. Clipboard text is read (`clipboard_text`) and written (`copy_text`) in Rust; only Ctrl+V uses the page's paste event. `paste_game` opens the first game in place of a clean session, else in a new one. Icons are vendored Lucide (ISC). The ribbon's View group calls `panels.show(…)` (UI-19) rather than a tree-only toggle | `docs/stack.md`, `docs/workspace-ui.md` |
 
 Still open (catalog §6): how important ChessBase `.cbh` import is (#2), the
 target scale of 1M vs 10M+ games (#3), and whether play-vs-engine (the Fritz
@@ -194,17 +232,17 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
 ### Features (by catalog ID)
 - **Delivered:** INF-01…04 · CORE-01…04 · GAME-01…07, 16, 17 ·
   IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11 ·
-  ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16, 19
-  (Notation and Opening tree; Reference comes with OPEN-14) ·
+  ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16, 18, 19
+  (19: Notation and Opening tree; Reference comes with OPEN-14) ·
   QOL-01 (reopens the last database and remembers orientation, pane size,
   the active panel tab, analysis lines), 02, 03, 04, 05, 06, 07, 08, 10.
 - **Partial:**
   - DB-04: players, events, sites and annotators have lists with counts,
     "show games" and rename/merge. No sources or teams, and no per-player
     dossier (REF-01 is P2).
-  - DB-07: recent databases (toolbar menu, empty-list shortcuts), close,
-    size and deleted count in the status bar. No library window, folders or
-    favourites.
+  - DB-07: recent databases (the ribbon's Recent ▾ and reference dropdown,
+    empty-list shortcuts), close, size and deleted count in the status bar.
+    No library window, folders or favourites (T-3 in docs/workspace-ui.md).
   - GAME-08: clocks show as tooltips; no time graph.
   - ENG-01: engines can be added, removed, made default and configured
     (common options plus "show all"), but there are no per-engine profiles.
@@ -270,8 +308,113 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   (unchanged): tree 101 ms at the start and after 1.e4, position search
   20 ms.
 
+### New: the ribbon (UI-18, 2026-09-30)
+- **What the user sees:** one band under the game tabs (where
+  docs/workspace-ui.md puts it), in six labelled groups. Large buttons have
+  the icon over the label; small ones icon and label on one line, up to
+  three to a column; each group's caption is under it.
+  - **Clipboard:** Paste game (large), Paste position, Copy game, Copy
+    position, Board image ▾.
+  - **Game:** New game ▾ (large split button: the top does New game, the
+    arrow opens "New game (Ctrl+N)" and "Set up position…"), Save, Save
+    as new, Undo, Redo.
+  - **Reference:** the reference dropdown, Find games (the games reaching
+    the position in the reference database, which opens in the list, or in
+    the open database when none is set), Go to position….
+  - **Analysis:** Analyze (pressed while the engine runs), Blunder check…,
+    Engines…. **Database:** New database, Open database, Recent ▾, Import
+    PGN, Export PGN. **View:** Opening tree (pressed while shown).
+  - Titles keep the old shortcut hints; disabled states are as before.
+- **Narrow windows:** from the right, one group at a time, small buttons
+  drop their labels (icon only; the label stays the `aria-label` and the
+  tooltip), then groups collapse into a button named after the group that
+  opens it as a dropdown. In `ribbon.js`: everything labelled at 1,500 px;
+  View compact at 1,200; Analysis to View at 1,000; all compact at 800 and
+  720; Reference to View collapsed at 640; all collapsed at 480. About
+  440 px is the floor: narrower, the row runs off the right edge. How:
+  `Ribbon.svelte` renders each group in each form in a hidden, inert copy
+  (`.ribbon .measure`), and a ResizeObserver on the bar and on that copy
+  picks the roomiest level that fits, by arithmetic. The live buttons are
+  never re-laid out to measure, so there's no flicker and no
+  ResizeObserver loop; fonts loading or a label changing refit too.
+- **Keyboard:** Tab reaches every button in screen order. Dropdowns
+  (`RibbonDropdown.svelte`) follow the menu button pattern: Enter, Space
+  or ↓ opens and focuses the first item, ↑/↓/Home/End move, Escape closes
+  and returns the focus to the button (an inner menu first, then its
+  collapsed group). A click on an item closes the dropdown, except items
+  marked `data-keep-open` (the board image sizes, Recent's ×). Letters
+  don't start a typed move while a dropdown has the focus. **Ctrl+N** (Cmd+N)
+  is New game: in the tab unless it has unsaved changes, as before. It was
+  free (App.svelte's handler and every component's were checked).
+- **Clipboard (IO-08):**
+  - **Paste game** reads the clipboard in Rust (`clipboard_text`; empty or
+    an image is `null`) and calls `paste_game(session, text)`. The first
+    game with a move or a tag with a known value opens as a new unsaved
+    game, in place of the session's game unless it has unsaved changes (Rust
+    checks), else in a new session, which the frontend shows in a new tab.
+    Notices: "Pasted the game." or "Pasted the first of 5 games.", plus the
+    first problem ("The main line stops at 2.Ke3, …"); no game: "The
+    clipboard has no PGN game. Copy a game with its moves, or use Paste
+    position for a FEN."; a game that can't be read (a variant, a bad FEN
+    tag): "Can't open the pasted game. It's a Crazyhouse game, …".
+  - **Paste position** does what Go to position… does with the clipboard's
+    text. **Copy game** and **Copy position** are the old Copy PGN and Copy
+    FEN, now written through Rust (`copy_text`): WebKit refuses
+    `navigator.clipboard.writeText` outside a user gesture, and Copy PGN
+    awaited the PGN first. Drivers fill the clipboard with `api.copyText`.
+  - **Ctrl+V** outside a text box tries a position, then a game; nothing:
+    "The clipboard has no game or position. Copy a PGN game, a FEN or a
+    Lichess link and try again." One change to the spec's order: text with
+    PGN tags is tried as a game first, so a game from a set-up position
+    opens with its moves instead of as its `[FEN]` tag's position. A lone
+    `[FEN "…"]` line still goes to the position (it's no game).
+  - `lib/paste.ts` holds the three flows; `FenPaste.svelte` calls
+    `pasteText`.
+- **Reference dropdown (DB-13, DB-07):** a select-like box with the
+  reference's name or "No reference database". Its menu: a "Recent
+  databases" section (`db.recent`, the open one included; the reference
+  too if it was never opened in the list), the current reference ticked,
+  gone ones disabled and marked "Not found", then "Choose a database…",
+  "Use the open database (<name>)" unless it's the reference already, and
+  "Stop using a reference database" (disabled with none). Sections are a
+  list, so favourites (T-3) can go first. Picking calls `db.setReference`;
+  the tree follows when its source is the reference. The tree's select
+  keeps two choices: the open database and the reference ("No reference
+  database", disabled, when there's none). The tooltip says "what the
+  opening tree reads" until the Reference tab (OPEN-14) exists; then use
+  the spec's "what the Reference tab and the opening tree read".
+- **Code:** `Ribbon.svelte` (groups as snippets, the fitting),
+  `RibbonButton.svelte`, `RibbonDropdown.svelte`, `ReferenceMenu.svelte`,
+  `Icon.svelte` with `lib/icons/lucide.ts` (28 icons, licence in
+  `lib/icons/COPYING`), `lib/paste.ts`; `RecentMenu` and `BoardImageMenu`
+  now use `RibbonDropdown`; `Toolbar.svelte` is gone. Rust:
+  `commands/clipboard.rs` (`clipboard_text`, `copy_text`) and `paste_game`
+  in `commands/game.rs` (`PastedGameDto`; it reads with chess-core's
+  `PgnReader`, and warnings are labelled with `chess_db::game_label`, now
+  public). `tree.referenceTarget` and `tree.findGames(full, target)` serve
+  the ribbon's Find games. Drivers get `notices` in `window.__chessdb`.
+- **Also fixed:** the game list's column minimums (~1,000 px) widened the
+  whole app in narrower windows, so `layout.js`'s "tiled" (960) and
+  "narrow" (720) sizes were really 1,000 px wide, with the toolbar and the
+  notation cut off at the window's edge. `.games` now has `min-width: 0`
+  and clips the list on the right; `layout.js` checks that nothing is wider
+  than the window and that the ribbon is one whole row.
+- **Merging with UI-19** (`ui-19-panel-tabs`, built in parallel):
+  - `Toolbar.svelte` is deleted here and edited there (Opening tree and Go
+    to position show the tab): keep the deletion and port those into the
+    ribbon. The View group then gets **Notation** and **Opening tree**
+    buttons calling `panels.show(…)`, with `aria-pressed` from
+    `panels.isShowing(…)`, replacing this branch's `tree.visible` toggle
+    (`tree.visible`/`tree.toggle()` are gone in UI-19). Reference (OPEN-14)
+    and Reset layout (UI-04) join it later. The View group is a snippet in
+    `Ribbon.svelte`; nothing else needs to change for more buttons.
+  - `gotoPosition.ts`: keep UI-19's version (it shows the tree tab).
+  - `App.svelte`, `AGENTS.md`, `basic.js`, `goto.js`, `tree.js`,
+    `layout.js`, `main.ts` and the catalog are edited on both branches.
+    The GTK_THEME line in AGENTS.md is word for word the same.
+
 ### New: board images (QOL-06, 2026-09-29)
-- **"Board image ▾"** (toolbar, after Copy FEN): Copy as PNG, Copy as SVG,
+- **"Board image ▾"** (the ribbon's Clipboard group): Copy as PNG, Copy as SVG,
   Save as file… (PNG or SVG by the extension; `.png` is added to a bare
   name), and a size: Small 320, Medium 480 (default) or Large 800 px,
   remembered (`boardImageSize`). The image is the position at the cursor as
@@ -361,7 +504,7 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
 
 ### Go to position (QOL-10, 2026-09-29)
 - **Ctrl+V** anywhere outside a text box with a FEN on the clipboard, or
-  **Go to position…** in the toolbar (a box to paste into). Accepted: a
+  **Go to position…** in the ribbon (a box to paste into). Accepted: a
   FEN (also only the placement, or placement plus side to move), a PGN
   FEN tag, an EPD line, a Lichess analysis link (`_` or `%20` for spaces).
 - The board goes to the move where the game on screen reaches the
@@ -374,7 +517,7 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   (reused for the dialog).
 
 ### What the user can do now (new this session)
-- **Analyze** (toolbar, Ctrl+Shift+A): Stockfish runs with 1–5 lines, depth,
+- **Analyze** (ribbon, Ctrl+Shift+A): Stockfish runs with 1–5 lines, depth,
   speed, WDL, and an eval bar beside the board. Click a move in a line to play
   up to it; **Add line** pastes it as a variation with `+0.35/22`.
 - **Blunder check…**: the engine checks every main-line move (0.3/1/3 s per
@@ -484,15 +627,26 @@ clocks and evals), 16-core laptop:
   legal-move dots, last move) under "Board appearance" in the nav bar, but
   only the cburnett piece set: more sets need vendored SVGs with checked
   licences (lichess's lila repo lists them in COPYING.md).
-- The toolbar needs about 1,420 px for one row (measured 2026-09-29); the
-  default window is 1,440, so one more toolbar button wraps it there. That's
-  why the welcome guide's "?" is in the status bar.
-- The toolbar wraps to two rows in windows narrower than about 1,400 px, and the nav row
-  (now with next/previous game) is wider than very small boards. The layout
-  driver passes at all five sizes.
-- Panel tabs (UI-19): the toolbar can show the Opening tree tab but has no
-  "Notation" button (the ribbon's View group, UI-18, adds both); the tab
-  strip gets back. The layout's sizes aren't used before docking (UI-04).
+- The ribbon (UI-18) shows every label from 1,200–1,280 px up and fits any
+  window from about 440 px (all groups collapsed); the old toolbar's
+  wrapping below 1,400 px is gone (the toolbar itself is gone, replaced by
+  the ribbon in the UI-19/UI-18 merge). It's 97 px tall against the
+  toolbar's ~36, so in short windows (the 1600×520 layout size) the board
+  is at its 160 px minimum. Hiding the captions in short windows would win
+  back ~16 px if that matters.
+- The nav row under the board (with next/previous game, ~444 px) is wider
+  than small boards. At 720 px wide it and the notation's 320 px minimum
+  need ~46 px more than the window, so the notation's right edge is cut
+  off. It was hidden until UI-18 because the game list made the whole app
+  1,000 px wide at that size. Making Flip board an icon button would fix
+  it. The layout driver passes at all six sizes.
+- Switching databases right after an import into the first can log
+  "database 1 not found" from the index loop of the database just closed
+  (seen in `ribbon.js`, which creates two databases in a row); no notice
+  stays up.
+- Panel tabs (UI-19): the layout's sizes aren't used before docking
+  (UI-04); the right side always takes the width the board leaves and the
+  list keeps its own `listShare` divider.
 - `CommentDialog.svelte` is unused. The user hasn't approved deleting it.
   (`FenDialog.svelte`, also unused before, is the "Go to position" dialog
   now.)
@@ -526,9 +680,18 @@ clocks and evals), 16-core laptop:
   on macOS (`.app` and DMG) and Windows (MSI and NSIS installers), but
   neither was installed and clicked through; on Windows the release exe
   starts. Linux bundles were never built.
-- Light mode: only `panels.js` and `layout.js` were screenshotted in it
-  (2026-09-30, with `GTK_THEME=Adwaita`, see AGENTS.md); the other
-  drivers' screens haven't been.
+- Light mode: only `panels.js`, `ribbon.js` and `layout.js` were
+  screenshotted in it (2026-09-30/10-01, `GTK_THEME=Adwaita`, see
+  AGENTS.md); the other drivers' screens haven't been.
+- The ribbon (UI-18) with real input: `ribbon.js` clicks with `.click()`
+  and sends keydowns itself, so a real Tab walk, a real Ctrl+N (WebView2
+  debug builds keep the browser's shortcuts on; check that Ctrl+N doesn't
+  also open a window there) and real Escape focus handling on macOS (where
+  a click doesn't focus a button) are untested. Reading the clipboard
+  (Paste game, Paste position) was only tried on the private sway display
+  (arboard over Wayland data-control); Windows, macOS and GNOME (no
+  data-control: arboard needs XWayland there) are untested, like B10 in
+  `docs/windows-testing.md`.
 - Board images (QOL-06) pasted into real programs: on Linux only
   `wl-paste` on the private display read them. Windows and macOS clipboards
   are untested (B10 in `docs/windows-testing.md`); the native save dialog
@@ -542,22 +705,26 @@ clocks and evals), 16-core laptop:
 
 Recommended order:
 
-1. **Workspace UI (agreed 2026-09-30):** build [docs/workspace-ui.md](docs/workspace-ui.md)
-   in its order: UI-19 panel tabs, UI-18 ribbon (with IO-08 paste game and
-   the reference dropdown), OPEN-14 Reference tab, UI-04 docking.
-1. **Ask the user** about open question #3 (1M vs 10M+ games), and
+1. **Workspace UI (agreed 2026-09-30):** [docs/workspace-ui.md](docs/workspace-ui.md)'s
+   steps 1 (UI-19 panel tabs) and 2 (UI-18 ribbon, with IO-08 paste game and
+   the reference dropdown) are built and merged (2026-10-01; see
+   [New: panel tabs](#new-panel-tabs-ui-19-2026-09-30) and
+   [New: the ribbon](#new-the-ribbon-ui-18-2026-09-30)). Next: step 3,
+   OPEN-14 (the Reference tab, most of the Rust work), then step 4, UI-04
+   (docking).
+2. **Ask the user** about open question #3 (1M vs 10M+ games), and
    whether to set up CI on the GitHub repo.
-2. **P1 polish left (on hold, the user said not now):**
+3. **P1 polish left (on hold, the user said not now):**
    - UI-01 piece sets: vendor a few SVG sets with GPL-compatible licences
      (check lichess-org/lila's COPYING.md per set) and add a picker to
      "Board appearance".
-3. **Housekeeping:** CI on GitHub Actions (Linux/Windows/macOS: fmt,
+4. **Housekeeping:** CI on GitHub Actions (Linux/Windows/macOS: fmt,
    clippy, tests, svelte-check, `tauri build`). CI needs
    `scripts/fetch-stockfish.sh <triple>` before a bundled build.
-4. **Windows:** the agent on the Windows PC works through
+5. **Windows:** the agent on the Windows PC works through
    [docs/windows-testing.md](docs/windows-testing.md) and sends PRs; they
    are reviewed here with the Linux smoke harness before merging.
-5. Catalog Phase 3 (P2) has begun: QOL-04, 06, 07, 08 and 10 are in. Next:
+6. Catalog Phase 3 (P2) has begun: QOL-04, 06, 07, 08 and 10 and UI-18 are in. Next:
    ENG-04/06/07/08/14, ANL-02/03/06, OPEN-02/03/05, REF-01/02, NET-01/07,
    SRCH-05/06/08/12… DB-14 (clip database) and PLAY-11 now have DB-06's copy
    to build on; IO-09 (drop PGN files on the window) can use Tauri's file

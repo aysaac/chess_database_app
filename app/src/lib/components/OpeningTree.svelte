@@ -23,26 +23,13 @@
   const data = $derived(tree.current);
   const pct = (n: number, of: number) => (of ? Math.round((n / of) * 100) : 0);
 
-  // The source picker: the open database, the reference database, and
-  // actions that set the reference (they don't stay selected).
+  // The source picker: the open database or the reference database. The
+  // reference itself is chosen in the ribbon (DB-13).
   const sourceValue = $derived(tree.target?.reference ? "reference" : "open");
 
-  async function onSource(e: Event) {
-    const select = e.currentTarget as HTMLSelectElement;
-    const value = select.value;
-    select.value = sourceValue;
-    if (value === "open" || value === "reference") {
-      tree.source = value;
-    } else if (value === "choose") {
-      await db.chooseReference();
-      if (db.reference?.info) tree.source = "reference";
-    } else if (value === "use-open" && db.info) {
-      await db.setReference(db.info.path);
-      if (db.reference?.info) tree.source = "reference";
-    } else if (value === "clear") {
-      await db.setReference(null);
-      tree.source = "open";
-    }
+  function onSource(e: Event) {
+    const value = (e.currentTarget as HTMLSelectElement).value;
+    if (value === "open" || value === "reference") tree.source = value;
   }
 
   function scoreTitle(r: TreeRowDto) {
@@ -63,16 +50,9 @@
       onchange={onSource}
     >
       <option value="open" disabled={!db.info}>{db.info?.name ?? "No database open"}</option>
-      {#if db.reference?.info}
-        <option value="reference">{db.reference.name} (reference)</option>
-      {/if}
-      <option value="choose">Choose reference database…</option>
-      {#if db.info && db.reference?.info?.handle !== db.info.handle}
-        <option value="use-open">Use {db.info.name} as reference</option>
-      {/if}
-      {#if db.reference}
-        <option value="clear">Stop using a reference database</option>
-      {/if}
+      <option value="reference" disabled={!db.reference?.info}
+        >{db.reference?.info ? `${db.reference.name} (reference)` : "No reference database"}</option
+      >
     </select>
     <button
       disabled={!tree.target || !game.view || db.searching}
@@ -85,7 +65,8 @@
 
   {#if !tree.target}
     <p class="note">
-      Open a database, or choose a reference database above, to see which moves were played here.
+      Open a database, or choose a reference database in the ribbon's Reference group, to see which moves
+      were played here.
     </p>
   {:else if data && !data.indexed}
     <p class="note">

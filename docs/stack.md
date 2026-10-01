@@ -13,6 +13,8 @@ Status: **decided 2026-09-25** (frontend, license and platform policy added the 
 | Platforms | **Linux first**, following the [cross-platform rules](#cross-platform-rules) | One codebase. Windows/macOS CI gets added once the repo is on GitHub |
 | Programmatic access (CLI, local API, remote control of the running app, MCP) | **Deferred** | Not needed for now; see [Deferred](#deferred-programmatic-access) |
 | Board images (QOL-06) | **Drawn in Rust** (`crates/chess-diagram`): an SVG built by hand, rasterized with `resvg`; put on the clipboard by `tauri-plugin-clipboard-manager` (arboard) | The same image on every platform and in unit tests, without a webview. The SVG is only paths: the cburnett pieces from chessground and coordinate labels outlined (with `ttf-parser`) from an embedded IBM Plex Sans Condensed, so it needs no fonts wherever it's pasted. WebKitGTK's async clipboard isn't dependable for images; arboard writes `image/png` on Wayland (data-control), X11, Windows and macOS. The frontend has no clipboard permissions: only Rust writes to it |
+| Clipboard text (IO-08, UI-18) | **Read and written in Rust** through the same plugin: `clipboard_text`, `copy_text` | A page only reads the clipboard in a paste event (none fires in WebKit where nothing is editable), and WebKit only lets it write during a user gesture, which ends at the first `await` (Copy game fetches the PGN first). So the ribbon's Paste game/Paste position read through Rust, and Copy game/Copy position write through it; Ctrl+V still uses the paste event (`FenPaste.svelte`) |
+| Ribbon icons (UI-18) | **Lucide**, vendored: only the icons used, as inline SVG markup in `app/src/lib/icons/lucide.ts` (licence in `COPYING` there) | ISC (some icons MIT, from Feather), GPL-compatible, maintained (lucide-static 1.49, not deprecated). Strokes use `currentColor`, so they follow the theme. No npm dependency for 28 icons |
 
 ## Versions in use
 
@@ -25,6 +27,7 @@ Status: **decided 2026-09-25** (frontend, license and platform policy added the 
 | Board | `@lichess-org/chessground` 10.2 (the old `chessground` npm package is deprecated) |
 | Rust → TypeScript types | `ts-rs` 12, generated into `app/src/lib/bindings/` by `npm run bindings` |
 | Board images | `resvg` 0.48 (no default features: no text, fonts or raster images), `ttf-parser` 0.25, `tauri-plugin-clipboard-manager` 2.3 |
+| Icons | Lucide (lucide-static 1.49.0), vendored, not a dependency |
 
 ## How Tauri splits the work
 

@@ -1,10 +1,10 @@
 <script lang="ts">
-  // QOL-10: Ctrl+V outside a text box goes to the position of a FEN on the
-  // clipboard. A page only gets the clipboard in a paste event, and WebKit
-  // fires none where nothing is editable, so Ctrl+V first moves the focus
-  // to this hidden text box: the paste lands here and the focus goes back.
-  import { goToPosition } from "../gotoPosition";
-  import { notices } from "../stores/notify.svelte";
+  // Ctrl+V outside a text box goes to the position of a FEN on the clipboard
+  // (QOL-10), or opens the PGN game on it (IO-08; see `pasteText`). A page
+  // only gets the clipboard in a paste event, and WebKit fires none where
+  // nothing is editable, so Ctrl+V first moves the focus to this hidden text
+  // box: the paste lands here and the focus goes back.
+  import { pasteText } from "../paste";
 
   let sink: HTMLTextAreaElement;
   let returnTo: HTMLElement | null = null;
@@ -44,16 +44,7 @@
     e.preventDefault();
     giveBack();
     const text = e.clipboardData?.getData("text/plain") ?? "";
-    if (text.trim()) void paste(text);
-  }
-
-  async function paste(text: string) {
-    const problem = await goToPosition(text);
-    if (problem?.kind === "noFen") {
-      notices.show("There's no FEN on the clipboard. Copy a position's FEN, then press Ctrl+V to go to it.");
-    } else if (problem?.kind === "invalid") {
-      notices.show(`Can't go to the pasted position: ${problem.error}.`, "error");
-    }
+    if (text.trim()) void pasteText(text);
   }
 </script>
 

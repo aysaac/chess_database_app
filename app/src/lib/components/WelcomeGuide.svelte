@@ -163,13 +163,13 @@
           {engine.detected ? "Found automatically" : "Added by you"}: {engine.path}
         </p>
         <p>
-          It analyses the position on the board (<strong>Analyze</strong> in the toolbar, or <kbd>Ctrl</kbd>+<kbd
+          It analyses the position on the board (<strong>Analyze</strong> in the ribbon, or <kbd>Ctrl</kbd>+<kbd
             >Shift</kbd
           >+<kbd>A</kbd>) and checks whole games for mistakes (<strong>Blunder check…</strong>).
         </p>
         {#if analysis.engines.length > 1}
           <p class="soft">
-            You have {analysis.engines.length} engines; <strong>Engines…</strong> in the toolbar chooses the default.
+            You have {analysis.engines.length} engines; <strong>Engines…</strong> in the ribbon chooses the default.
           </p>
         {/if}
       {:else}

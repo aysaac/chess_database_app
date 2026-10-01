@@ -7,6 +7,7 @@ import type { HeadersDto } from "../bindings/HeadersDto";
 import type { ImageFormatDto } from "../bindings/ImageFormatDto";
 import type { NotationDto } from "../bindings/NotationDto";
 import type { NotationMoveDto } from "../bindings/NotationMoveDto";
+import type { PastedGameDto } from "../bindings/PastedGameDto";
 import type { ShapeDto } from "../bindings/ShapeDto";
 import type { StepDto } from "../bindings/StepDto";
 import type { VariationPolicyDto } from "../bindings/VariationPolicyDto";
@@ -312,6 +313,37 @@ class GameStore {
     }
   }
 
+  /**
+   * Opens the first PGN game in `text` (IO-08 "paste game") as a new
+   * unsaved game: in this tab unless it has unsaved changes, else in a new
+   * tab (Rust decides, with the same rule as opening from the list). Null
+   * if that failed; the error is shown.
+   */
+  async pasteGame(text: string): Promise<PastedGameDto | null> {
+    try {
+      const result = await api.pasteGame(this.session, text);
+      if (result.kind === "game") {
+        const view = result.view;
+        const tab = this.tabs.find((t) => t.session === view.session);
+        if (tab) {
+          // The session now holds the pasted game.
+          tab.view = view;
+          tab.notation = view.notation;
+          tab.listIndex = null;
+          tab.collapsed = [];
+        } else {
+          this.tabs.push({ session: view.session, view, notation: view.notation, listIndex: null, collapsed: [] });
+        }
+        this.activeSession = view.session;
+        this.#resetTransient();
+      }
+      return result;
+    } catch (e) {
+      notices.error(e);
+      return null;
+    }
+  }
+
   /** Switches to another open game; a running analysis follows it. */
   async activate(session: number) {
     if (session === this.activeSession || !this.tabs.some((t) => t.session === session)) return;
@@ -581,21 +613,23 @@ class GameStore {
     }
   }
 
+  /** Copy game (IO-08): the game as PGN, put on the clipboard from Rust. */
   async copyPgn() {
     const session = this.session;
     if (session === null) return;
     try {
-      await navigator.clipboard.writeText(await api.gamePgn(session));
+      await api.copyText(await api.gamePgn(session));
       notices.show("Copied the game as PGN");
     } catch (e) {
       notices.error(e);
     }
   }
 
+  /** Copy position (IO-08): the FEN of the position on the board. */
   async copyFen() {
     if (!this.view) return;
     try {
-      await navigator.clipboard.writeText(this.view.fen);
+      await api.copyText(this.view.fen);
       notices.show("Copied the position as FEN");
     } catch (e) {
       notices.error(e);

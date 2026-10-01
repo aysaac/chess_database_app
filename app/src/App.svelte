@@ -10,8 +10,8 @@
   import MoveEntry from "./lib/components/MoveEntry.svelte";
   import MovePopovers from "./lib/components/MovePopovers.svelte";
   import PanelGroup from "./lib/components/PanelGroup.svelte";
+  import Ribbon from "./lib/components/Ribbon.svelte";
   import StatusBar from "./lib/components/StatusBar.svelte";
-  import Toolbar from "./lib/components/Toolbar.svelte";
   import WelcomeGuide from "./lib/components/WelcomeGuide.svelte";
   import { analysis } from "./lib/stores/analysis.svelte";
   import { board as boardPrefs } from "./lib/stores/board.svelte";
@@ -116,7 +116,8 @@
       return;
     }
     // Typing a move (UI-02): a file or piece letter, O or a digit starts it,
-    // unless the list has focus or a picker on the board takes keys.
+    // unless the list or an open ribbon menu has focus or a picker on the
+    // board takes keys.
     const target = e.target as HTMLElement | null;
     const pickerOpen = game.pendingPromotion || game.pendingChoice || game.branch;
     if (
@@ -125,7 +126,7 @@
       /^[a-hknqroKQRBNO0-9]$/.test(e.key) &&
       game.view &&
       !pickerOpen &&
-      !target?.closest?.(".games")
+      !target?.closest?.(".games, [data-popup]")
     ) {
       e.preventDefault();
       game.typing = e.key;
@@ -137,6 +138,8 @@
           y: () => game.redo(),
           s: () => (e.shiftKey ? game.saveAsNew() : game.save()),
           f: () => game.flip(),
+          // New game (UI-18), in this tab unless it has unsaved changes.
+          n: () => !e.shiftKey && game.newGame(),
           t: () => game.newGame(null, "tab"),
           w: () => game.activeSession !== null && game.closeTab(game.activeSession),
           arrowup: () => game.openAdjacent(-1),
@@ -182,8 +185,8 @@
      always the default one: Notation and Opening tree as tabs on the right,
      above the engine analysis, and the game list at the bottom. -->
 <div class="app" style:--list-h="{listShare * 100}%" style:--board="{boardSize}px">
-  <Toolbar />
   <GameTabs />
+  <Ribbon />
 
   <main class="workspace" bind:this={workspace}>
     <section class="board-column" aria-label="Board">
@@ -290,9 +293,13 @@
     background: var(--felt-soft);
   }
 
+  /* The list's columns need about 1,000 px; in a narrower window they're cut
+     off at the right instead of widening the whole app past the window. */
   .games {
     display: flex;
     flex-direction: column;
+    min-width: 0;
     min-height: 0;
+    overflow-x: clip;
   }
 </style>

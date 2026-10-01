@@ -1,87 +1,44 @@
 <script lang="ts">
   import { board, IMAGE_SIZES } from "../stores/board.svelte";
   import { game } from "../stores/game.svelte";
+  import RibbonDropdown from "./RibbonDropdown.svelte";
 
   // Board images (QOL-06): the position on screen, with its highlights and
-  // drawings, copied or saved as PNG or SVG.
-  let open = $state(false);
-  let root: HTMLDivElement;
-  let trigger: HTMLButtonElement;
-
-  function close() {
-    open = false;
-    trigger.focus();
-  }
-
-  function run(action: () => unknown) {
-    close();
-    action();
-  }
-
-  function onWindowDown(e: MouseEvent) {
-    if (open && !root.contains(e.target as Node)) open = false;
-  }
+  // drawings, copied or saved as PNG or SVG. In the ribbon's Clipboard group.
+  let { compact = false }: { compact?: boolean } = $props();
 </script>
 
-<svelte:window onmousedown={onWindowDown} onkeydown={(e) => open && e.key === "Escape" && close()} />
-
-<div class="image-menu" bind:this={root}>
-  <button
-    bind:this={trigger}
-    aria-haspopup="menu"
-    aria-expanded={open}
-    disabled={!game.view}
-    title="Copy or save the board as a picture"
-    onclick={() => (open = !open)}
-  >
-    Board image ▾
-  </button>
-  {#if open}
-    <div class="menu" role="menu" aria-label="Board image">
-      <button role="menuitem" onclick={() => run(() => game.copyBoardImage("png"))}>Copy as PNG</button>
-      <button role="menuitem" onclick={() => run(() => game.copyBoardImage("svg"))}>Copy as SVG</button>
-      <button role="menuitem" onclick={() => run(() => game.saveBoardImage())}>Save as file…</button>
-      <div class="sep" role="separator"></div>
-      <div class="sizes" role="group" aria-label="Image size">
-        {#each IMAGE_SIZES as o (o.size)}
-          <button
-            role="menuitemradio"
-            aria-checked={board.imageSize === o.size}
-            onclick={() => (board.imageSize = o.size)}
-          >
-            <span class="mark" aria-hidden="true">{board.imageSize === o.size ? "✓" : ""}</span>
-            {o.label}
-            <span class="px">{o.size} px</span>
-          </button>
-        {/each}
-      </div>
-    </div>
-  {/if}
-</div>
+<RibbonDropdown
+  class="image-menu"
+  icon="image"
+  label="Board image"
+  title="Copy or save the board as a picture"
+  menuLabel="Board image"
+  {compact}
+  disabled={!game.view}
+>
+  <button role="menuitem" onclick={() => game.copyBoardImage("png")}>Copy as PNG</button>
+  <button role="menuitem" onclick={() => game.copyBoardImage("svg")}>Copy as SVG</button>
+  <button role="menuitem" onclick={() => game.saveBoardImage()}>Save as file…</button>
+  <div class="sep" role="separator"></div>
+  <div class="sizes" role="group" aria-label="Image size">
+    {#each IMAGE_SIZES as o (o.size)}
+      <!-- Picking a size keeps the menu open, to copy right after. -->
+      <button
+        role="menuitemradio"
+        data-keep-open
+        aria-checked={board.imageSize === o.size}
+        onclick={() => (board.imageSize = o.size)}
+      >
+        <span class="mark" aria-hidden="true">{board.imageSize === o.size ? "✓" : ""}</span>
+        {o.label}
+        <span class="px">{o.size} px</span>
+      </button>
+    {/each}
+  </div>
+</RibbonDropdown>
 
 <style>
-  .image-menu {
-    position: relative;
-  }
-
-  .menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    z-index: 60;
-    display: grid;
-    width: 210px;
-    padding: 5px;
-    background: var(--paper);
-    border: 1px solid var(--rule);
-    border-radius: 6px;
-    box-shadow: 0 6px 20px color-mix(in srgb, var(--ink) 18%, transparent);
-  }
-
-  .menu button {
-    text-align: left;
-  }
-
   .sep {
     margin: 4px 2px;
     border-top: 1px solid var(--rule);

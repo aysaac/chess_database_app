@@ -553,7 +553,7 @@ If it fails, give it more time rather than removing the check.
 
 - [ ] Done
 
-"Board image ▾" in the toolbar copies the board through the clipboard
+"Board image ▾" in the ribbon copies the board through the clipboard
 plugin (arboard: `CF_DIBV5` plus a PNG format on Windows), which Linux
 can't check. With real input, on a position with an arrow and a circle
 (right-drag and right-click on the board):
@@ -568,6 +568,27 @@ can't check. With real input, on a position with an arrow and a circle
   a name without an extension gets `.png`.
 - `scripts\smoke\image.js` passes under `run.ps1` (it doesn't read the
   clipboard there; the Linux harness does).
+
+### B11. The ribbon and the clipboard (UI-18, IO-08)
+
+- [ ] Done
+
+The ribbon reads and writes clipboard text through the clipboard plugin
+(`clipboard_text`, `copy_text`), which Linux checked only on the private
+sway display. With real input:
+
+- **Copy game**, then paste into Notepad: the game's PGN. Copy a game from
+  a Lichess page, then **Paste game**: it opens with its moves; copy two
+  games from a PGN file in Notepad: "Pasted the first of 2 games."
+- **Paste position** with a FEN copied in Notepad, and **Ctrl+V** outside a
+  text box with a PGN game, then with a FEN.
+- **Ctrl+N** opens a new game, and only that: no second window, in a debug
+  build too (debug builds keep WebView2's browser shortcuts, A4).
+- Tab walks the ribbon left to right; in a menu, ↑/↓, Enter and Escape
+  work and Escape puts the focus back on the menu's button.
+- Narrow the window: labels go first, then groups collapse into dropdowns
+  that open and work. At 120% scaling nothing in the ribbon is cut off.
+- `scripts\smoke\ribbon.js` passes under `run.ps1`.
 
 ## Not on this list (decisions for the user)
 

@@ -56,6 +56,16 @@ class TreeStore {
     return db.info ? { handle: db.info.handle, name: db.info.name, reference: false } : null;
   }
 
+  /**
+   * The reference database when one is open, else the open database: what
+   * the ribbon's Reference group (DB-13) searches with Find games.
+   */
+  get referenceTarget(): TreeTarget | null {
+    const ref = db.reference?.info;
+    if (ref) return { handle: ref.handle, name: ref.name, reference: true };
+    return db.info ? { handle: db.info.handle, name: db.info.name, reference: false } : null;
+  }
+
   /** Loads the tree of the position on the board, while the tab is showing. */
   async refresh() {
     if (!this.showing) return;
@@ -81,11 +91,11 @@ class TreeStore {
   }
 
   /**
-   * Lists the games reaching the position (`full`: searching every move).
-   * For the reference database, the list switches to it first.
+   * Lists the games of `target` (default: the tree's database) reaching the
+   * position (`full`: searching every move). For the reference database,
+   * the list switches to it first.
    */
-  async findGames(full = false) {
-    const target = this.target;
+  async findGames(full = false, target = this.target) {
     const session = game.view?.session;
     if (!target || session === undefined) return;
     if (target.reference && db.info?.handle !== target.handle && db.reference) {

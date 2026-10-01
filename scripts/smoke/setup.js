@@ -43,6 +43,9 @@
   try {
     await log("start");
     await game.newGame();
+    // In the ribbon, Set up position… is in the New game menu (UI-18).
+    $(".ribbon > .groups button[aria-label='More ways to start a game']").click();
+    await until(() => button("Set up position…"), "the New game menu");
     button("Set up position…").click();
     await until(() => pieces() === 32, "the editor shows the current position");
     await until(() => status().startsWith("32 pieces"), "a legal position: " + status());

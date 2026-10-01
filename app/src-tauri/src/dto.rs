@@ -936,6 +936,27 @@ pub enum GotoPositionDto {
     Invalid { fen: String, error: String },
 }
 
+/// A PGN game pasted from the clipboard (IO-08 "paste game").
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum PastedGameDto {
+    /// The text's first game, opened as a new unsaved game: in the session
+    /// asked for unless it had unsaved changes, else in a new session
+    /// (`view.session` says which).
+    Game {
+        view: Box<GameViewDto>,
+        /// Games in the text (the first one is the one opened).
+        games: u32,
+        /// Problems in the opened game, as an import would list them.
+        warnings: Vec<ImportWarningDto>,
+    },
+    /// The text holds no game: no moves and no tags. `reason` says why a
+    /// game in it couldn't be read, if it had one (an unsupported variant,
+    /// a bad FEN tag).
+    NoGame { reason: Option<String> },
+}
+
 /// A problem found in one game while importing.
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

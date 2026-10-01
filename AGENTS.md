@@ -18,7 +18,7 @@ Windows and macOS.
 | `crates/chess-engine` | UCI engine host, analysis driver thread, blunder check (`review.rs`); `src/bin/fake_uci.rs` is a toy engine for tests |
 | `crates/chess-diagram` | Board images (QOL-06): a position as SVG or PNG, drawn like the app's board (resvg); vendored pieces and font in `data/` (licences in `data/COPYING`) |
 | `app/src-tauri` | Tauri shell: commands (`src/commands/`), DTOs (`src/dto.rs`), view building (`src/view.rs`), state (`src/state.rs`), engines and analysis (`src/engines.rs`), settings (`src/settings.rs`) |
-| `app/src` | Svelte UI: `lib/api.ts` (typed commands), `lib/stores/` (state), `lib/components/`, `lib/bindings/` (generated types) |
+| `app/src` | Svelte UI: `lib/api.ts` (typed commands), `lib/stores/` (state), `lib/components/` (the ribbon is `Ribbon.svelte`), `lib/bindings/` (generated types), `lib/icons/` (vendored Lucide icons; licence in `COPYING`) |
 | `docs/feature-catalog.md` | Every ChessBase/Fritz feature, with IDs (`DB-01`, `ENG-02`…), priority tiers P0–P5 and dependencies. **Features are referred to by these IDs** |
 | `docs/stack.md` | Stack decisions and the cross-platform rules |
 | `docs/file-format.md` | On-disk database format spec and benchmark numbers |
@@ -76,7 +76,7 @@ desktop, so it's safe to run while they work.
 
 - **How it works:** debug builds only. `app/src-tauri/src/lib.rs` evaluates the file in
   `CHESSDB_SMOKE` after page load. `app/src/main.ts` exposes
-  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, onboarding, api, invoke }`. The driver calls the
+  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, onboarding, notices, api, invoke }`. The driver calls the
   stores exactly as the UI does and reports through the `dev_log` command
   as `[smoke] …` lines.
 - **Default driver:** `scripts/smoke/basic.js`. It imports the fixtures, sorts, opens a
@@ -90,8 +90,9 @@ desktop, so it's safe to run while they work.
 - **Layout driver:** `scripts/smoke/layout.js` resizes `#app` to several window
   sizes (tiled, full screen, narrow, short) and checks the board stays square,
   inside its column and clear of the notation, with the promotion picker
-  inside the board and the panel tabs fitting their column. Run it after
-  layout changes.
+  inside the board, nothing wider than the window, the panel tabs fitting
+  their column and the ribbon (UI-18) on one row with every group inside
+  it. Run it after layout changes.
 - **Feature drivers:** `engine.js` (analysis, lines, blunder check; needs
   `scripts/fetch-stockfish.sh`), `search.js` (filters, header search, tabs,
   name lists, compaction, recent databases), `tree.js` (position index,
@@ -107,8 +108,12 @@ desktop, so it's safe to run while they work.
   QOL-04/DB-06), `panels.js` (UI-19: the Notation and Opening tree tabs,
   the eval graph in Notation, the tree querying only while its tab shows,
   the move popovers from the tree tab, the keyboard, and the active tab
-  restored after a reload, also from the old `treeVisible` pref).
-  `search.js`, `tree.js` and `view.js` time the 1M-game
+  restored after a reload, also from the old `treeVisible` pref),
+  `ribbon.js` (UI-18 and IO-08: the groups, Copy game then Paste game
+  through the real clipboard, Paste position, the messages for a clipboard
+  without a game, Ctrl+V with a PGN, the New game menu and Ctrl+N, the
+  reference dropdown, and narrower widths: labels drop, then groups
+  collapse into dropdowns). `search.js`, `tree.js` and `view.js` time the 1M-game
   database when `__BIG__`; `drag.js` times copying it.
 - **Reloading:** the harness runs the driver again after every page load,
   so a driver can test what a restart restores with `location.reload()`.
@@ -117,7 +122,9 @@ desktop, so it's safe to run while they work.
 - **Clipboard:** a driver logs `clip:<name>` to have the harness save the
   private display's clipboard (`wl-paste`) as `<out-dir>/clips/<name>.png`
   or `.txt`, and print the types on offer. Linux only; it never reads the
-  user's clipboard (not with `SMOKE_VISIBLE`). Look at the images.
+  user's clipboard (not with `SMOKE_VISIBLE`). Look at the images. Drivers
+  put text on the clipboard with `api.copyText`, as Copy game does: WebKit
+  refuses `navigator.clipboard.writeText` without a real user gesture.
 - **First run:** every run starts with fresh settings, so the harness writes
   `{"welcomeDone": true}` first and the welcome guide stays closed. A driver
   that contains the text `smoke: first-run` (only `onboarding.js`) starts
@@ -347,6 +354,16 @@ stay identical before, during and after the run.
   outside it, like the move popovers in `MovePopovers.svelte`. Panels stay
   mounted while hidden; anything that queries must check
   `panels.isShowing(id)`, as the opening tree does.
+- **The ribbon has a hidden copy of itself.** `Ribbon.svelte` renders every
+  group in each form (full, compact, collapsed) in an inert, invisible
+  `.ribbon .measure` to measure them, so it never has to try forms on the
+  live buttons. Drivers look for ribbon buttons under `.ribbon > .groups`
+  (by `aria-label`, which every ribbon button has); a plain
+  `querySelectorAll("button")` also finds the copies, after the live ones.
+- **WebKit only writes the clipboard during a user gesture**, and the
+  gesture ends at the first `await`. Copy game and Copy position write
+  through Rust (`copy_text`), and the paste buttons read through it
+  (`clipboard_text`); only Ctrl+V uses the page's paste event.
 - **Svelte 5 props are live getters.** A dialog shown by `{#if thing}` with
   `prop={thing.x}` throws once its `onClose` sets `thing = null` and it then
   reads `prop`. Copy props into locals before calling `onClose`

@@ -104,10 +104,11 @@
     expect(button("Search every move of every game"), "the full-search link");
     await shot("g03-endgame-new-tab");
 
-    // Text without a FEN, a FEN of an illegal position, an empty clipboard.
+    // Text with neither a FEN nor a game (a PGN game opens since IO-08; see
+    // ribbon.js), a FEN of an illegal position, an empty clipboard.
     const fen = game.view.fen;
-    pressPaste("1. e4 e5 2. Nf3 Nc6 *", document.body);
-    await until(() => notice().includes("There's no FEN on the clipboard"), "no-FEN notice, got " + notice());
+    pressPaste("hello world", document.body);
+    await until(() => notice().startsWith("The clipboard has no game or position"), "nothing-to-paste notice, got " + notice());
     pressPaste("8/8/8/8/8/8/8/4K3 w - - 0 1", document.body);
     await until(() => notice() === "Can't go to the pasted position: each side needs a king.",
       "illegal-position notice, got " + notice());
