@@ -57,9 +57,24 @@ that first.
   instead of the old `tree.visible`/`tree.toggle()`, and added a Notation
   button there (the `history` icon; `file-text` wasn't vendored). Fixed the
   same leftover `tree.visible`/`tree.toggle()` calls in `scripts/smoke/ribbon.js`
-  (three places) to use `panels.show`/`panels.isShowing`. Full checks and
-  all smoke drivers must be re-run on the merged tree before this lands on
-  `main` (see the checks note right after this bullet is finished).
+  (three places, plus a selector in `panels.js` that looked for the old
+  toolbar) to use `panels.show`/`panels.isShowing`, and a `ribbon.js`
+  assertion that assumed the View group had one button (now Notation is
+  first, Opening tree second). Also fixed the main checkout's
+  `app/src-tauri/binaries` symlink, which both UI-19 and UI-18 found broken
+  (a self-referential loop): removed it and re-ran
+  `scripts/fetch-stockfish.sh`, so `engine.js` could finally run here.
+  Checks on the merged tree: fmt, clippy with `-D warnings`, 209 Rust tests
+  (+1 ignored), svelte-check (0 errors), the build, and all 11 smoke
+  drivers off-screen with their 1M-game parts, Stockfish included this
+  time (`panels`, `ribbon`, `basic`, `layout`, `tree`, `goto`, `search`,
+  `setup`, `image`, `onboarding`, `view`, `drag`, `engine` — more than 11
+  once `engine` is counted). `panels`, `ribbon` and `layout` were also
+  screenshotted in light mode. Read-only `hyprctl` snapshots before and
+  after differ only by the user's own desktop activity in the meantime
+  (focus, window sizes, an idle screensaver) — nothing from the private
+  offscreen display touched Hyprland. Not pushed; `main` is fast-forwarded
+  to this branch next.
 - **Five P2 quality-of-life features merged into `main` (2026-09-29):**
   QOL-04, 06, 07, 08 and 10, each built on its own branch from the same
   `main` and described in the bullets below. They were reviewed and
