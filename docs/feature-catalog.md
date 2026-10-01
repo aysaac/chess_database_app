@@ -196,6 +196,8 @@ Two sides of one program:
 | OPEN-11 | ECO classification & opening names (auto-assign on import) | CB+FR | P1 | CORE-04 | Open data: lichess-org/chess-openings (CC0) |
 | OPEN-12 | Engine evals shown in tree (cloud/Let's Check) | CB | P3 | OPEN-01, NET-08 | |
 | OPEN-13 | Tree statistics inline in notation (game counts next to moves) | CB | P3 | OPEN-01 | |
+| OPEN-14 | Reference tab: moves with "hot" and best players, main variations, top games by rating, mini board | CB | P2 | OPEN-01, DB-13, UI-19 | Spec: [workspace-ui.md](workspace-ui.md). Overlaps OPEN-09, which keeps plans and novelties |
+| OPEN-15 | Reference tab sub-tabs: Popularity, Endgames | CB | P3 | OPEN-14 | Ticket T-2 in [workspace-ui.md](workspace-ui.md); ask the user what each shows |
 
 ### ENG — Engines & tablebases
 
@@ -280,7 +282,7 @@ Two sides of one program:
 | UI-01 | 2D board: themes, piece sets, coordinates, flip, last-move/check highlight, legal-move hints | CB+FR | P1 | CORE-01 | |
 | UI-02 | Move input: drag, click-click, keyboard SAN typing, promotion picker | CB+FR | P1 | UI-01 | |
 | UI-03 | Notation pane: nested/indented variations, collapse, inline comments, click-to-jump | CB+FR | P1 | GAME-01 | The hardest UI component. Prototype early |
-| UI-04 | Dockable/resizable panels; saved layouts | CB+FR | P2 | — | |
+| UI-04 | Dockable/resizable panels; saved layouts | CB+FR | P2 | — | First pass: dock tabs to the four sides, see [workspace-ui.md](workspace-ui.md); free docking later (T-1) |
 | UI-05 | Tabs for multiple games/DBs | CB | P1 | — | |
 | UI-06 | Game-list board preview on hover/selection | CB | P2 | DB-03 | |
 | UI-07 | Position setup editor (castling, e.p., side to move, clear/start, from FEN) | CB+FR | P1 | CORE-03 | |
@@ -294,6 +296,8 @@ Two sides of one program:
 | UI-15 | Status bar with background-task progress | CB | P2 | INF-01 | |
 | UI-16 | Context menus everywhere | CB+FR | P1 | — | |
 | UI-17 | Touch-friendly mode | CB | P4 | UI-01 | |
+| UI-18 | Ribbon toolbar: labelled groups (Clipboard, Game, Reference, Analysis, Database, View) that collapse on narrow windows | CB | P2 | — | Spec: [workspace-ui.md](workspace-ui.md) |
+| UI-19 | Panel tabs beside the board (Notation, Opening tree, Reference) | CB | P2 | UI-03 | Spec: [workspace-ui.md](workspace-ui.md) |
 
 ### QOL — Quality of life
 
@@ -407,6 +411,7 @@ Two sides of one program:
 3. **Target scale**: 10M games (Mega-scale) sets the SRCH-04 index design. 1M games allows a much simpler design.
 4. **Fritz side in v1?** One app with both sides (recommended: shared core) or DB-first and play later?
 5. ~~**License**~~ **Decided: GPL-3.0-or-later.** See [stack.md](stack.md).
+6. **Opening tree vs Reference tab** (OPEN-01 vs OPEN-14): both are tabs for now; the user will say whether they merge or the tree gets another job (T-4 in [workspace-ui.md](workspace-ui.md)).
 
 ---
 

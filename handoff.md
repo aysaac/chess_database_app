@@ -458,6 +458,9 @@ clocks and evals), 16-core laptop:
 
 Recommended order:
 
+1. **Workspace UI (agreed 2026-09-30):** build [docs/workspace-ui.md](docs/workspace-ui.md)
+   in its order: UI-19 panel tabs, UI-18 ribbon (with IO-08 paste game and
+   the reference dropdown), OPEN-14 Reference tab, UI-04 docking.
 1. **Ask the user** about open question #3 (1M vs 10M+ games), and
    whether to set up CI on the GitHub repo.
 2. **P1 polish left (on hold, the user said not now):**
