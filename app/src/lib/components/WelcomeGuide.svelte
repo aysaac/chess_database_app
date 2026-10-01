@@ -197,7 +197,10 @@
           <kbd>Ctrl</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> open the previous or next game in the list.
         </li>
         <li><strong>Right-click a move</strong> to comment on it, add symbols, or promote and delete variations.</li>
-        <li><strong>Opening tree</strong> shows what was played from the position on the board, and how it scored.</li>
+        <li>
+          The <strong>Opening tree</strong> tab, next to Notation, shows what was played from the position on the board,
+          and how it scored.
+        </li>
         <li><strong>Search…</strong> above the game list finds games by player, event, year or rating.</li>
       </ul>
       <p class="soft">This guide opens again from the <strong>?</strong> button at the right end of the status bar.</p>

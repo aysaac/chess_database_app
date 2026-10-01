@@ -2,7 +2,7 @@
   import { analysis } from "../stores/analysis.svelte";
   import { db } from "../stores/db.svelte";
   import { game } from "../stores/game.svelte";
-  import { tree } from "../stores/tree.svelte";
+  import { panels } from "../stores/panels.svelte";
   import BlunderCheckDialog from "./BlunderCheckDialog.svelte";
   import BoardImageMenu from "./BoardImageMenu.svelte";
   import EngineDialog from "./EngineDialog.svelte";
@@ -61,7 +61,7 @@
       onclick={() => analysis.toggle()}>{analysis.starting ? "Starting…" : "Analyze"}</button
     >
     <button disabled={!game.notation?.moves.length} onclick={() => (blunderDialog = true)}>Blunder check…</button>
-    <button class:primary={tree.visible} aria-pressed={tree.visible} onclick={() => tree.toggle()}>Opening tree</button>
+    <button title="Show the Opening tree tab, next to Notation" onclick={() => panels.show("tree")}>Opening tree</button>
     <button onclick={() => (engineDialog = true)}>Engines…</button>
   </div>
 </nav>

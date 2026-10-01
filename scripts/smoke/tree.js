@@ -9,7 +9,7 @@
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   while (!window.__chessdb) await wait(100);
-  const { db, game, tree, api, invoke } = window.__chessdb;
+  const { db, game, tree, panels, api, invoke } = window.__chessdb;
   // A native dialog would open on the user's screen, outside the harness's
   // hidden monitor: never ask about unsaved changes.
   game.confirmDiscard = async () => true;
@@ -42,9 +42,12 @@
     }
     await until(indexed, "the index built after the imports", 20000);
 
-    // The tree of the starting position: 4 games start from it.
-    tree.visible = true;
+    // The tree of the starting position: 4 games start from it. The tree is
+    // the Opening tree panel tab (UI-19), next to Notation.
+    panels.show("tree");
     await game.newGame();
+    expect(tree.showing && document.querySelector("#panel-tree .tree")?.getClientRects().length,
+      "the Opening tree tab showing");
     await until(() => tree.data?.total.games === 4, "4 games from the start, got " + tree.data?.total.games);
     expect(moves() === "e4:3 d4:1", "e4 in 3 games, d4 in 1, got " + moves());
     expect(document.querySelectorAll(".tree tbody tr").length === 2, "two rows in the tree");
@@ -69,7 +72,8 @@
     expect(game.view.opening?.name.startsWith("Pirc"), "Kasparov–Topalov is a Pirc, got " + JSON.stringify(game.view.opening));
     const page = await api.listGames(db.info.handle, db.sort, 0, 6);
     expect(page.rows[0].opening.startsWith("Pirc") && page.rows[5].opening, "opening names in the list");
-    expect(document.querySelector(".game-column .opening")?.textContent.includes("Pirc"), "opening shown in the header");
+    expect(document.querySelector("#panel-notation .opening")?.textContent.includes("Pirc"),
+      "opening shown in the header, in the Notation tab");
 
     // An edited game is still counted (replayed until the next index update).
     await game.open(db.info.handle, 5, 5);

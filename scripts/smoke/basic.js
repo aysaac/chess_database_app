@@ -9,7 +9,7 @@
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   while (!window.__chessdb) await wait(100);
-  const { db, game, api, invoke, prefs } = window.__chessdb;
+  const { db, game, api, invoke, prefs, panels } = window.__chessdb;
   // A native dialog would open on the user's screen, outside the harness's
   // hidden monitor: never ask about unsaved changes.
   game.confirmDiscard = async () => true;
@@ -34,6 +34,9 @@
 
   try {
     await log("start");
+    // The notation steps below need the Notation panel tab (UI-19), which
+    // shows by default.
+    expect(panels.isShowing("notation"), "the Notation tab showing");
     await shot("01-start");
 
     // Database + import (fixtures only, so this runs on a fresh checkout).

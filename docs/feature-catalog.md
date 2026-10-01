@@ -227,7 +227,7 @@ Two sides of one program:
 | ANL-01 | **Blunder check**: per-move eval pass, mark inaccuracy/mistake/blunder with better line | CB+FR | P1 | ENG-01, GAME-06/12 | Users now expect this (Lichess sets the bar) |
 | ANL-02 | Full / tactical analysis: annotate with variations, auto text commentary, eval profile | CB+FR | P2 | ANL-01 | |
 | ANL-03 | Batch analysis of a DB or filter (queued, resumable) | CB+FR | P2 | ANL-01, INF-01 | |
-| ANL-04 | Clickable evaluation graph (+ time graph from GAME-08) | CB+FR | P1 | GAME-12 | |
+| ANL-04 | Clickable evaluation graph (+ time graph from GAME-08) | CB+FR | P1 | GAME-12 | Lichess-style; at the bottom of the Notation panel tab since UI-19 (2026-09-30). No time graph yet |
 | ANL-05 | Deep position analysis: engine builds an annotated tree of best lines | CB | P3 | ANL-01 | |
 | ANL-06 | Accuracy / avg centipawn loss / move-classification counts per player | — | P2 | ANL-01 | Lichess-style, expected now |
 | ANL-07 | Error report (CB18 "Blunder report"): error types, game phase, "calculation Elo" | CB | P3 | ANL-03, GAME-09 | |
@@ -297,7 +297,7 @@ Two sides of one program:
 | UI-16 | Context menus everywhere | CB+FR | P1 | — | |
 | UI-17 | Touch-friendly mode | CB | P4 | UI-01 | |
 | UI-18 | Ribbon toolbar: labelled groups (Clipboard, Game, Reference, Analysis, Database, View) that collapse on narrow windows | CB | P2 | — | Spec: [workspace-ui.md](workspace-ui.md) |
-| UI-19 | Panel tabs beside the board (Notation, Opening tree, Reference) | CB | P2 | UI-03 | Spec: [workspace-ui.md](workspace-ui.md) |
+| UI-19 | Panel tabs beside the board (Notation, Opening tree, Reference) | CB | P2 | UI-03 | Notation and Opening tree done (2026-09-30): the tree queries only while its tab shows; the active tab is saved in the `layout` pref. Reference comes with OPEN-14. Spec: [workspace-ui.md](workspace-ui.md) |
 
 ### QOL — Quality of life
 
@@ -371,7 +371,8 @@ Two sides of one program:
 > board or the tab strip, which also completes DB-06's copy/move between databases),
 > QOL-06 (board as a PNG/SVG image), QOL-07 (list sort, column widths and filter per
 > database), QOL-08 (welcome guide, sample games, import wizard), QOL-10 (go to a pasted
-> position).
+> position), UI-19 (panel tabs: Notation, with the eval graph, and Opening tree beside the
+> board; 2026-09-30).
 
 
 | Phase | Goal | Contents |

@@ -76,7 +76,7 @@ desktop, so it's safe to run while they work.
 
 - **How it works:** debug builds only. `app/src-tauri/src/lib.rs` evaluates the file in
   `CHESSDB_SMOKE` after page load. `app/src/main.ts` exposes
-  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, onboarding, api, invoke }`. The driver calls the
+  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, onboarding, api, invoke }`. The driver calls the
   stores exactly as the UI does and reports through the `dev_log` command
   as `[smoke] …` lines.
 - **Default driver:** `scripts/smoke/basic.js`. It imports the fixtures, sorts, opens a
@@ -90,7 +90,8 @@ desktop, so it's safe to run while they work.
 - **Layout driver:** `scripts/smoke/layout.js` resizes `#app` to several window
   sizes (tiled, full screen, narrow, short) and checks the board stays square,
   inside its column and clear of the notation, with the promotion picker
-  inside the board. Run it after layout changes.
+  inside the board and the panel tabs fitting their column. Run it after
+  layout changes.
 - **Feature drivers:** `engine.js` (analysis, lines, blunder check; needs
   `scripts/fetch-stockfish.sh`), `search.js` (filters, header search, tabs,
   name lists, compaction, recent databases), `tree.js` (position index,
@@ -103,8 +104,16 @@ desktop, so it's safe to run while they work.
   reopening), `drag.js` (selecting several games, dragging them onto another
   database, the board and the tab strip, Shift to move, Escape, the list
   menu's copy dialog, copying into a new and into the reference database;
-  QOL-04/DB-06). `search.js`, `tree.js` and `view.js` time the 1M-game
+  QOL-04/DB-06), `panels.js` (UI-19: the Notation and Opening tree tabs,
+  the eval graph in Notation, the tree querying only while its tab shows,
+  the move popovers from the tree tab, the keyboard, and the active tab
+  restored after a reload, also from the old `treeVisible` pref).
+  `search.js`, `tree.js` and `view.js` time the 1M-game
   database when `__BIG__`; `drag.js` times copying it.
+- **Reloading:** the harness runs the driver again after every page load,
+  so a driver can test what a restart restores with `location.reload()`.
+  Keep the phase it's in in `sessionStorage`, and wait for debounced pref
+  writes to reach `api.uiPrefs()` first (`panels.js` does both).
 - **Clipboard:** a driver logs `clip:<name>` to have the harness save the
   private display's clipboard (`wl-paste`) as `<out-dir>/clips/<name>.png`
   or `.txt`, and print the types on offer. Linux only; it never reads the
@@ -126,7 +135,9 @@ desktop, so it's safe to run while they work.
   window fills it), into `<out-dir>/shots/`. Look at them: a passing driver
   doesn't prove the layout is right. The display is 2560×1600 at scale 1.25
   like the user's screen (`OFFSCREEN_SIZE`, `OFFSCREEN_SCALE`), and the
-  window has focus, so focus rings render.
+  window has focus, so focus rings render. The webview follows the user's
+  GTK theme, which is dark; `GTK_THEME=Adwaita scripts/smoke/run.sh …`
+  shoots light mode.
 - **Ports and output:** it uses dev port 1430 (`SMOKE_PORT`), so it can run next to a
   normal `tauri dev` on 1420. Output goes to `target/smoke/<timestamp>/`,
   including the display's log (`sway.log`).
@@ -330,6 +341,12 @@ stay identical before, during and after the run.
   0.29 uses a `Visitor` with `Tags`/`Movetext`/`Output` associated types
   and `ControlFlow`.
 - `svelte-check` doesn't support TypeScript 7 yet. Stay on TS 6.
+- **A hidden panel tab hides everything in it** (UI-19 hides inactive
+  panels with `hidden`, so `display: none`), `position: fixed` popovers
+  included. Popovers that must open while their panel is hidden live
+  outside it, like the move popovers in `MovePopovers.svelte`. Panels stay
+  mounted while hidden; anything that queries must check
+  `panels.isShowing(id)`, as the opening tree does.
 - **Svelte 5 props are live getters.** A dialog shown by `{#if thing}` with
   `prop={thing.x}` throws once its `onClose` sets `thing = null` and it then
   reads `prop`. Copy props into locals before calling `onClose`

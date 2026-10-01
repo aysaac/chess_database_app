@@ -8,7 +8,7 @@
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   while (!window.__chessdb) await wait(100);
-  const { db, game, tree, invoke } = window.__chessdb;
+  const { db, game, tree, panels, invoke } = window.__chessdb;
   // A native dialog would open on the user's screen, outside the harness's
   // hidden monitor: never ask about unsaved changes.
   game.confirmDiscard = async () => true;
@@ -53,7 +53,7 @@
       await db.importFrom(ROOT + "/testdata/pgn/" + f);
     }
     await until(() => db.info?.index.built && db.info.index.upToDate, "the index built after the imports", 20000);
-    tree.visible = false;
+    panels.show("notation");
     await game.newGame();
     const tabs = game.tabs.length;
 
@@ -69,7 +69,7 @@
     expect(document.activeElement === list, "the focus went back to the list");
     await until(() => game.view?.fen === e4e5, "the board shows the pasted position, got " + game.view?.fen);
     expect(game.tabs.length === tabs && !game.view.source, "a new game in the same tab");
-    expect(tree.visible, "the opening tree opened");
+    expect(panels.isShowing("tree"), "the Opening tree tab showing");
     await until(() => tree.data?.fen === e4e5 && tree.data.total.games === 2,
       "2 games reach 1.e4 e5, got " + tree.data?.total.games);
     expect(notice().includes("Opened the position as a new game"), "a notice, got " + notice());

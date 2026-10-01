@@ -1,11 +1,28 @@
 # Handoff
 
-State of the project as of **2026-09-29**, for the next agent.
+State of the project as of **2026-09-30**, for the next agent.
 Conventions, commands and utilities are in [AGENTS.md](AGENTS.md); read
 that first.
 
 ## TL;DR
 
+- **UI-19 panel tabs (2026-09-30, branch `ui-19-panel-tabs`, step 1 of
+  [docs/workspace-ui.md](docs/workspace-ui.md)).** The column beside the
+  board is a tab group: **Notation** (the game header, the moves and the
+  eval graph, ANL-04, at its bottom) and **Opening tree**. The engine lines
+  stay under the tabs while the engine runs. The tree queries only while
+  its tab shows. The toolbar's "Opening tree" now shows that tab, and "Go
+  to position" does too. The active tab is saved in a versioned `layout`
+  pref, the panel model docking (UI-04) will extend (`stores/panels.svelte.ts`). Details in
+  [New: panel tabs](#new-panel-tabs-ui-19-2026-09-30). Checks: fmt, clippy,
+  202 Rust tests (+1 ignored), svelte-check, the build, and 11 smoke
+  drivers off-screen with their 1M-game parts: the new `panels.js`,
+  `basic`, `layout`, `tree`, `goto`, `search`, `setup`, `image`,
+  `onboarding`, `view`, `drag`. `panels` and `layout` also ran in light
+  mode, the first light-mode screenshots. The desktop stayed unchanged.
+  `engine.js` wasn't run: in the main checkout `app/src-tauri/binaries` is
+  a symlink to itself (dated 2026-09-29 18:44), so there's no Stockfish.
+  Run `scripts/fetch-stockfish.sh` again once that link is removed.
 - **Five P2 quality-of-life features merged into `main` (2026-09-29):**
   QOL-04, 06, 07, 08 and 10, each built on its own branch from the same
   `main` and described in the bullets below. They were reviewed and
@@ -164,6 +181,7 @@ that first.
 | **Onboarding** (QOL-08) | The guide opens while `welcomeDone` is unset and no database was ever opened. Sample games are compiled in (`app/src-tauri/data/sample-games.pgn`) and built into the app data folder, not Documents. `CHESSDB_CONFIG_DIR` holds app data too | `docs/stack.md` |
 | **Compaction** (new) | Rewrites into `*.new` files, commits with a `compact.commit` marker, renames; open finishes or rolls back. Game ids change; open tabs are remapped; the position index is rebuilt | `crates/chess-db/src/database.rs` |
 | **Board images** (QOL-06) | New Tauri-free crate `crates/chess-diagram`: an SVG of only paths (cburnett pieces, labels outlined from an embedded IBM Plex Sans Condensed), rasterized by `resvg`; the clipboard is written from Rust (arboard via `tauri-plugin-clipboard-manager`), the frontend has no clipboard permission. Images use the theme's light-mode colours in any mode | `docs/stack.md` |
+| **Panel layout** (UI-19) | `Layout` (four sides → groups of panels → the active one, with sizes) in `stores/panels.svelte.ts`, saved as the `layout` UI pref (version 1). Until docking (UI-04) the app always uses the default layout and restores only each group's active tab; sizes aren't applied. Every panel stays mounted (hidden with `hidden`); a hidden panel does no work | `docs/workspace-ui.md` |
 
 Still open (catalog §6): how important ChessBase `.cbh` import is (#2), the
 target scale of 1M vs 10M+ games (#3), and whether play-vs-engine (the Fritz
@@ -176,9 +194,10 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
 ### Features (by catalog ID)
 - **Delivered:** INF-01…04 · CORE-01…04 · GAME-01…07, 16, 17 ·
   IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11 ·
-  ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16 ·
+  ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16, 19
+  (Notation and Opening tree; Reference comes with OPEN-14) ·
   QOL-01 (reopens the last database and remembers orientation, pane size,
-  tree visibility, analysis lines), 02, 03, 04, 05, 06, 07, 08, 10.
+  the active panel tab, analysis lines), 02, 03, 04, 05, 06, 07, 08, 10.
 - **Partial:**
   - DB-04: players, events, sites and annotators have lists with counts,
     "show games" and rename/merge. No sources or teams, and no per-player
@@ -190,6 +209,66 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   - ENG-01: engines can be added, removed, made default and configured
     (common options plus "show all"), but there are no per-engine profiles.
   - UI-01: five board colour themes, but one piece set (cburnett).
+
+### New: panel tabs (UI-19, 2026-09-30)
+- **What the user sees:** a tab strip over the column beside the board,
+  with **Notation** (shown by default) and **Opening tree**. Notation holds
+  the game header, the moves and the eval graph (ANL-04, unchanged, at the
+  bottom; still only with 2+ evaluated moves). The tree lost its × and its
+  "Opening tree" title (the tab says it); the toolbar's "Opening tree"
+  shows its tab instead of toggling it. Engine lines stay under the tabs
+  while the engine runs. Panel tabs look like the list's tabs (Games,
+  Players…), not like the game tabs above the board.
+- **Code:** `stores/panels.svelte.ts` (the model: `PanelId`, `Side`,
+  `Group`, `Zone`, `Layout`, `defaultLayout`, `parseLayout`,
+  `restoreLayout`, and the `panels` store with `isShowing`/`show`),
+  `PanelGroup.svelte` (tab strip and panels), `Panel.svelte` (panel id →
+  component), `NotationPanel.svelte`. `App.svelte` renders the right and
+  bottom sides from the layout. Smoke drivers get `panels` in
+  `window.__chessdb`.
+- **Queries only while showing:** `tree.showing` is `panels.isShowing("tree")`;
+  `OpeningTree`'s effect does nothing while it's false, so the tree queries
+  when its tab shows and on each move after that. `tree.visible` and
+  `tree.toggle()` are gone. The last tree stays loaded while hidden;
+  `tree.current` shows it only for the same position *and* database, so
+  going back to the tab at the same position is instant and never shows
+  another database's numbers.
+- **Move popovers:** a hidden tab (`hidden`, so `display: none`) hides
+  everything in it, `position: fixed` popovers included, and a tree move
+  can need the variation choice. So the variation popover and the
+  next-move picker moved from `Notation.svelte` to `MovePopovers.svelte`
+  (mounted once in `App.svelte`). They open under the current move as
+  before, or under the tab strip while the Opening tree shows.
+- **Keyboard:** WAI-ARIA tabs (`tablist`/`tab`/`tabpanel`, roving
+  `tabindex`, automatic activation): ←/→ (wrapping), Home, End. These keys
+  don't reach the game while the focus is in the strip; elsewhere the
+  arrows step through the game as before. No new shortcut.
+- **Saved:** the `layout` pref (`{version: 1, zones: {left, right, top,
+  bottom}}`) is written when a tab is chosen. At start, the default layout
+  takes each saved group's active tab. With no readable `layout`, the old
+  `treeVisible` pref decides (so QOL-01's restore carries over); it's
+  deleted when the layout is first written. Anything unreadable gives the
+  default. The default's sizes and shares (right 0.6 with groups 0.75 and
+  0.25, bottom 0.28) are placeholders: nothing applies them before UI-04,
+  which should replace them with real ones and carry `listShare` over.
+- **For later steps:** `PANEL_TITLES` already names `reference`; step 3
+  adds it to `defaultLayout()`'s first right group and to `Panel.svelte`.
+  `restoreLayout` keeps the default structure, so a saved step-1 layout
+  needs no migration when a panel is added. Docking (UI-04) replaces
+  `restoreLayout` with the full saved structure (`parseLayout` already
+  checks it) and adds moves and sizes to the store. `fitsContent` (the
+  analysis group takes its content's height) is a stand-in until groups
+  get their shares. A group of one panel has no tab strip yet (analysis,
+  game list); docking will need one on every group to drag from.
+- **Tests:** `scripts/smoke/panels.js` checks the tabs' ARIA wiring, the
+  graph inside Notation, query counts (none while hidden, one when shown,
+  one per move), both popovers opening from the tree tab, the keys, the
+  toolbar button, and the saved pref; then it reloads the page three times
+  to check the restore, the `treeVisible` migration and an unreadable
+  layout. `layout.js` now checks the tabs fit at every size; `tree.js` and
+  `goto.js` show the tab through `panels`. In `tauri dev` on 1M games
+  (unchanged): tree 101 ms at the start and after 1.e4, position search
+  20 ms.
 
 ### New: board images (QOL-06, 2026-09-29)
 - **"Board image ▾"** (toolbar, after Copy FEN): Copy as PNG, Copy as SVG,
@@ -411,6 +490,9 @@ clocks and evals), 16-core laptop:
 - The toolbar wraps to two rows in windows narrower than about 1,400 px, and the nav row
   (now with next/previous game) is wider than very small boards. The layout
   driver passes at all five sizes.
+- Panel tabs (UI-19): the toolbar can show the Opening tree tab but has no
+  "Notation" button (the ribbon's View group, UI-18, adds both); the tab
+  strip gets back. The layout's sizes aren't used before docking (UI-04).
 - `CommentDialog.svelte` is unused. The user hasn't approved deleting it.
   (`FenDialog.svelte`, also unused before, is the "Go to position" dialog
   now.)
@@ -444,7 +526,9 @@ clocks and evals), 16-core laptop:
   on macOS (`.app` and DMG) and Windows (MSI and NSIS installers), but
   neither was installed and clicked through; on Windows the release exe
   starts. Linux bundles were never built.
-- Light mode was never screenshotted (the Mac can, once screenshots work).
+- Light mode: only `panels.js` and `layout.js` were screenshotted in it
+  (2026-09-30, with `GTK_THEME=Adwaita`, see AGENTS.md); the other
+  drivers' screens haven't been.
 - Board images (QOL-06) pasted into real programs: on Linux only
   `wl-paste` on the private display read them. Windows and macOS clipboards
   are untested (B10 in `docs/windows-testing.md`); the native save dialog

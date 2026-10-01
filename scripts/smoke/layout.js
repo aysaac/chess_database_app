@@ -61,6 +61,11 @@
       expect(nav.bottom <= work.bottom + 0.5, `${label}: nav bar inside the workspace`);
       expect(notation.width >= 320, `${label}: notation at least 320px, got ${notation.width}`);
       expect(list.bottom <= whole.bottom, `${label}: game list inside the window`);
+      // The panel tabs (UI-19) fit the game column, none cut off.
+      const strip = document.querySelector(".game-column [role='tablist']");
+      const lastTab = rect(".game-column [role='tab']:last-child");
+      expect(strip && strip.scrollWidth <= strip.clientWidth && lastTab.right <= notation.right,
+        `${label}: the panel tabs fit the game column`);
       const promo = rect(".board-square .picker");
       expect(promo.left >= board.left && promo.right <= board.right && promo.top >= board.top &&
         promo.bottom <= board.bottom, `${label}: promotion picker inside the board, got ${promo.width}px`);

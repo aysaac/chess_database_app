@@ -5,8 +5,10 @@
   import { game } from "../stores/game.svelte";
   import { tree } from "../stores/tree.svelte";
 
-  // Refresh when the position, the database or its index changes.
+  // Only while the tab is showing (UI-19): query when it's shown, then again
+  // when the position, the database or its index changes.
   $effect(() => {
+    if (!tree.showing) return;
     void game.view?.fen;
     void game.view?.session;
     void db.info?.handle;
@@ -14,12 +16,11 @@
     void db.info?.games;
     void db.reference?.info?.index.covered;
     void tree.target?.handle;
-    void tree.visible;
     const t = setTimeout(() => tree.refresh(), 60);
     return () => clearTimeout(t);
   });
 
-  const data = $derived(tree.data?.fen === game.view?.fen ? tree.data : null);
+  const data = $derived(tree.current);
   const pct = (n: number, of: number) => (of ? Math.round((n / of) * 100) : 0);
 
   // The source picker: the open database, the reference database, and
@@ -49,9 +50,9 @@
   }
 </script>
 
-<section class="tree" aria-label="Opening tree">
+<!-- The Opening tree panel tab (UI-19) labels it. -->
+<div class="tree">
   <header>
-    <strong>Opening tree</strong>
     <span class="name">
       {#if data?.opening}{data.opening.eco} {data.opening.name}{/if}
     </span>
@@ -79,9 +80,6 @@
         ? `Open ${tree.target.name} in the game list with the games that reach this position`
         : "Show the games that reach this position in the game list"}
       onclick={() => tree.findGames()}>Find games</button
-    >
-    <button aria-label="Close the opening tree" title="Close" onclick={() => (tree.visible = false)}
-      >×</button
     >
   </header>
 
@@ -172,14 +170,13 @@
   {:else if tree.loading}
     <p class="note">Looking up the position…</p>
   {/if}
-</section>
+</div>
 
 <style>
   .tree {
     display: flex;
     flex-direction: column;
-    height: 230px;
-    border-top: 1px solid var(--rule);
+    height: 100%;
     font-size: 13px;
   }
 

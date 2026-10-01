@@ -4,7 +4,7 @@
 import type { NotationMoveDto } from "./bindings/NotationMoveDto";
 import { game } from "./stores/game.svelte";
 import { notices } from "./stores/notify.svelte";
-import { tree } from "./stores/tree.svelte";
+import { panels } from "./stores/panels.svelte";
 
 /** Why a text couldn't be gone to: it has no FEN, or its position isn't legal (`error` says why). */
 export type GotoProblem = { kind: "noFen" } | { kind: "invalid"; error: string };
@@ -22,7 +22,7 @@ function moveName(line: NotationMoveDto[], id: number): string | null {
 
 /**
  * Goes to the position of the FEN in `text`: the move where the game on
- * screen reaches it, or a new game from it. The opening tree opens on it.
+ * screen reaches it, or a new game from it. The Opening tree tab shows it.
  * Resolves to null once the board shows it (or an error was reported), else
  * to the problem, for the caller to word.
  */
@@ -47,6 +47,6 @@ export async function goToPosition(text: string): Promise<GotoProblem | null> {
       notices.show("Opened the position as a new game");
       break;
   }
-  tree.visible = true;
+  panels.show("tree");
   return null;
 }

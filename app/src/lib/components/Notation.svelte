@@ -1,25 +1,18 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { ROOT_NODE, game } from "../stores/game.svelte";
+  import { panels } from "../stores/panels.svelte";
   import CommentEditor from "./CommentEditor.svelte";
   import MoveMenu from "./MoveMenu.svelte";
   import type { MoveTarget } from "../types";
-  import NextMovePicker from "./NextMovePicker.svelte";
   import NotationLine from "./NotationLine.svelte";
-  import VariationDialog from "./VariationDialog.svelte";
+
+  // The variation popover and the next-move picker open under the current
+  // move here, but they're drawn by MovePopovers.svelte, outside the
+  // Notation tab, so they also open while another panel tab shows (UI-19).
 
   let pane: HTMLDivElement;
   let menu = $state<MoveTarget | null>(null);
-
-  // The variation popover and next-move picker open under the current move,
-  // or under the first move when the cursor is at the start.
-  function currentMove(): HTMLElement {
-    return (
-      pane.querySelector<HTMLElement>(`[data-node="${game.view?.cursor}"]`) ??
-      pane.querySelector<HTMLElement>("[data-node]") ??
-      pane
-    );
-  }
 
   // Double-clicking a comment edits it in place (the move menu is the keyboard path).
   $effect(() => {
@@ -33,17 +26,19 @@
     return () => pane.removeEventListener("dblclick", edit);
   });
 
-  // Keep the current move in view.
+  // Keep the current move in view, also when the tab shows again after
+  // moves made while another tab showed.
   $effect(() => {
     const cursor = game.view?.cursor;
     void game.notation;
+    if (!panels.isShowing("notation")) return;
     tick().then(() => {
       pane?.querySelector(`[data-node="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
     });
   });
 </script>
 
-<div class="notation" bind:this={pane}>
+<div class="notation" data-notation bind:this={pane}>
   {#if game.notation}
     {#if game.editingComment?.node === ROOT_NODE}
       <p class="intro"><CommentEditor initial={game.notation.rootComment} /></p>
@@ -67,14 +62,6 @@
 
 {#if menu}
   <MoveMenu target={menu} onClose={() => (menu = null)} />
-{/if}
-
-{#if game.pendingChoice}
-  <VariationDialog anchor={currentMove()} />
-{/if}
-
-{#if game.branch}
-  <NextMovePicker moves={game.branch} anchor={currentMove()} />
 {/if}
 
 <style>

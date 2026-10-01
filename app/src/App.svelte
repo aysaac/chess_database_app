@@ -1,19 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import AnalysisPane from "./lib/components/AnalysisPane.svelte";
   import Board from "./lib/components/Board.svelte";
   import BoardNav from "./lib/components/BoardNav.svelte";
   import DropShelf from "./lib/components/DropShelf.svelte";
   import EvalBar from "./lib/components/EvalBar.svelte";
-  import EvalGraph from "./lib/components/EvalGraph.svelte";
   import FenPaste from "./lib/components/FenPaste.svelte";
-  import GameHeader from "./lib/components/GameHeader.svelte";
   import GameTabs from "./lib/components/GameTabs.svelte";
   import MoveEntry from "./lib/components/MoveEntry.svelte";
-  import ListPane from "./lib/components/ListPane.svelte";
-  import OpeningTree from "./lib/components/OpeningTree.svelte";
-  import Notation from "./lib/components/Notation.svelte";
+  import MovePopovers from "./lib/components/MovePopovers.svelte";
+  import PanelGroup from "./lib/components/PanelGroup.svelte";
   import StatusBar from "./lib/components/StatusBar.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
   import WelcomeGuide from "./lib/components/WelcomeGuide.svelte";
@@ -23,8 +19,8 @@
   import { drag } from "./lib/stores/drag.svelte";
   import { game } from "./lib/stores/game.svelte";
   import { onboarding } from "./lib/stores/onboarding.svelte";
+  import { panels } from "./lib/stores/panels.svelte";
   import { prefs } from "./lib/stores/prefs.svelte";
-  import { tree } from "./lib/stores/tree.svelte";
 
   // The game list takes a share of the window (28% by default), so both panes
   // scale when the window is resized or tiled. Drag the divider to change it.
@@ -180,7 +176,11 @@
 
 <svelte:window onkeydown={onKey} />
 <FenPaste />
+<MovePopovers />
 
+<!-- The panels come from the panel layout (UI-19). Until docking (UI-04) it's
+     always the default one: Notation and Opening tree as tabs on the right,
+     above the engine analysis, and the game list at the bottom. -->
 <div class="app" style:--list-h="{listShare * 100}%" style:--board="{boardSize}px">
   <Toolbar />
   <GameTabs />
@@ -198,13 +198,9 @@
       <BoardNav />
     </section>
     <section class="game-column" aria-label="Game">
-      <GameHeader />
-      <div class="notation"><Notation /></div>
-      {#if tree.visible}<OpeningTree />{/if}
-      <EvalGraph />
-      {#if analysis.status.running || analysis.starting}
-        <AnalysisPane />
-      {/if}
+      {#each panels.layout.zones.right.groups as group (group.panels.join())}
+        <PanelGroup {group} />
+      {/each}
       <DropShelf />
     </section>
   </main>
@@ -217,7 +213,11 @@
     onpointerdown={startResize}
   ></div>
 
-  <div class="games" bind:this={games}><ListPane /></div>
+  <div class="games" bind:this={games}>
+    {#each panels.layout.zones.bottom.groups as group (group.panels.join())}
+      <PanelGroup {group} />
+    {/each}
+  </div>
 
   <StatusBar />
 </div>
@@ -271,15 +271,12 @@
     outline-offset: 3px;
   }
 
+  /* The right side: its panel groups stacked (UI-19). */
   .game-column {
     position: relative;
     display: flex;
     flex-direction: column;
-    min-height: 0;
-  }
-
-  .notation {
-    flex: 1;
+    min-width: 0;
     min-height: 0;
   }
 
@@ -294,6 +291,8 @@
   }
 
   .games {
+    display: flex;
+    flex-direction: column;
     min-height: 0;
   }
 </style>
