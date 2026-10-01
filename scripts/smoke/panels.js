@@ -181,9 +181,9 @@
       for (let i = 0; i < 3; i++) await game.step("back");
       await wait(400);
       expect(queries === 0, "no tree query while hidden, got " + queries);
-      // The toolbar's "Opening tree" shows the tab.
-      [...document.querySelectorAll("nav[aria-label='Toolbar'] button")].find((b) => b.textContent.trim() === "Opening tree").click();
-      await until(() => showing("tree"), "the toolbar button shows the Opening tree tab");
+      // The ribbon's View ▸ "Opening tree" shows the tab.
+      [...document.querySelectorAll(".ribbon > .groups button")].find((b) => b.getAttribute("aria-label") === "Opening tree").click();
+      await until(() => showing("tree"), "the ribbon button shows the Opening tree tab");
       await until(() => tree.current && tree.data.fen === game.view.fen && queries === 1,
         "one query for the position on the board, got " + queries);
 

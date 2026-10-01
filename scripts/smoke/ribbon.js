@@ -328,9 +328,10 @@
     viewButton.click();
     await until(() => popupOf(viewButton), "the View group opens");
     const panel = popupOf(viewButton);
+    const notationButton = $$("button", panel).find((b) => b.getAttribute("aria-label") === "Notation");
     const treeButton = $$("button", panel).find((b) => b.getAttribute("aria-label") === "Opening tree");
     expect(treeButton && treeButton.querySelector(".label").getBoundingClientRect().width > 20, "labelled in the dropdown");
-    await until(() => document.activeElement === treeButton, "its first button focused");
+    await until(() => document.activeElement === notationButton, "its first button focused");
     await shot("r07-collapsed-view");
     panels.show("notation");
     treeButton.click();
