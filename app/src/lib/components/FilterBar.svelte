@@ -56,6 +56,7 @@
 {/if}
 
 <style>
+  /* In a narrow list (docked on a side, UI-04) the box shrinks first. */
   .bar {
     display: flex;
     align-items: center;
@@ -63,14 +64,18 @@
     padding: 4px 8px;
     border-bottom: 1px solid var(--rule);
     min-width: 0;
+    overflow: hidden;
   }
 
   .quick {
+    flex: 0 1 260px;
     width: 260px;
+    min-width: 90px;
     padding: 3px 8px;
   }
 
   .bar button {
+    flex: none;
     padding: 2px 9px;
     border-color: var(--rule);
   }

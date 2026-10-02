@@ -52,18 +52,27 @@
     min-height: 0;
   }
 
+  /* In a narrow list (docked on a side, UI-04) they scroll, like the game tabs. */
   .tabs {
     display: flex;
     gap: 2px;
+    min-width: 0;
     padding: 3px 8px 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
     background: var(--panel);
     border-bottom: 1px solid var(--rule);
   }
 
   .tabs button {
+    flex: none;
     padding: 2px 12px 3px;
     border-radius: 4px 4px 0 0;
     border-bottom: 2px solid transparent;
+  }
+
+  .tabs button:focus-visible {
+    outline-offset: -2px;
   }
 
   .tabs button[aria-selected="true"] {

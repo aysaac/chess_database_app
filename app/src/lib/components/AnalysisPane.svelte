@@ -73,16 +73,19 @@
 </section>
 
 <style>
+  /* Under its own tab (UI-04), filling its group. */
   .analysis {
-    border-top: 1px solid var(--rule);
+    min-height: 100%;
     background: var(--panel);
     font-size: 13px;
   }
 
+  /* Wraps when docked on a narrow side (UI-04). */
   header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    gap: 4px 10px;
     padding: 5px 10px 3px 14px;
   }
 

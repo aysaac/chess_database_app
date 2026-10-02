@@ -18,7 +18,7 @@ Windows and macOS.
 | `crates/chess-engine` | UCI engine host, analysis driver thread, blunder check (`review.rs`); `src/bin/fake_uci.rs` is a toy engine for tests |
 | `crates/chess-diagram` | Board images (QOL-06): a position as SVG or PNG, drawn like the app's board (resvg); vendored pieces and font in `data/` (licences in `data/COPYING`) |
 | `app/src-tauri` | Tauri shell: commands (`src/commands/`), DTOs (`src/dto.rs`), view building (`src/view.rs`), state (`src/state.rs`), engines and analysis (`src/engines.rs`), settings (`src/settings.rs`) |
-| `app/src` | Svelte UI: `lib/api.ts` (typed commands), `lib/stores/` (state), `lib/components/` (the ribbon is `Ribbon.svelte`), `lib/bindings/` (generated types), `lib/icons/` (vendored Lucide icons; licence in `COPYING`) |
+| `app/src` | Svelte UI: `lib/api.ts` (typed commands), `lib/stores/` (state), `lib/components/` (the ribbon is `Ribbon.svelte`, the docked panels around the board `Dock.svelte`), `lib/bindings/` (generated types), `lib/icons/` (vendored Lucide icons; licence in `COPYING`) |
 | `docs/feature-catalog.md` | Every ChessBase/Fritz feature, with IDs (`DB-01`, `ENG-02`…), priority tiers P0–P5 and dependencies. **Features are referred to by these IDs** |
 | `docs/stack.md` | Stack decisions and the cross-platform rules |
 | `docs/file-format.md` | On-disk database format spec and benchmark numbers |
@@ -76,7 +76,7 @@ desktop, so it's safe to run while they work.
 
 - **How it works:** debug builds only. `app/src-tauri/src/lib.rs` evaluates the file in
   `CHESSDB_SMOKE` after page load. `app/src/main.ts` exposes
-  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, reference, onboarding, notices, api, invoke }`. The driver calls the
+  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, api, invoke }`. The driver calls the
   stores exactly as the UI does and reports through the `dev_log` command
   as `[smoke] …` lines.
 - **Default driver:** `scripts/smoke/basic.js`. It imports the fixtures, sorts, opens a
@@ -88,11 +88,14 @@ desktop, so it's safe to run while they work.
   present it also imports 1M games and checks scrolling and sorting
   (`SMOKE_BIG=0` skips that).
 - **Layout driver:** `scripts/smoke/layout.js` resizes `#app` to several window
-  sizes (tiled, full screen, narrow, short) and checks the board stays square,
-  inside its column and clear of the notation, with the promotion picker
-  inside the board, nothing wider than the window, the panel tabs fitting
-  their column and the ribbon (UI-18) on one row with every group inside
-  it. Run it after layout changes.
+  sizes (tiled, full screen, narrow, short) in three panel layouts (UI-04:
+  the default, the notation docked at the bottom, every panel on the left)
+  and checks the board stays square, inside the dock's middle and clear of
+  every side and divider, sides keep their minimums, with the promotion
+  picker inside the board, nothing wider than the window (no sideways page
+  scroll), every group's panel tabs fitting their strip, the game list's
+  columns fitting it, and the ribbon (UI-18) on one row with every group
+  inside it. Run it after layout changes.
 - **Feature drivers:** `engine.js` (analysis, lines, blunder check; needs
   `scripts/fetch-stockfish.sh`), `search.js` (filters, header search, tabs,
   name lists, compaction, recent databases), `tree.js` (position index,
@@ -118,7 +121,15 @@ desktop, so it's safe to run while they work.
   Best players, the main line and lines, the top games' order, playing a
   move, the mini board stepping on its own and resetting when the board
   moves, opening a top game where it reaches the position, the dividers,
-  the stacked narrow layout, the note without a reference database).
+  the stacked narrow layout, the note without a reference database),
+  `dock.js` (UI-04: every panel tab dragged to each side and into other
+  groups with synthetic pointer events, next to the nearest group,
+  reordering a strip, Escape and a release elsewhere cancelling, the tab
+  menu from a right-click, Shift+F10 and the context-menu key, empty
+  groups and sides going, the dividers by keys, pointer and double-click
+  and their limits, View ▸ Reset layout, and the `layout` pref read back
+  after reloads, also from a version 1 layout with `listShare`, an
+  incomplete one and an unreadable one).
   `search.js`, `tree.js`, `view.js` and `reference.js` time the 1M-game
   database when `__BIG__`; `drag.js` times copying it.
 - **Reloading:** the harness runs the driver again after every page load,
@@ -339,8 +350,27 @@ stay identical before, during and after the run.
   so parentheses hug their moves. Keep it that way when editing.
 - **An `auto` grid column can't measure a board sized by `height: %` +
   `aspect-ratio`.** The column only fit the nav bar, and the board spilled
-  over the notation at full screen. `fitBoard()` in `App.svelte` now sizes the
-  board in pixels from the workspace; keep its constants in step with the CSS.
+  over the notation at full screen. `fitBoard()` in `App.svelte` sizes the
+  board in pixels from the dock's middle (UI-04) less its padding, eval bar
+  and the nav bar's measured height; keep its constants (and `middleMin`,
+  the room dividers stop at) in step with the CSS of the board column and
+  `BoardNav.svelte`.
+- **Flex grow factors that add up to less than 1 leave the rest empty.**
+  A dock side's groups grow by their shares, and the engine analysis takes
+  only its content's height while the engine is off, so the other groups'
+  shares no longer added up to 1 and a quarter of the side stayed blank.
+  `Dock.svelte` (`grow`) divides each share by the shares of the groups
+  that take one.
+- **During a tab drag (UI-04) the edge bands overlap tab strips.** The
+  strips are raised above the bands (`body.dragging-tab`), so a drop on a
+  strip joins the group. A driver aiming at a left or right band near its
+  top must stay below the strips there (`dock.js`'s `onBand`). The top band
+  sits over the ribbon's lower edge and the bottom one over the status bar,
+  so a side full of groups can still get a new one.
+- **`container-type` makes an element the containing block of its
+  `position: fixed` children** (layout containment). The board column holds
+  the board settings dialog, so the nav bar's compact form is chosen in
+  `fitBoard()` from the middle's width, not by a container query.
 - **WebKit fires no `paste` event where nothing is editable**, and
   `navigator.clipboard.readText()` needs clipboard access Tauri doesn't
   enable. So Ctrl+V with a FEN (QOL-10) first moves the focus to a hidden

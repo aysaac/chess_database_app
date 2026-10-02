@@ -6,9 +6,38 @@ that first.
 
 ## TL;DR
 
+- **UI-04 docking (2026-10-01, branch `ui-04-docking`, step 4 of
+  [docs/workspace-ui.md](docs/workspace-ui.md), built on `main` after the
+  OPEN-14 merge, ad823a7; not merged yet).** Every panel is a tab that
+  docks to any side of the window: Notation, Opening tree, Reference,
+  Engine analysis and Game list. Drag a tab to a band along a window edge
+  (a group of its own, next to the nearest group there) or onto another
+  group's tab strip (it joins it, where the pointer is; along its own
+  strip it reorders), with a label under the pointer saying what happens;
+  Escape or a release elsewhere cancels. Or right-click the tab
+  (Shift+F10, the context-menu key): Move to ▸ Left/Right/Top/Bottom, Move
+  into ▸ another group. Empty groups and sides go and the board grows.
+  Dividers between each side and the board and between groups resize them
+  (drag, ←/→ or ↑/↓ by 16 px, double-click resets), stopping at 220/120 px
+  sides and a 160 px board; they replace the list's divider (`listShare`
+  carries over). View ▸ Reset layout. The whole layout is saved (the
+  `layout` pref, now version 2) and restored. The board is the largest
+  square in the middle. Details and the choices the spec left open in
+  [New: docking](#new-docking-ui-04-2026-10-01) and docs/workspace-ui.md
+  "As built". **This was the last step: docs/workspace-ui.md's build order
+  (UI-19, UI-18, OPEN-14, UI-04) is all built;** what's left there are the
+  tickets for later (T-1…T-5). Checks: fmt, clippy, 235 Rust tests (+1
+  ignored), svelte-check (0 errors, 0 warnings), the build, and all 15
+  smoke drivers off-screen with their 1M-game parts and Stockfish: the new
+  `dock.js`, `layout` (now three layouts × six sizes), `panels`, `ribbon`,
+  `reference`, `basic`, `tree`, `goto`, `search`, `setup`, `image`,
+  `onboarding`, `view`, `drag`, `engine`; `dock`, `layout`, `panels`,
+  `ribbon` and `reference` also in light mode. The desktop stayed
+  unchanged (read-only `hyprctl` snapshots).
+
 - **OPEN-14 Reference tab (2026-10-01, branch `open-14-reference-tab`,
   step 3 of [docs/workspace-ui.md](docs/workspace-ui.md), built on `main`
-  after the UI-19/UI-18 merge; not merged yet).** The third panel tab, next
+  after the UI-19/UI-18 merge; merged into `main` as ad823a7).** The third panel tab, next
   to Notation and Opening tree, with a Reference button in the ribbon's View
   group. It reads the reference database, or the open one with the note
   "Reading <name>: no reference database is set. Choose one in the ribbon."
@@ -260,7 +289,7 @@ that first.
 | **Onboarding** (QOL-08) | The guide opens while `welcomeDone` is unset and no database was ever opened. Sample games are compiled in (`app/src-tauri/data/sample-games.pgn`) and built into the app data folder, not Documents. `CHESSDB_CONFIG_DIR` holds app data too | `docs/stack.md` |
 | **Compaction** (new) | Rewrites into `*.new` files, commits with a `compact.commit` marker, renames; open finishes or rolls back. Game ids change; open tabs are remapped; the position index is rebuilt | `crates/chess-db/src/database.rs` |
 | **Board images** (QOL-06) | New Tauri-free crate `crates/chess-diagram`: an SVG of only paths (cburnett pieces, labels outlined from an embedded IBM Plex Sans Condensed), rasterized by `resvg`; the clipboard is written from Rust (arboard via `tauri-plugin-clipboard-manager`), the frontend has no clipboard permission. Images use the theme's light-mode colours in any mode | `docs/stack.md` |
-| **Panel layout** (UI-19) | `Layout` (four sides → groups of panels → the active one, with sizes) in `stores/panels.svelte.ts`, saved as the `layout` UI pref (version 1). Until docking (UI-04) the app always uses the default layout and restores only each group's active tab; sizes aren't applied. Every panel stays mounted (hidden with `hidden`); a hidden panel does no work | `docs/workspace-ui.md` |
+| **Panel layout** (UI-19, UI-04) | `Layout` (four sides → groups of panels → the active one; sides sized as shares of the window, groups as shares of their side) in `stores/panels.svelte.ts`, saved whole as the `layout` UI pref (version 2; version 1 and `listShare` are read once and replaced). `Dock.svelte` turns it into pixels (`sidePixels`: minimums, the middle's room for a 160 px board, proportional shrinking) on a CSS grid; the board fills the middle (`fitBoard`). Tabs are dragged with our own pointer handling, like QOL-04's games. Every panel stays mounted (hidden with `hidden`); a hidden panel does no work | `docs/workspace-ui.md` |
 | **Reference tab** (OPEN-14) | One pass over the index hits and the in-memory `GameStat`s gives the moves, Hot, Best players and top games (records read only for what's shown). The lines read each game's next 10 plies, packed in `u128`s sorted into an implicit trie; from 50,000 games a `chess-jobs` job, cached in memory (32 positions) until the database changes. Choices the spec left open: docs/workspace-ui.md "As built" | `crates/chess-db/src/reference.rs` |
 | **Ribbon and clipboard** (UI-18, IO-08) | The ribbon picks each group's form (full, compact, collapsed) by arithmetic on the widths of a hidden, inert copy of every group in every form, so the live buttons never move to be measured. Clipboard text is read (`clipboard_text`) and written (`copy_text`) in Rust; only Ctrl+V uses the page's paste event. `paste_game` opens the first game in place of a clean session, else in a new one. Icons are vendored Lucide (ISC). The ribbon's View group calls `panels.show(…)` (UI-19) rather than a tree-only toggle | `docs/stack.md`, `docs/workspace-ui.md` |
 
@@ -276,8 +305,9 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
 - **Delivered:** INF-01…04 · CORE-01…04 · GAME-01…07, 16, 17 ·
   IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11, 14 ·
   ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16, 18, 19 ·
-  QOL-01 (reopens the last database and remembers orientation, pane size,
-  the active panel tab, analysis lines), 02, 03, 04, 05, 06, 07, 08, 10.
+  QOL-01 (reopens the last database and remembers orientation, the panel
+  layout with its sizes and active tabs, analysis lines), 02, 03, 04, 05,
+  06, 07, 08, 10.
 - **Partial:**
   - DB-04: players, events, sites and annotators have lists with counts,
     "show games" and rename/merge. No sources or teams, and no per-player
@@ -289,6 +319,82 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   - ENG-01: engines can be added, removed, made default and configured
     (common options plus "show all"), but there are no per-engine profiles.
   - UI-01: five board colour themes, but one piece set (cburnett).
+  - UI-04: panel tabs dock to the four sides, resize and are remembered
+    (the first pass of docs/workspace-ui.md). Free docking, floating
+    panels, several boards and named layouts are T-1 (with UI-14).
+
+### New: docking (UI-04, 2026-10-01)
+- **What the user sees:** the same layout as before at first: Notation,
+  Opening tree and Reference as tabs on the right, Engine analysis under
+  them, the game list at the bottom. Now every group has a tab strip, even
+  with one tab ("Engine analysis", "Game list", whose own Games/Players…
+  tabs stay under it). While the engine is off its tab says "The engine is
+  off." with an Analyze button, and the group takes only that line; when it
+  runs, it takes a quarter of the side, with a divider above it.
+  - **Dragging a tab** (4 px): a band along each window edge (the top one
+    over the ribbon's lower edge, the bottom one over the status bar) and
+    every tab strip become drop targets. The label under the pointer says
+    "Dock on the left" (an empty side, previewed at the size it will open
+    with), "Dock on the right, below Engine analysis" (a line marks the
+    place), "Move into Game list" or, along its own strip, "Move Reference
+    here" (a caret between the tabs). Escape, or a release anywhere else,
+    cancels.
+  - **The tab's menu** (right-click, Shift+F10, the context-menu key):
+    "Move to" Left, Right, Top, Bottom (on its own side, it splits off
+    next to its group; off when it's alone there) and "Move into" each
+    other group, named by its tabs ("Notation · Reference"). The focus
+    follows the tab.
+  - A group without tabs goes; a side without groups closes and the board
+    grows. A side that opens takes its room from the side across the board
+    first, as long as that one keeps as much (Notation to the left halves
+    the right side instead of shrinking the board).
+  - **Dividers** between each side and the board, and between groups: drag
+    them, or focus one (Tab) and press ←/→ or ↑/↓ (16 px); a double-click
+    resets. `role="separator"` with `aria-orientation`, `aria-valuenow`,
+    min and max. Sides stop at 220 px (left, right) and 120 px (top,
+    bottom), the middle at a 160 px board with its padding, eval bar and
+    nav bar; groups at 80 px stacked, 160 px side by side.
+  - **View ▸ Reset layout** in the ribbon (Lucide `layout-dashboard`).
+  - **The board** is the largest square in the middle, centred. In a middle
+    under 480 px the nav bar is compact (Flip board as an icon), and under
+    about 330 px it wraps to two rows; `fitBoard()` measures its height.
+  - **Panels at any size:** each scrolls inside its group; the page never
+    scrolls sideways. The game list drops columns from the right of a
+    priority order when narrow (White, Black, Result, Date, the Elos,
+    Event, #, Opening, ECO, Moves, Site, Round, flags), its filter box,
+    the name lists and the empty-list buttons shrink or wrap, and its own
+    tabs scroll. Panel tabs shrink with an ellipsis (full name in the
+    tooltip). The drop shelf for dragged games (QOL-04) covers the
+    notation's group wherever it's docked.
+- **Sizes and the pref:** sides are shares of the window's width or height
+  (defaults: right 0.6, bottom 0.28, left 0.3, top 0.25), groups shares of
+  their side. `layout` is now version 2 and holds everything (sides,
+  groups, order, active tabs, sizes; no group ids). A version 1 layout
+  (UI-19) gives the default with its active tabs; `listShare` becomes the
+  bottom side's size; both older prefs are removed on the first save. A
+  panel a saved layout lacks joins its default neighbours' group; anything
+  unreadable gives the default.
+- **Code:** `stores/panels.svelte.ts` (the model, `sidePixels`, `move`,
+  `resizeSide`, `resizeGroups`, `reset`, `restoreLayout`, `parseLayout`),
+  `stores/dock.svelte.ts` (the tab drag: threshold, hit testing of strips
+  then bands, the label, Escape; and the menu's state), `Dock.svelte`
+  (the grid of sides, dividers and the middle, in the order they're seen,
+  so Tab goes top, left, board, right, bottom), `Divider.svelte`,
+  `DockOverlay.svelte`, `TabMenu.svelte`, `PanelGroup.svelte` (a strip on
+  every group, drag and menu, the shelf host), `Panel.svelte` (the engine
+  off line), `App.svelte` (`fitBoard()` from the middle, `middleMin()`),
+  `BoardNav.svelte` (compact, wrapping), `GameList.svelte` (columns by
+  priority). `listShare`, the list resizer and `.game-column` are gone;
+  drivers get `dock` in `window.__chessdb`.
+- **Tests:** `scripts/smoke/dock.js` (see AGENTS.md); `layout.js` runs its
+  six sizes in three layouts (default, the notation at the bottom,
+  everything on the left) and checks the board inside the middle, clear of
+  every side and divider, the sides' minimums, the strips and the game
+  list's columns fitting, and no sideways scroll; `panels.js`,
+  `reference.js` and `goto.js` find the tab strip and the list by panel
+  ids instead of `.game-column`/`.games`; `panels.js` expects version 2;
+  `ribbon.js` checks Reset layout. With the new View column the ribbon
+  goes compact one group earlier (Database and View at 1,200 px).
 
 ### New: the Reference tab (OPEN-14, 2026-10-01)
 - **What the user sees:** a **Reference** panel tab after Notation and
@@ -750,19 +856,23 @@ clocks and evals), 16-core laptop:
   toolbar's ~36, so in short windows (the 1600×520 layout size) the board
   is at its 160 px minimum. Hiding the captions in short windows would win
   back ~16 px if that matters.
-- The nav row under the board (with next/previous game, ~444 px) is wider
-  than small boards. At 720 px wide it and the notation's 320 px minimum
-  need ~46 px more than the window, so the notation's right edge is cut
-  off. It was hidden until UI-18 because the game list made the whole app
-  1,000 px wide at that size. Making Flip board an icon button would fix
-  it. The layout driver passes at all six sizes.
+- The nav row under the board (with next/previous game, ~444 px) no
+  longer cuts anything off (UI-04): in a narrow middle it turns compact
+  (Flip board as an icon) and then wraps to two rows.
 - Switching databases right after an import into the first can log
   "database 1 not found" from the index loop of the database just closed
   (seen in `ribbon.js`, which creates two databases in a row); no notice
   stays up.
-- Panel tabs (UI-19): the layout's sizes aren't used before docking
-  (UI-04); the right side always takes the width the board leaves and the
-  list keeps its own `listShare` divider.
+- Docking (UI-04): sides are shares of the window, so in a narrow window
+  the default layout's right side (60%) leaves a smaller board than the
+  old "notation gets 320 px, the board the rest" did (at 720 px wide: 236
+  against ~350 px); drag the divider. A drag moves one tab, not a whole
+  group. Dividers have no Home/End. While the engine is off there's no
+  divider next to its group (it takes only its content's height). Panel
+  tabs ellipsize in a narrow group (5 tabs in 220 px leave a few letters
+  each). A tab moved to another group remounts its panel (the game list
+  forgets its scroll position and Players/Events tab). Free docking,
+  floating panels and named layouts are T-1.
 - Reference tab (OPEN-14): the lines cache is in memory only (a restart
   counts the start position's lines again, a job of ~2 s on 1M games). The
   top games can't be re-sorted by column (the spec's first pass), and in a
@@ -804,9 +914,16 @@ clocks and evals), 16-core laptop:
   on macOS (`.app` and DMG) and Windows (MSI and NSIS installers), but
   neither was installed and clicked through; on Windows the release exe
   starts. Linux bundles were never built.
-- Light mode: only `panels.js`, `ribbon.js`, `layout.js` and `reference.js`
-  were screenshotted in it (2026-09-30/10-01, `GTK_THEME=Adwaita`, see
-  AGENTS.md); the other drivers' screens haven't been.
+- Light mode: only `panels.js`, `ribbon.js`, `layout.js`, `reference.js`
+  and `dock.js` were screenshotted in it (2026-09-30/10-01,
+  `GTK_THEME=Adwaita`, see AGENTS.md); the other drivers' screens haven't
+  been.
+- Docking (UI-04) with real input: `dock.js` drags tabs and dividers with
+  synthetic pointer events at the elements' real positions and sends the
+  keys itself (Shift+F10, the context-menu key, arrows, Escape). A real
+  right-click's menu, WebKitGTK/WebView2/WKWebView pointer delivery while
+  dragging over the bands, and releasing outside the window (which cancels)
+  are untested.
 - The Reference tab (OPEN-14) with real input: the dividers were dragged
   with synthetic pointer events, and the keys sent by the driver. Real
   WebKitGTK/WebView2 pointer delivery while dragging past the divider is
@@ -838,10 +955,14 @@ Recommended order:
    the reference dropdown) are built and merged (2026-10-01; see
    [New: panel tabs](#new-panel-tabs-ui-19-2026-09-30) and
    [New: the ribbon](#new-the-ribbon-ui-18-2026-09-30)). Step 3, OPEN-14
-   (the Reference tab), is built on branch `open-14-reference-tab`, to be
-   reviewed and merged ([New: the Reference tab](#new-the-reference-tab-open-14-2026-10-01)).
-   Next: step 4, UI-04 (docking). T-4 (what the Opening tree is for, now
-   that the Reference tab has its moves) is for the user to decide.
+   (the Reference tab), is merged ([New: the Reference tab](#new-the-reference-tab-open-14-2026-10-01)).
+   Step 4, UI-04 (docking), the last one, is built on branch
+   `ui-04-docking`, to be reviewed and merged
+   ([New: docking](#new-docking-ui-04-2026-10-01)); with it the spec's
+   build order is done. Left in it: the tickets T-1…T-5 (free docking,
+   Reference sub-tabs, favourite databases, more panel tabs) and T-4 (what
+   the Opening tree is for, now that the Reference tab has its moves),
+   which is for the user to decide.
 2. **Ask the user** about open question #3 (1M vs 10M+ games), and
    whether to set up CI on the GitHub repo.
 3. **P1 polish left (on hold, the user said not now):**

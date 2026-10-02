@@ -60,7 +60,7 @@
     // A Lichess link on the clipboard, pasted with the game list focused: a
     // new game from the position (in this clean tab), the tree opens on it,
     // and the focus goes back to the list.
-    const list = $(".games .viewport");
+    const list = $("#panel-games .viewport");
     list.focus();
     const e4e5 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
     const link = "https://lichess.org/analysis/standard/" + e4e5.replaceAll(" ", "_");

@@ -30,44 +30,90 @@
     name: string;
     title?: string;
     num?: boolean;
-    /** Default grid track: fixed, or a share of the free space. */
-    width: string;
+    /** Default width in pixels, or the narrowest a column sharing the free space gets. */
+    min: number;
+    /** A share of the free space (a grid `fr`); without one the column is `min` wide. */
+    fr?: number;
   };
 
   const columns: Column[] = [
-    { id: "id", key: "id", label: "#", name: "number", num: true, width: "64px" },
-    { id: "white", key: "white", label: "White", name: "White", width: "minmax(110px, 1.4fr)" },
-    { id: "whiteElo", key: "whiteElo", label: "Elo", name: "White Elo", title: "White Elo", num: true, width: "46px" },
-    { id: "black", key: "black", label: "Black", name: "Black", width: "minmax(110px, 1.4fr)" },
-    { id: "blackElo", key: "blackElo", label: "Elo", name: "Black Elo", title: "Black Elo", num: true, width: "46px" },
-    { id: "result", key: "result", label: "Result", name: "Result", width: "52px" },
-    { id: "date", key: "date", label: "Date", name: "Date", num: true, width: "88px" },
-    { id: "event", key: "event", label: "Event", name: "Event", width: "minmax(90px, 1.2fr)" },
-    { id: "site", key: "site", label: "Site", name: "Site", width: "minmax(80px, 1fr)" },
-    { id: "round", key: "round", label: "Round", name: "Round", num: true, width: "52px" },
-    { id: "eco", key: "eco", label: "ECO", name: "ECO", width: "42px" },
+    { id: "id", key: "id", label: "#", name: "number", num: true, min: 64 },
+    { id: "white", key: "white", label: "White", name: "White", min: 80, fr: 1.4 },
+    { id: "whiteElo", key: "whiteElo", label: "Elo", name: "White Elo", title: "White Elo", num: true, min: 46 },
+    { id: "black", key: "black", label: "Black", name: "Black", min: 80, fr: 1.4 },
+    { id: "blackElo", key: "blackElo", label: "Elo", name: "Black Elo", title: "Black Elo", num: true, min: 46 },
+    { id: "result", key: "result", label: "Result", name: "Result", min: 52 },
+    { id: "date", key: "date", label: "Date", name: "Date", num: true, min: 88 },
+    { id: "event", key: "event", label: "Event", name: "Event", min: 70, fr: 1.2 },
+    { id: "site", key: "site", label: "Site", name: "Site", min: 60, fr: 1 },
+    { id: "round", key: "round", label: "Round", name: "Round", num: true, min: 52 },
+    { id: "eco", key: "eco", label: "ECO", name: "ECO", min: 42 },
     {
       id: "opening",
       key: null,
       label: "Opening",
       name: "Opening",
       title: "Opening, from the positions in the game",
-      width: "minmax(110px, 1.5fr)",
+      min: 80,
+      fr: 1.5,
     },
-    { id: "plies", key: "plies", label: "Moves", name: "Moves", num: true, width: "50px" },
+    { id: "plies", key: "plies", label: "Moves", name: "Moves", num: true, min: 50 },
     {
       id: "flags",
       key: null,
       label: "",
       name: "flags",
       title: "V: variations, C: comments, A: symbols or arrows, F: starts from a position",
-      width: "44px",
+      min: 44,
     },
   ];
 
+  /**
+   * The order columns give way in when the list is too narrow for all of
+   * them (docked on a side, UI-04): the last ones go first. The Elos go
+   * together.
+   */
+  const PRIORITY: string[][] = [
+    ["white"],
+    ["black"],
+    ["result"],
+    ["date"],
+    ["whiteElo", "blackElo"],
+    ["event"],
+    ["id"],
+    ["opening"],
+    ["eco"],
+    ["plies"],
+    ["site"],
+    ["round"],
+    ["flags"],
+  ];
+
+  /** The list's width (0 while it's hidden). */
+  let listW = $state(0);
+  const widthOf = (id: string) => db.columns[id] ?? columns.find((c) => c.id === id)?.min ?? 0;
+
+  /** The columns that fit, in their usual order: as many as fit, by priority. */
+  const shown = $derived.by(() => {
+    // The rows' padding and the scrollbar.
+    const room = listW - 16 - 14;
+    if (listW <= 0) return columns;
+    const keep = new Set<string>();
+    let used = 0;
+    for (const ids of PRIORITY) {
+      const w = ids.reduce((sum, id) => sum + widthOf(id), 0);
+      if (keep.size && used + w > room) break;
+      for (const id of ids) keep.add(id);
+      used += w;
+    }
+    return columns.filter((c) => keep.has(c.id));
+  });
+
   // Resized columns get their saved width; the others keep their default.
   const template = $derived(
-    columns.map((c) => (db.columns[c.id] ? `${db.columns[c.id]}px` : c.width)).join(" "),
+    shown
+      .map((c) => (db.columns[c.id] ? `${db.columns[c.id]}px` : c.fr ? `minmax(${c.min}px, ${c.fr}fr)` : `${c.min}px`))
+      .join(" "),
   );
 
   let viewport: HTMLDivElement;
@@ -401,6 +447,40 @@
     game.view?.source?.db === db.info?.handle && game.view?.source?.game === r.id;
 </script>
 
+{#snippet cell(c: Column, row: GameRowDto)}
+  {#if c.id === "id"}
+    <span class="cell num">{row.id + 1}</span>
+  {:else if c.id === "white"}
+    <span class="cell">{row.white}</span>
+  {:else if c.id === "whiteElo"}
+    <span class="cell num">{row.whiteElo ?? ""}</span>
+  {:else if c.id === "black"}
+    <span class="cell">{row.black}</span>
+  {:else if c.id === "blackElo"}
+    <span class="cell num">{row.blackElo ?? ""}</span>
+  {:else if c.id === "result"}
+    <span class="cell">{resultLabel(row.result)}</span>
+  {:else if c.id === "date"}
+    <span class="cell num">{row.date}</span>
+  {:else if c.id === "event"}
+    <span class="cell">{row.event}</span>
+  {:else if c.id === "site"}
+    <span class="cell">{row.site}</span>
+  {:else if c.id === "round"}
+    <span class="cell num">{row.round}</span>
+  {:else if c.id === "eco"}
+    <span class="cell" class:soft={!row.eco} title={row.eco ? undefined : "From the game's positions (no ECO tag)"}
+      >{row.eco || row.openingEco}</span
+    >
+  {:else if c.id === "opening"}
+    <span class="cell" title={row.opening}>{row.opening}</span>
+  {:else if c.id === "plies"}
+    <span class="cell num">{Math.ceil(row.plies / 2)}</span>
+  {:else if c.id === "flags"}
+    <span class="cell flags">{flags(row)}</span>
+  {/if}
+{/snippet}
+
 <svelte:window
   onmousedown={() => {
     menu = null;
@@ -416,10 +496,16 @@
   }}
 />
 
-<section class="list" class:resizing={resizing !== null} aria-label="Games" style:--columns={template}>
+<section
+  class="list"
+  class:resizing={resizing !== null}
+  aria-label="Games"
+  style:--columns={template}
+  bind:clientWidth={listW}
+>
   {#if db.info}<FilterBar />{/if}
   <div class="row head" role="row" tabindex="-1" oncontextmenu={openHeadMenu}>
-    {#each columns as c (c.id)}
+    {#each shown as c (c.id)}
       <div class="head-cell" data-column={c.id}>
         {#if c.key}
           <button
@@ -486,23 +572,8 @@
             }}
           >
             {#if row}
-              <span class="cell num">{row.id + 1}</span>
-              <span class="cell">{row.white}</span>
-              <span class="cell num">{row.whiteElo ?? ""}</span>
-              <span class="cell">{row.black}</span>
-              <span class="cell num">{row.blackElo ?? ""}</span>
-              <span class="cell">{resultLabel(row.result)}</span>
-              <span class="cell num">{row.date}</span>
-              <span class="cell">{row.event}</span>
-              <span class="cell">{row.site}</span>
-              <span class="cell num">{row.round}</span>
-              <span class="cell" class:soft={!row.eco} title={row.eco ? undefined : "From the game's positions (no ECO tag)"}
-                >{row.eco || row.openingEco}</span
-              >
-              <span class="cell" title={row.opening}>{row.opening}</span>
-              <span class="cell num">{Math.ceil(row.plies / 2)}</span>
-              <span class="cell flags">{flags(row)}</span>
-            {:else}
+              {#each shown as c (c.id)}{@render cell(c, row)}{/each}
+            {:else if shown[0]?.id === "id"}
               <span class="cell num">{index + 1}</span>
             {/if}
           </div>
@@ -787,25 +858,45 @@
     letter-spacing: 1px;
   }
 
+  /* Centred by auto margins, so in a short list it scrolls instead of
+     being cut off at the top. */
   .empty {
     position: absolute;
     inset: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
     gap: 10px;
+    padding: 8px 12px;
+    overflow-y: auto;
     color: var(--ink-soft);
     font-size: 14px;
+    text-align: center;
+  }
+
+  .empty > :first-child {
+    margin-top: auto;
+  }
+
+  .empty > :last-child {
+    margin-bottom: auto;
   }
 
   .empty p {
     margin: 0;
   }
 
+  /* They wrap in a narrow list (docked on a side, UI-04), long labels too. */
   .empty div {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 8px;
+  }
+
+  .empty button {
+    max-width: 100%;
+    white-space: normal;
   }
 
   .empty .recent-title {

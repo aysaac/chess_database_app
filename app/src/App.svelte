@@ -3,13 +3,13 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import Board from "./lib/components/Board.svelte";
   import BoardNav from "./lib/components/BoardNav.svelte";
+  import Dock from "./lib/components/Dock.svelte";
   import DropShelf from "./lib/components/DropShelf.svelte";
   import EvalBar from "./lib/components/EvalBar.svelte";
   import FenPaste from "./lib/components/FenPaste.svelte";
   import GameTabs from "./lib/components/GameTabs.svelte";
   import MoveEntry from "./lib/components/MoveEntry.svelte";
   import MovePopovers from "./lib/components/MovePopovers.svelte";
-  import PanelGroup from "./lib/components/PanelGroup.svelte";
   import Ribbon from "./lib/components/Ribbon.svelte";
   import StatusBar from "./lib/components/StatusBar.svelte";
   import WelcomeGuide from "./lib/components/WelcomeGuide.svelte";
@@ -22,26 +22,39 @@
   import { panels } from "./lib/stores/panels.svelte";
   import { prefs } from "./lib/stores/prefs.svelte";
 
-  // The game list takes a share of the window (28% by default), so both panes
-  // scale when the window is resized or tiled. Drag the divider to change it.
-  let listShare = $state(0.28);
-  let games: HTMLDivElement;
-
-  // The board is the largest square that fits above the nav bar while leaving
-  // the notation its minimum width. Keep these in step with the CSS below.
-  const NOTATION_MIN = 320;
+  // The board is the largest square that fits the middle of the dock
+  // (UI-04) above the nav bar, whatever the sides around it take. Keep these
+  // in step with the CSS below and BoardNav's.
   const EVAL_BAR = 12 + 6; // bar + gap
-  const BOARD_CHROME_X = 14 + 14 + 1 + EVAL_BAR; // column padding + divider + eval bar
-  const BOARD_CHROME_Y = 14 + 4 + 40; // column padding + BoardNav
+  const BOARD_PAD_X = 14 + 14; // the column's padding
+  const BOARD_PAD_Y = 14 + 4;
   const BOARD_MIN = 160;
-  let workspace: HTMLElement;
+  /** The nav bar's height on one row, and on two. */
+  const NAV_ONE_ROW = 40;
+  const NAV_TWO_ROWS = 74;
+  /** Middle widths below which the nav bar is compact, and then takes two rows. */
+  const NAV_COMPACT = 480;
+  const NAV_WRAPS = 330;
+  let column: HTMLElement;
+  let navBox: HTMLElement;
   let boardSize = $state(BOARD_MIN);
+  let navCompact = $state(false);
+  let appHeight = $state(0);
+
+  /**
+   * The room the middle keeps (UI-04): a board of BOARD_MIN with its eval
+   * bar, padding and nav bar. Dividers stop there, and sides shrink to keep
+   * it when the window is small.
+   */
+  function middleMin(width: number) {
+    const nav = width < NAV_WRAPS ? NAV_TWO_ROWS : NAV_ONE_ROW;
+    return { w: BOARD_MIN + BOARD_PAD_X + EVAL_BAR, h: BOARD_MIN + BOARD_PAD_Y + nav };
+  }
 
   function fitBoard() {
-    const fit = Math.min(
-      workspace.clientHeight - BOARD_CHROME_Y,
-      workspace.clientWidth - NOTATION_MIN - BOARD_CHROME_X,
-    );
+    const w = column.clientWidth;
+    navCompact = w < NAV_COMPACT;
+    const fit = Math.min(column.clientHeight - BOARD_PAD_Y - navBox.offsetHeight, w - BOARD_PAD_X - EVAL_BAR);
     // chessground snaps its board to a multiple of 8 device pixels (whole-pixel
     // squares), so snap the same way or it leaves a strip at fractional scales
     // (Windows at 120%). Half a device pixel over the target keeps its floor()
@@ -58,8 +71,11 @@
   onMount(() => {
     game.newGame();
     fitBoard();
+    // The middle changes with the window and the sides; the nav bar's height
+    // when it wraps.
     const resize = new ResizeObserver(fitBoard);
-    resize.observe(workspace);
+    resize.observe(column);
+    resize.observe(navBox);
     // The snap depends on the device pixel ratio, which changes without a
     // resize when the window moves to a monitor with another scale or the
     // Windows scale changes. A media query matches only the current ratio,
@@ -80,8 +96,8 @@
     });
     // Restore the last session's preferences and database (QOL-01).
     void (async () => {
+      // The panel layout (UI-04) follows from the prefs (panels.svelte.ts).
       await prefs.load();
-      listShare = prefs.get("listShare", listShare);
       game.orientation = prefs.get<string>("orientation", "white") === "black" ? "black" : "white";
       await db.reopenLast();
       // The welcome guide on a first run (QOL-08).
@@ -126,7 +142,7 @@
       /^[a-hknqroKQRBNO0-9]$/.test(e.key) &&
       game.view &&
       !pickerOpen &&
-      !target?.closest?.(".games, [data-popup]")
+      !target?.closest?.("#panel-games, [data-popup]")
     ) {
       e.preventDefault();
       game.typing = e.key;
@@ -157,39 +173,20 @@
       action();
     }
   }
-
-  function startResize(e: PointerEvent) {
-    const startY = e.clientY;
-    const startH = games.offsetHeight;
-    const target = e.currentTarget as HTMLElement;
-    const appH = (target.parentElement as HTMLElement).clientHeight;
-    target.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      listShare = Math.max(0.1, Math.min(0.7, (startH - (ev.clientY - startY)) / appH));
-    };
-    const up = () => {
-      target.removeEventListener("pointermove", move);
-      target.removeEventListener("pointerup", up);
-      prefs.set("listShare", Math.round(listShare * 1000) / 1000);
-    };
-    target.addEventListener("pointermove", move);
-    target.addEventListener("pointerup", up);
-  }
 </script>
 
 <svelte:window onkeydown={onKey} />
 <FenPaste />
 <MovePopovers />
 
-<!-- The panels come from the panel layout (UI-19). Until docking (UI-04) it's
-     always the default one: Notation and Opening tree as tabs on the right,
-     above the engine analysis, and the game list at the bottom. -->
-<div class="app" style:--list-h="{listShare * 100}%" style:--board="{boardSize}px">
+<!-- The panels dock to the four sides (UI-04, Dock.svelte), from the panel
+     layout (UI-19, panels.svelte.ts); the board stays in the middle. -->
+<div class="app" bind:clientHeight={appHeight} style:--board="{boardSize}px">
   <GameTabs />
   <Ribbon />
 
-  <main class="workspace" bind:this={workspace}>
-    <section class="board-column" aria-label="Board">
+  <Dock {appHeight} {middleMin}>
+    <section class="board-column" aria-label="Board" bind:this={column}>
       <div class="board-row">
         <div class="eval-bar"><EvalBar /></div>
         <!-- Games dragged from the list open here (QOL-04). -->
@@ -198,29 +195,12 @@
           {#if game.typing !== null}<MoveEntry />{/if}
         </div>
       </div>
-      <BoardNav />
+      <div class="nav-box" bind:this={navBox}><BoardNav compact={navCompact} /></div>
+      <!-- The drop shelf for dragged games covers the notation's group, or
+           here when every group shows the game list. -->
+      {#if panels.shelfHost === null}<DropShelf />{/if}
     </section>
-    <section class="game-column" aria-label="Game">
-      {#each panels.layout.zones.right.groups as group (group.panels.join())}
-        <PanelGroup {group} />
-      {/each}
-      <DropShelf />
-    </section>
-  </main>
-
-  <div
-    class="resizer"
-    role="separator"
-    aria-orientation="horizontal"
-    aria-label="Resize game list"
-    onpointerdown={startResize}
-  ></div>
-
-  <div class="games" bind:this={games}>
-    {#each panels.layout.zones.bottom.groups as group (group.panels.join())}
-      <PanelGroup {group} />
-    {/each}
-  </div>
+  </Dock>
 
   <StatusBar />
 </div>
@@ -230,25 +210,21 @@
 <style>
   .app {
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) 5px minmax(120px, var(--list-h)) auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
     height: 100%;
   }
 
-  /* Paddings and the notation's minimum width are mirrored in fitBoard(). */
-  .workspace {
-    display: grid;
-    grid-template-columns: auto minmax(320px, 1fr);
-    min-width: 0;
-    min-height: 0;
-  }
-
+  /* Fills the middle of the dock; the board and nav bar are centred in it.
+     Paddings are mirrored in fitBoard(). */
   .board-column {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
+    height: 100%;
     padding: 14px 14px 4px;
-    min-height: 0;
-    border-right: 1px solid var(--rule);
+    overflow: hidden;
   }
 
   .board-row {
@@ -261,7 +237,7 @@
     height: var(--board);
   }
 
-  /* Sized in pixels (see fitBoard) so the auto column can measure it. */
+  /* Sized in pixels (see fitBoard). */
   .board-square {
     position: relative;
     width: var(--board);
@@ -274,32 +250,9 @@
     outline-offset: 3px;
   }
 
-  /* The right side: its panel groups stacked (UI-19). */
-  .game-column {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-  }
-
-  .resizer {
-    cursor: row-resize;
-    border-top: 1px solid var(--rule);
-    background: var(--panel);
-  }
-
-  .resizer:hover {
-    background: var(--felt-soft);
-  }
-
-  /* The list's columns need about 1,000 px; in a narrower window they're cut
-     off at the right instead of widening the whole app past the window. */
-  .games {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    overflow-x: clip;
+  /* As wide as the column, so the nav bar wraps in a narrow one. */
+  .nav-box {
+    align-self: stretch;
+    flex: none;
   }
 </style>

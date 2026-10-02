@@ -77,8 +77,9 @@
     if (phase === "tabs") {
       await log("start");
       // Fresh settings: Notation shows, the Opening tree and Reference (OPEN-14) tabs are next to it.
-      const strip = $(".game-column [role='tablist']");
-      expect(strip?.getAttribute("aria-label") === "Panels", "a panel tab strip in the game column");
+      const strip = $("#panel-tab-notation")?.closest("[role='tablist']");
+      expect(strip?.getAttribute("aria-label") === "Panels" && strip.closest("#dock-right"),
+        "a panel tab strip on the right side");
       const tabs = [...strip.querySelectorAll("[role='tab']")];
       const labels = tabs.map((t) => t.querySelector(".label:not([aria-hidden])")?.textContent.trim()).join(" | ");
       expect(labels === "Notation | Opening tree | Reference", "Notation, Opening tree and Reference tabs, got " + labels);
@@ -109,7 +110,7 @@
         "the eval graph inside the Notation tab");
       const notationBox = $("[data-notation]").getBoundingClientRect();
       expect(graph.getBoundingClientRect().top >= notationBox.bottom - 1, "the graph under the notation");
-      expect(panel("notation").contains($(".game-column header h1")), "the game header inside the Notation tab");
+      expect(panel("notation").contains($(".dock header h1")), "the game header inside the Notation tab");
       await wait(300);
       expect(queries === 0 && tree.data === null, "no tree query while the Notation tab shows, got " + queries);
       await shot("p01-notation-tab");
@@ -192,8 +193,8 @@
       // The active tab is saved in the layout pref.
       await untilAsync(async () => savedActive(await saved()) === "tree", "the layout saved with the tree showing");
       const p = await saved();
-      expect(p.layout.version === 1 && ["left", "right", "top", "bottom"].every((s) => Array.isArray(p.layout.zones[s]?.groups)),
-        "a version 1 layout with four sides, got " + JSON.stringify(p.layout));
+      expect(p.layout.version === 2 && ["left", "right", "top", "bottom"].every((s) => Array.isArray(p.layout.zones[s]?.groups)),
+        "a version 2 layout (UI-04) with four sides, got " + JSON.stringify(p.layout));
       expect(p.layout.zones.bottom.groups[0].panels.join() === "games", "the game list at the bottom");
       expect(!("treeVisible" in p), "no treeVisible pref");
       await reload("restore");

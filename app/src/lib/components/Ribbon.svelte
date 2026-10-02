@@ -279,7 +279,7 @@
     <RibbonButton
       icon="history"
       label="Notation"
-      title="Show the Notation tab, next to Opening tree"
+      title="Show the Notation tab: the game header, its moves and the eval graph"
       {compact}
       aria-pressed={panels.isShowing("notation")}
       onclick={() => panels.show("notation")}
@@ -287,7 +287,7 @@
     <RibbonButton
       icon="network"
       label="Opening tree"
-      title="Show the Opening tree tab, next to Notation"
+      title="Show the Opening tree tab: the moves played from this position"
       {compact}
       aria-pressed={panels.isShowing("tree")}
       onclick={() => panels.show("tree")}
@@ -299,6 +299,15 @@
       {compact}
       aria-pressed={panels.isShowing("reference")}
       onclick={() => panels.show("reference")}
+    />
+  </div>
+  <div class="col">
+    <RibbonButton
+      icon="layout-dashboard"
+      label="Reset layout"
+      title="Put the panels back where they start: Notation, Opening tree and Reference on the right, the game list at the bottom"
+      {compact}
+      onclick={() => panels.reset()}
     />
   </div>
 {/snippet}

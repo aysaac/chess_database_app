@@ -104,7 +104,7 @@
     await game.newGame();
 
     // ---- The third panel tab, shown from the ribbon; nothing queried before.
-    const labels = $$(".game-column [role='tablist'] [role='tab']").map((t) => text($(".label:not([aria-hidden])", t)));
+    const labels = $$("[role='tab']", $("#panel-tab-reference").closest("[role='tablist']")).map((t) => text($(".label:not([aria-hidden])", t)));
     expect(labels.join(" | ") === "Notation | Opening tree | Reference", "three panel tabs, got " + labels.join(" | "));
     await wait(300);
     expect(!panels.isShowing("reference") && views === 0, "no Reference query while hidden, got " + views);

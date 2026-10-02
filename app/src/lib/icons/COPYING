@@ -9,8 +9,8 @@ lucide.ts
     chess-knight, chevron-down, clipboard, clipboard-copy, clipboard-paste,
     copy, cpu, crosshair, database, database-plus, database-search,
     file-down, file-plus, file-up, folder-open, grid-3x3, history, image,
-    library, network, panel-right, redo-2, save, save-plus, settings-2 and
-    undo-2. Of these, check, chevron-down, clipboard, crosshair and
+    layout-dashboard, library, network, panel-right, redo-2, save,
+    save-plus, settings-2 and undo-2. Of these, check, chevron-down, clipboard, crosshair and
     database are derived from the Feather project, under the MIT licence
     below. Both licences are compatible with the app's GPL-3.0-or-later.
 

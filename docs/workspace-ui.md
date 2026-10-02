@@ -21,7 +21,7 @@ don't copy them into the repo: they're ChessBase's screens, not ours to ship.
 | 2 | IO-08 | Clipboard | Copy PGN, copy FEN, paste a FEN (Ctrl+V, Go to position…) | Paste game (PGN) from a button and from Ctrl+V; copy buttons renamed |
 | 2 | DB-13, DB-07 | Reference dropdown | The reference is chosen in the opening tree's header | A dropdown in the ribbon listing recently opened databases |
 | 3 | OPEN-14 (new) | Reference tab | Only the tree's moves table exists | Moves with Hot and Best players, main variations, top games by rating, a mini board |
-| 4 | UI-04 | Docking | Only the divider between the list and the board moves | Drag any tab to the left, right, top or bottom; resize; remembered |
+| 4 | UI-04 | Docking | Only the divider between the list and the board moves | Drag any tab to the left, right, top or bottom; resize; remembered (built 2026-10-01, see [As built](#as-built-2026-10-01-1)) |
 
 Work the user wants tracked for later is under [Tickets for later](#tickets-for-later).
 
@@ -552,6 +552,69 @@ chessground, so smoke drivers can send synthetic `PointerEvent`s (with
   the notation at the bottom, and everything on the left. In each, the
   board is square, inside the middle and clear of every panel.
 - Screenshots of each layout, in light and dark.
+
+### As built (2026-10-01)
+
+Built as specified, on branch `ui-04-docking`. Where the spec left a
+choice, this is what was taken (ask the user if one looks wrong):
+
+- **Every group has a tab strip**, even with one tab (Engine analysis,
+  Game list), since tabs are dragged from it and dropped on it. The game
+  list's own tabs (Games, Players…) stay under its panel tab.
+- **Engine analysis while the engine is off:** its tab stays, with "The
+  engine is off. Analyze". Alone in a group stacked with others, that group
+  takes only its content's height (as before docking, the notation keeps the
+  room), and there's no divider next to it until the engine runs; then it
+  takes its share (a quarter of the right side by default).
+- **Sizes:** sides are shares of the window's width (left, right) or height
+  (top, bottom), like `listShare` was. Defaults: right 60% (the board fills
+  the middle's height in a full-screen 16:10 window), bottom 28% (the old
+  list default), left 30%, top 25%. An empty side keeps its size for when a
+  panel docks there again.
+- **Opening a side** takes its room from the side across the board first, as
+  long as that one keeps as much as the new one, so the board keeps its size
+  where it can (Notation docked on the left halves the right side instead of
+  squeezing the board to 160 px).
+- **The middle's room:** a 160 px board plus 46 px across (padding and the
+  eval bar) and 18 px plus the nav bar down. In a middle narrower than 480 px
+  the nav bar turns compact (Flip board becomes an icon), and below about
+  330 px it wraps onto two rows. When the window can't hold everything,
+  sides above their minimum shrink first, in proportion to what they have
+  above it, then all of them.
+- **The board** is centred in the middle, both ways, when it has room to
+  spare.
+- **Drop targets:** the bands are 34 px; the top one sits over the ribbon's
+  lower edge and the bottom one over the status bar, so a side full of
+  groups still takes a new one; the left and right ones run between them.
+  Tab strips are drawn above the bands. A drop on an empty side previews the
+  side as it will open; on a side with groups, a line shows where the new
+  group goes.
+- **Labels:** "Dock on the left" / "on the right" / "at the top" / "at the
+  bottom"; with groups there, ", above (below, left of, right of) <group>".
+  A group is named by the tab it shows ("Move into Notation"); in its own
+  strip, "Move <tab> here". A tab alone in its group has no reorder target.
+- **The tab menu** is one list with two headings, "Move to" (Left, Right,
+  Top, Bottom) and "Move into" (each other group, named by all its tabs:
+  "Notation · Reference"), not submenus. Move to its own side splits the tab
+  off next to its group; it's off when the tab is alone there. Another side
+  gets the new group at its end. The focus follows the tab to its new place.
+- **New group sizes:** a new group gets a share as if every group of the side
+  weighed the same (the engine's alone a third), and the others give way in
+  proportion. A double-click on a divider between groups splits their room
+  by those weights; on a side's divider, it goes back to the default size.
+- **Dividers** have ←/→ or ↑/↓ (16 px), no Home/End. A divider between
+  groups stops at 80 px for stacked groups, 160 px side by side.
+- **Tab order** follows the screen: top, left, the board, right, bottom.
+- **The game list on a narrow side** drops columns, last first in this order:
+  White, Black, Result, Date, the two Elos, Event, #, Opening, ECO, Moves,
+  Site, Round, flags. The flexible columns' minimums went down (names 80 px)
+  so more fit before any goes.
+- **The `layout` pref is version 2.** Version 1 (UI-19) meant only the
+  active tabs; it's read for those, on the default layout. `listShare`
+  becomes the bottom side's size, and both older prefs (`treeVisible`,
+  `listShare`) are removed when the layout is first saved. A panel missing
+  from a saved layout (one added later) joins the group of its default
+  neighbours. Group ids aren't saved.
 
 ## Tickets for later
 

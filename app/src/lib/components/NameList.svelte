@@ -170,16 +170,21 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
     padding: 4px 8px;
+    overflow: hidden;
     border-bottom: 1px solid var(--rule);
   }
 
   .bar input {
+    flex: 0 1 260px;
     width: 260px;
+    min-width: 90px;
     padding: 3px 8px;
   }
 
   .bar button {
+    flex: none;
     padding: 2px 9px;
     border-color: var(--rule);
   }
@@ -194,7 +199,7 @@
 
   .row {
     display: grid;
-    grid-template-columns: minmax(200px, 1fr) 110px;
+    grid-template-columns: minmax(100px, 1fr) 90px;
     align-items: center;
     height: 26px;
     padding: 0 8px;

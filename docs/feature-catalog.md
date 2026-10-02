@@ -282,7 +282,7 @@ Two sides of one program:
 | UI-01 | 2D board: themes, piece sets, coordinates, flip, last-move/check highlight, legal-move hints | CB+FR | P1 | CORE-01 | |
 | UI-02 | Move input: drag, click-click, keyboard SAN typing, promotion picker | CB+FR | P1 | UI-01 | |
 | UI-03 | Notation pane: nested/indented variations, collapse, inline comments, click-to-jump | CB+FR | P1 | GAME-01 | The hardest UI component. Prototype early |
-| UI-04 | Dockable/resizable panels; saved layouts | CB+FR | P2 | — | First pass: dock tabs to the four sides, see [workspace-ui.md](workspace-ui.md); free docking later (T-1) |
+| UI-04 | Dockable/resizable panels; saved layouts | CB+FR | P2 | — | First pass done (2026-10-01): every panel tab (Notation, Opening tree, Reference, Engine analysis, Game list) docks to the left, right, top or bottom side, as a group of its own or into another group, by dragging or from the tab's menu; dividers resize the sides and groups (keys too); View ▸ Reset layout; the whole layout is saved in the `layout` pref (version 2). Spec: [workspace-ui.md](workspace-ui.md). Free docking, floating panels and named layouts later (T-1) |
 | UI-05 | Tabs for multiple games/DBs | CB | P1 | — | |
 | UI-06 | Game-list board preview on hover/selection | CB | P2 | DB-03 | |
 | UI-07 | Position setup editor (castling, e.p., side to move, clear/start, from FEN) | CB+FR | P1 | CORE-03 | |
@@ -296,8 +296,8 @@ Two sides of one program:
 | UI-15 | Status bar with background-task progress | CB | P2 | INF-01 | |
 | UI-16 | Context menus everywhere | CB+FR | P1 | — | |
 | UI-17 | Touch-friendly mode | CB | P4 | UI-01 | |
-| UI-18 | Ribbon toolbar: labelled groups (Clipboard, Game, Reference, Analysis, Database, View) that collapse on narrow windows | CB | P2 | — | Done (2026-09-30): one row at any width; labels drop, then groups collapse into dropdowns from the right. View shows the Notation, Opening tree and Reference tabs (UI-19, OPEN-14). Spec: [workspace-ui.md](workspace-ui.md) |
-| UI-19 | Panel tabs beside the board (Notation, Opening tree, Reference) | CB | P2 | UI-03 | Done: Notation and Opening tree (2026-09-30), Reference (2026-10-01, OPEN-14). A tab queries only while it shows; the active tab is saved in the `layout` pref. Spec: [workspace-ui.md](workspace-ui.md) |
+| UI-18 | Ribbon toolbar: labelled groups (Clipboard, Game, Reference, Analysis, Database, View) that collapse on narrow windows | CB | P2 | — | Done (2026-09-30): one row at any width; labels drop, then groups collapse into dropdowns from the right. View shows the Notation, Opening tree and Reference tabs (UI-19, OPEN-14) and has Reset layout (UI-04). Spec: [workspace-ui.md](workspace-ui.md) |
+| UI-19 | Panel tabs beside the board (Notation, Opening tree, Reference) | CB | P2 | UI-03 | Done: Notation and Opening tree (2026-09-30), Reference (2026-10-01, OPEN-14). A tab queries only while it shows; the active tab is saved in the `layout` pref. Since UI-04 every panel, Engine analysis and Game list included, is a tab that can be docked anywhere. Spec: [workspace-ui.md](workspace-ui.md) |
 
 ### QOL — Quality of life
 
@@ -373,7 +373,8 @@ Two sides of one program:
 > database), QOL-08 (welcome guide, sample games, import wizard), QOL-10 (go to a pasted
 > position), UI-19 (panel tabs: Notation, with the eval graph, and Opening tree beside the
 > board; 2026-09-30), UI-18 (the ribbon, with IO-08's paste game and the reference
-> dropdown; 2026-09-30), OPEN-14 (the Reference tab, the third panel tab; 2026-10-01).
+> dropdown; 2026-09-30), OPEN-14 (the Reference tab, the third panel tab; 2026-10-01),
+> UI-04 (first pass: panel tabs dock to the four sides of the window; 2026-10-01).
 
 
 | Phase | Goal | Contents |
