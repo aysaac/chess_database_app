@@ -609,8 +609,8 @@
       </div>
     {:else if total === 0}
       <div class="empty">
-        <p>{db.info.name} has no games yet. Import a PGN file to add some.</p>
-        <div><button class="primary" onclick={() => db.importDialog()}>Import PGN</button></div>
+        <p>{db.info.name} has no games yet. Import a PGN file or a ChessBase database to add some.</p>
+        <div><button class="primary" onclick={() => db.importDialog()}>Import games</button></div>
       </div>
     {/if}
   </div>

@@ -1,10 +1,31 @@
 # Handoff
 
-State of the project as of **2026-10-01**, for the next agent.
+State of the project as of **2026-10-08**, for the next agent.
 Conventions, commands and utilities are in [AGENTS.md](AGENTS.md); read
 that first.
 
 ## TL;DR
+
+- **IO-03 ChessBase import (2026-10-08, merged into `main` 2026-10-10).**
+  Import games (the ribbon's Database group, until now "Import PGN", and
+  the empty list's button) takes a ChessBase `.cbh` as well as a PGN. The
+  game comes with its variations, comments, symbols, coloured squares and
+  arrows, and its players, event, site, annotator, date, result, Elos and
+  ECO. The `.cbg` move-translation table was read from the user's own
+  ChessBase 16 (`CBase16.exe` at 0x1416480, as decided) and is built in.
+  **Mega Database 2019 imports 7,623,531 of its 7,623,697 games in 6.5
+  minutes** (19.6k games/s, a 1.36 GB database). The 166 skipped are
+  Chess960 and two rare encodings; 1,776 games lose a line at a null move
+  (the game tree can't hold one), with a warning each. Details in [New:
+  ChessBase import](#new-chessbase-import-io-03-2026-10-08) and
+  docs/io-03-cbh.md §4. Checks, on a tree holding only the IO-03 changes
+  (the working tree also had the unrelated, uncommitted DB-07 library
+  work, under which the drivers can't find the ribbon): fmt, clippy, 264
+  Rust tests (+3 ignored), svelte-check (0 errors, 0 warnings), the build,
+  the ignored real-file tests on the four bundled databases, and the smoke
+  drivers `cbh` (new), `ribbon`, `layout`, `basic` and `onboarding`
+  off-screen (`SMOKE_BIG=0`); the monitor layout stayed the same
+  (read-only `hyprctl`).
 
 - **UI-04 docking (2026-10-01, branch `ui-04-docking`, step 4 of
   [docs/workspace-ui.md](docs/workspace-ui.md), built on `main` after the
@@ -303,7 +324,7 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
 
 ### Features (by catalog ID)
 - **Delivered:** INF-01…04 · CORE-01…04 · GAME-01…07, 16, 17 ·
-  IO-01, 02, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11, 14 ·
+  IO-01, 02, 03, 08, 11, 12 · DB-01, 02, 03, 05, 06, 13 · SRCH-01…04, 14 · OPEN-01, 11, 14 ·
   ENG-01, 02, 03, 05, 09 · ANL-01, 04 · UI-01, 02, 03, 05, 07, 09, 15, 16, 18, 19 ·
   QOL-01 (reopens the last database and remembers orientation, the panel
   layout with its sizes and active tabs, analysis lines), 02, 03, 04, 05,
@@ -322,6 +343,51 @@ would be ~7 GB at 10M. Cheaper options are in `docs/file-format.md`.
   - UI-04: panel tabs dock to the four sides, resize and are remembered
     (the first pass of docs/workspace-ui.md). Free docking, floating
     panels, several boards and named layouts are T-1 (with UI-14).
+
+### New: ChessBase import (IO-03, 2026-10-08)
+- **What the user sees:** Import games opens the file dialog on "PGN files
+  and ChessBase databases" (or either alone). A `.cbh` imports as a job
+  like a PGN, with the same progress, Cancel, notice and import report. A
+  `.cbh` whose other files are missing fails with "Mega.cbg is missing. A
+  ChessBase database needs its .cbh, .cbg, .cbp, .cbt and .cbc files in
+  one folder: copy them there and import again." Warnings read like PGN
+  import's: "The main line stops at 23...-- (a null move), which can't be
+  imported yet.", "Chess960 games can't be imported yet."
+- **Reading:** `crates/chess-db/src/cb/` (spec: docs/io-03-cbh.md, which
+  has the byte layouts and what the real files showed). A move the game
+  tree can't take (a null move, an illegal one) cuts its line there and the
+  rest of the stream is still read, as in PGN import; `.cba` annotations on
+  cut moves are dropped. A comment stored in several languages keeps the
+  any-language text and one language, English first (ChessBase's own
+  databases have German, Spanish, French and Russian). Set-up positions
+  drop castling rights the board rules out (ChessBase stores 0x0f by
+  default) and impossible en passant files.
+- **Bugs found on the real files** (the decoder had only seen hand-made
+  streams): the castled rook went to the d-file in the slot table; a
+  captured pawn's slot kept its square and later caught another pawn's
+  moves; the set-up en passant square was on the wrong rank. Each has a
+  test now.
+- **The table:** the first scan of the ChessBase install (2026-10-03)
+  looked like a failure only because its check compared plies with
+  `.cbh`'s count of full moves. With that fixed, `extract_cb_key` finds
+  exactly one table that decodes all 394 games of the four bundled
+  databases.
+- **Code:** `cb/moves.rs` (`MODE0_TABLE`, `decode_mode0` →
+  `DecodedGame { game, order, problems }`), `cb/annotations.rs`,
+  `cb/import.rs` (`import_cb(db, cbh_path, progress)`), `cb/header.rs`
+  (`GameRecord::main_line_matches`); the `import_cb` command and
+  `spawn_import` (shared with `import_pgn`) in `commands/db.rs`;
+  `api.importCb`; `db.importFrom` picks by extension.
+- **Tests:** unit tests in `cb::` (29); ignored integration tests on the
+  real files in `crates/chess-db/tests/cb_import.rs` (`CBH_SAMPLES`,
+  `CBH_MEGA`, defaults under `testdata/large/`); the smoke driver
+  `scripts/smoke/cbh.js`. The real databases aren't committed; on this
+  machine `testdata/large/cbh-samples/` and `testdata/large/Mega Database
+  2019.*` are symlinks to `/home/aysaac/Windows/`.
+- **Not yet:** Chess960 and the other encoding modes, null moves, `.cbj`,
+  sources, teams, eval and clock annotations, guiding texts, a choice of
+  comment language, and `.cbh` in the welcome guide's import wizard (it
+  picks PGN files only).
 
 ### New: docking (UI-04, 2026-10-01)
 - **What the user sees:** the same layout as before at first: Notation,
@@ -788,6 +854,7 @@ clocks and evals), 16-core laptop:
 | In the dev app (`tauri dev`) | index ready 14 s after a 1M import; tree 250 ms first, ~100 ms after 1.e4; position search (585k games) 45 ms |
 | Copy 1M games to a new database (DB-06, `drag.js`) | 13.2 s in the dev app, with other agents' smoke runs loading the machine (blobs copied as is, nothing decoded) |
 | Reference tab (OPEN-14), release (`import_bench`) | Moves + Hot + Best players + top games: 19.5 ms at the start (1M games), 13 ms after 1.e4, 0.8–1.7 ms deeper. Lines: 1.4 s at the start, 0.75 s after 1.e4 (jobs), 58 ms for 1.d4 d5 2.c4 (36,333 games), 26 ms for 1.e4 c5 2.Nf3 d6 (15,921), 6 ms for the Najdorf (3,101) |
+| Mega Database 2019 (IO-03, `import_bench` on the `.cbh`, 7,623,531 games, 754 MB `.cbg`) | Import 388 s (19.6k games/s), 670 MB peak RSS; DB 1,355 MB; open 139 ms; sort by White 656 ms; read a game ~150 µs; header search 150 ms; position index 93 s, 364M positions, 5.8 GB; tree at the start 459 ms, after 1.e4 92 ms; Reference lines at the start 9.8 s (a job) |
 | Reference tab in `tauri dev` (`reference.js`, round trips through IPC) | Moves + Hot + Best players + top games: 92 ms the first time (loads the per-game stats), then 35 ms at the start, 18 ms after 1.e4, 4–13 ms deeper (target 200 ms). Lines: 79 ms for 36,333 games, 42 ms for 15,921, 10 ms for 3,101 (target 500 ms under 50,000 games); as jobs 1.64 s at the start, 0.86 s after 1.e4; 1–6 ms from the cache. The tab on screen at the start: 125–130 ms |
 
 ### How the pieces talk (additions)

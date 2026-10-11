@@ -124,7 +124,7 @@ Two sides of one program:
 |---|---|---|---|---|---|
 | IO-01 | PGN read: tolerant, streaming (multi-GB files), recovery from malformed games | CB+FR | P0 | GAME-01/02, CORE-02 | Import speed is a headline metric |
 | IO-02 | PGN write incl. comments, NAGs, variations, `%cal/%csl/%clk/%eval` | CB+FR | P0 | GAME-01 | Round-trip test suite |
-| IO-03 | ChessBase **.cbh** read (+ .cbg/.cba/.cbp/.cbt/.cbs/.cbj… companions) | CB | P3 | DB-01 | Key for migrating ChessBase users (Mega/Corr DBs). Partial reverse-engineered specs exist |
+| IO-03 | ChessBase **.cbh** read (+ .cbg/.cba/.cbp/.cbt/.cbs/.cbj… companions) | CB | P3 | DB-01 | Done (2026-10-08): Import games takes a `.cbh`. Moves with variations (encoding mode 0, the translation table read from the user's own ChessBase 16), comments, symbols, coloured squares and arrows, players, events, sites, annotators, dates, results, Elos, ECO. Mega Database 2019: 7,623,531 of 7,623,697 games; Chess960 and two rare modes are skipped, lines with a null move are cut. Not yet: Chess960, null moves, `.cbj`, sources, teams, guiding texts. Spec: [io-03-cbh.md](io-03-cbh.md) |
 | IO-04 | .cbh write | CB | P5 | IO-03 | Low value, high risk |
 | IO-05 | .cbv (compressed ChessBase archive) read | CB | P4 | IO-03 | |
 | IO-06 | Opening books: Polyglot .bin read/write; ChessBase .ctg read | CB+FR | P2 (bin) / P4 (ctg) | CORE-04 | CTG is proprietary, Polyglot is open |

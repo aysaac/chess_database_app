@@ -90,7 +90,7 @@
     expect(groups().every((g) => g.dataset.form === "full"), "every group in full at the window's width");
     for (const label of ["Paste game", "Paste position", "Copy game", "Copy position", "Board image", "New game",
       "More ways to start a game", "Save", "Save as new", "Undo", "Redo", "Find games", "Go to position…", "Analyze",
-      "Blunder check…", "Engines…", "New database", "Open database", "Recent", "Import PGN", "Export PGN",
+      "Blunder check…", "Engines…", "New database", "Open database", "Recent", "Import games", "Export PGN",
       "Notation", "Opening tree", "Reference", "Reset layout"]) {
       const b = rb(label);
       expect(b, "a ribbon button " + label);

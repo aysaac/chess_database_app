@@ -4,6 +4,7 @@
 
 pub mod blob;
 mod bytes;
+pub mod cb;
 mod copy;
 mod database;
 mod export;
@@ -18,6 +19,7 @@ mod sort;
 
 use std::path::PathBuf;
 
+pub use cb::import::import_cb;
 pub use copy::{CopySummary, copy_games};
 pub use database::{CompactSummary, Database, DbInfo, EXTENSION, GameRow, GameStat, NameKind, PreparedGame};
 pub use export::export_pgn;

@@ -257,8 +257,8 @@
   <div class="col">
     <RibbonButton
       icon="file-down"
-      label="Import PGN"
-      title="Add the games of a PGN file to the open database"
+      label="Import games"
+      title="Add the games of a PGN file or a ChessBase database (.cbh) to the open database"
       {compact}
       disabled={!db.info}
       onclick={() => db.importDialog()}

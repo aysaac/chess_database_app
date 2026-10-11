@@ -209,12 +209,39 @@ pub async fn import_pgn(
     handle: u32,
     path: String,
 ) -> AppResult<u64> {
+    spawn_import(app, &state, handle, PathBuf::from(path), import_db)
+}
+
+/// Imports a ChessBase database (IO-03), given its `.cbh` file, as a job.
+/// When it had warnings, `import_report` returns them afterwards.
+#[tauri::command]
+pub async fn import_cb(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    handle: u32,
+    path: String,
+) -> AppResult<u64> {
+    spawn_import(app, &state, handle, PathBuf::from(path), chess_db::import_cb)
+}
+
+type ImportFn = fn(
+    &std::sync::Mutex<Database>,
+    &Path,
+    &dyn chess_db::Progress,
+) -> Result<chess_db::ImportSummary, chess_db::DbError>;
+
+fn spawn_import(
+    app: AppHandle,
+    state: &AppState,
+    handle: u32,
+    path: PathBuf,
+    import: ImportFn,
+) -> AppResult<u64> {
     let db = state.db(handle)?;
-    let path = PathBuf::from(path);
     let label = format!("Importing {}", file_label(&path));
     state.import_reports.lock().expect("import reports lock").remove(&handle);
     Ok(state.jobs.spawn("import", label, move |ctx| {
-        let summary = import_db(&db, &path, ctx).map_err(to_job_error)?;
+        let summary = import(&db, &path, ctx).map_err(to_job_error)?;
         for w in summary.warnings.iter().take(20) {
             log::warn!("{}: game {}: {}", path.display(), w.game_index + 1, w.message);
         }

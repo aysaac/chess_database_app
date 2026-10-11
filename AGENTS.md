@@ -14,7 +14,7 @@ Windows and macOS.
 |---|---|
 | `crates/chess-core` | Chess domain: rules glue over `shakmaty`, notation, game tree (`game/mod.rs`), editing session with undo (`game/editor.rs`), PGN reader and writer (`pgn/`) |
 | `crates/chess-jobs` | Background jobs: threads, throttled progress, cooperative cancellation |
-| `crates/chess-db` | Native database: file format, crash-safe commits, import/export, sorted views, header search, position index (`positions.rs`), the Reference tab's queries (`reference.rs`), compaction |
+| `crates/chess-db` | Native database: file format, crash-safe commits, import/export, sorted views, header search, position index (`positions.rs`), the Reference tab's queries (`reference.rs`), compaction, ChessBase `.cbh` import (`cb/`, IO-03; spec in `docs/io-03-cbh.md`) |
 | `crates/chess-engine` | UCI engine host, analysis driver thread, blunder check (`review.rs`); `src/bin/fake_uci.rs` is a toy engine for tests |
 | `crates/chess-diagram` | Board images (QOL-06): a position as SVG or PNG, drawn like the app's board (resvg); vendored pieces and font in `data/` (licences in `data/COPYING`) |
 | `app/src-tauri` | Tauri shell: commands (`src/commands/`), DTOs (`src/dto.rs`), view building (`src/view.rs`), state (`src/state.rs`), engines and analysis (`src/engines.rs`), settings (`src/settings.rs`) |
@@ -55,6 +55,11 @@ cargo run --release -p chess-db --example import_bench -- testdata/large/lichess
 cargo run --release -p chess-db --example import_bench -- path/to/existing.chessdb   # skip the import
 cargo test --release -p chess-db -- --ignored        # lossless import → export → import on TWIC
 LARGE_PGN=path/to.pgn cargo test --release -p chess-db -- --ignored
+
+# ChessBase databases (IO-03; not committed: link or copy them into testdata/large/)
+cargo run --release -p chess-db --example import_bench -- "testdata/large/Mega Database 2019.cbh"
+cargo test --release -p chess-db --test cb_import -- --ignored   # CBH_SAMPLES=dir, CBH_MEGA=file.cbh
+cargo run --release -p chess-db --example cb_decode_stats -- "path/to/Base"  [STEP | show ID]
 
 # End-to-end smoke test of the real app, on a private headless display (see below; needs sway)
 scripts/smoke/run.sh
@@ -129,7 +134,11 @@ desktop, so it's safe to run while they work.
   groups and sides going, the dividers by keys, pointer and double-click
   and their limits, View ▸ Reset layout, and the `layout` pref read back
   after reloads, also from a version 1 layout with `listShare`, an
-  incomplete one and an unreadable one).
+  incomplete one and an unreadable one), `cbh.js` (IO-03: Import games in
+  the ribbon, a `.cbh` whose files are missing, and, with the databases
+  that ship with ChessBase linked into `testdata/large/cbh-samples/`,
+  Openings' four-language comments shown in one language and Marathon's
+  set-up positions).
   `search.js`, `tree.js`, `view.js` and `reference.js` time the 1M-game
   database when `__BIG__`; `drag.js` times copying it.
 - **Reloading:** the harness runs the driver again after every page load,
@@ -239,9 +248,16 @@ stay identical before, during and after the run.
 
 ### Other helpers
 
-- `crates/chess-db/examples/import_bench.rs`: imports a PGN and times open,
-  paging, sorting and random game reads. Use it to catch performance
-  regressions.
+- `crates/chess-db/examples/import_bench.rs`: imports a PGN or a `.cbh` and
+  times open, paging, sorting and random game reads. Use it to catch
+  performance regressions.
+- `crates/chess-db/examples/cb_decode_stats.rs`: decodes every game (or
+  every STEP-th) of a ChessBase database and counts the outcomes by
+  message; `show ID` prints one game as PGN. The first stop when a `.cbh`
+  imports badly.
+- `crates/chess-db/examples/extract_cb_key.rs`: finds the `.cbg`
+  translation table in a ChessBase install and checks it against real
+  databases (how the built-in table was made; `docs/io-03-cbh.md` §3.2).
 - `crates/chess-diagram/examples/render.rs`: draws a FEN as a board image
   (`cargo run -p chess-diagram --example render -- out.png [FEN] [SIZE] [black]`,
   or `out.svg`), with a sample arrow and highlights, to check diagrams
@@ -416,6 +432,10 @@ stay identical before, during and after the run.
   (`CopyGamesDialog.svelte`).
 - TWIC rejects `curl` without browser-like headers (HTTP 406). The fetch
   script sends them.
+- **`.cbh` counts a game's main line in full moves, not plies** (and
+  modulo 256 past 255). Checking decoded games against plies made the right
+  translation table look wrong for a whole session; use
+  `GameRecord::main_line_matches`.
 - Editing files under `app/src` or the crates while `tauri dev` runs
   triggers a hot reload or rebuild. If a smoke run is in progress, that
   reload re-runs the driver.

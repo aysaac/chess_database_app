@@ -50,6 +50,8 @@ export const api = {
   sortGames: (handle: number, sort: SortSpecDto) =>
     invoke<number | null>("sort_games", { handle, sort }),
   importPgn: (handle: number, path: string) => invoke<number>("import_pgn", { handle, path }),
+  /** Imports a ChessBase database (IO-03), given its `.cbh` file. */
+  importCb: (handle: number, path: string) => invoke<number>("import_cb", { handle, path }),
   importReport: (handle: number) => invoke<ImportReportDto | null>("import_report", { handle }),
   exportPgn: (handle: number, path: string, ids: number[] | null = null) =>
     invoke<number>("export_pgn", { handle, path, ids }),

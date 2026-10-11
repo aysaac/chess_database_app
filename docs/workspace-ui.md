@@ -157,7 +157,7 @@ existing titles and shortcut hints.
 | Game | **New game ▾** (split button; its menu: New game, Set up position…), Save, Save as new, Undo, Redo |
 | Reference | The reference database dropdown (wide), Find games, Go to position… |
 | Analysis | Engine on/off, Blunder check…, Engines… |
-| Database | New database, Open database, Recent ▾, Import PGN, Export |
+| Database | New database, Open database, Recent ▾, Import games, Export |
 | View | Notation, Opening tree, Reference (each shows that tab); Reset layout (once step 4 is in) |
 
 **Look**

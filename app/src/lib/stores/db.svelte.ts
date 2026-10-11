@@ -21,6 +21,12 @@ import { jobs } from "./jobs.svelte";
 import { notices } from "./notify.svelte";
 
 export const PGN_FILTER = [{ name: "PGN games", extensions: ["pgn"] }];
+/** What Import opens: a PGN file, or a ChessBase database by its `.cbh` file (IO-03). */
+const IMPORT_FILTER = [
+  { name: "PGN files and ChessBase databases", extensions: ["pgn", "cbh"] },
+  ...PGN_FILTER,
+  { name: "ChessBase databases", extensions: ["cbh"] },
+];
 /** List columns can be resized within these widths (CSS pixels). */
 export const MIN_COLUMN_WIDTH = 24;
 export const MAX_COLUMN_WIDTH = 1200;
@@ -459,23 +465,24 @@ class DbStore {
     if (!this.info) return;
     const path = await open({
       multiple: false,
-      filters: PGN_FILTER,
-      title: "Import PGN",
+      filters: IMPORT_FILTER,
+      title: "Import games",
       defaultPath: await inDocuments(),
     });
     if (typeof path === "string") await this.importFrom(path);
   }
 
   /**
-   * Imports a PGN file into the open database; resolves when done, with
-   * whether the whole file was imported (false if cancelled or failed).
+   * Imports a PGN file, or a ChessBase database given its `.cbh` file, into
+   * the open database; resolves when done, with whether everything was
+   * imported (false if cancelled or failed).
    */
   async importFrom(path: string): Promise<boolean> {
     if (!this.info) return false;
     const handle = this.info.handle;
     try {
       this.importReport = null;
-      const id = await api.importPgn(handle, path);
+      const id = await (/\.cbh$/i.test(path) ? api.importCb(handle, path) : api.importPgn(handle, path));
       this.#importJobs.add(id);
       const done = await jobs.waitFor(id);
       this.#importJobs.delete(id);

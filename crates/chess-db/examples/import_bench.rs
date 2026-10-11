@@ -1,8 +1,9 @@
-//! Dev benchmark (not a product CLI): imports a PGN into a fresh database
-//! and times the operations the UI depends on. Given an existing
-//! `.chessdb` folder instead, it skips the import and leaves it in place.
+//! Dev benchmark (not a product CLI): imports a PGN, or a ChessBase
+//! database by its `.cbh` file (IO-03), into a fresh database and times the
+//! operations the UI depends on. Given an existing `.chessdb` folder
+//! instead, it skips the import and leaves it in place.
 //!
-//! Usage: cargo run --release -p chess-db --example import_bench -- FILE.pgn|DB.chessdb [OUT_DIR]
+//! Usage: cargo run --release -p chess-db --example import_bench -- FILE.pgn|FILE.cbh|DB.chessdb [OUT_DIR]
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -11,7 +12,7 @@ use std::time::Instant;
 use chess_core::position::parse_uci;
 use chess_core::shakmaty::{Chess, Position};
 use chess_db::{
-    Database, HeaderQuery, NoProgress, ResultFilter, SortKey, SortSpec, build_sort, find_position,
+    Database, HeaderQuery, NoProgress, ResultFilter, SortKey, SortSpec, build_sort, find_position, import_cb,
     import_pgn, page_ids, position_tree, reference_lines, reference_overview, search_headers,
     update_position_index,
 };
@@ -25,7 +26,8 @@ fn peak_rss_mb() -> Option<f64> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let input = PathBuf::from(args.next().ok_or("usage: import_bench FILE.pgn|DB.chessdb [OUT_DIR]")?);
+    let input =
+        PathBuf::from(args.next().ok_or("usage: import_bench FILE.pgn|FILE.cbh|DB.chessdb [OUT_DIR]")?);
     let existing = input.is_dir();
     let db_path = if existing {
         input.clone()
@@ -43,23 +45,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn import(pgn: &std::path::Path, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let pgn_size = std::fs::metadata(pgn)?.len();
+fn import(source: &std::path::Path, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let chessbase = source.extension().is_some_and(|e| e.eq_ignore_ascii_case("cbh"));
+    // A ChessBase database's moves are in its `.cbg`, the bulk of its size.
+    let source_size =
+        std::fs::metadata(if chessbase { source.with_extension("cbg") } else { source.to_owned() })?.len();
     let db = Mutex::new(Database::create(db_path)?);
     let t = Instant::now();
-    let summary = import_pgn(&db, pgn, &NoProgress)?;
+    let summary =
+        if chessbase { import_cb(&db, source, &NoProgress)? } else { import_pgn(&db, source, &NoProgress)? };
     let secs = t.elapsed().as_secs_f64();
     let info = db.lock().unwrap().info();
     println!(
         "import      {} games in {secs:.2}s = {:.0} games/s ({:.1} MB/s)",
         summary.imported,
         summary.imported as f64 / secs,
-        pgn_size as f64 / 1e6 / secs
+        source_size as f64 / 1e6 / secs
     );
     println!("            skipped {}, warnings {}", summary.skipped, summary.warning_count);
     println!(
-        "size        PGN {:.1} MB -> DB {:.1} MB ({:.1} bytes/game)",
-        pgn_size as f64 / 1e6,
+        "size        {} {:.1} MB -> DB {:.1} MB ({:.1} bytes/game)",
+        if chessbase { ".cbg" } else { "PGN" },
+        source_size as f64 / 1e6,
         info.size_bytes as f64 / 1e6,
         info.size_bytes as f64 / summary.imported.max(1) as f64
     );
