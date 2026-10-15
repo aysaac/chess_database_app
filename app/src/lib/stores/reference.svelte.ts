@@ -310,11 +310,18 @@ class ReferenceStore {
     this.selected = null;
   }
 
-  /** Opens a top game on the main board where it reaches the position, as opening from the list does. */
+  /**
+   * Opens a top game on the main board, as opening from the list does. If
+   * it's on the mini board at the board's position, opens at the position
+   * shown there; otherwise where it first reaches the board's position.
+   */
   async openGame(g: TopGameDto, newTab = false) {
     const target = this.target;
     if (!target) return;
-    await game.open(target.handle, g.id, null, newTab ? "tab" : "auto", g.ply);
+    const mini = this.mini;
+    const onMini = mini?.kind === "game" && mini.game?.id === g.id && mini.fen === game.view?.fen;
+    const ply = onMini ? mini.positions[mini.index].ply : g.ply;
+    await game.open(target.handle, g.id, null, newTab ? "tab" : "auto", ply);
   }
 
   /** Whether `target` is the reference database, or the open one read because none is set. */
