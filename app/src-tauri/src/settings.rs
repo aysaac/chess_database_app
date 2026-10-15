@@ -100,6 +100,12 @@ pub struct Settings {
     pub database_views: Vec<DbView>,
     /// Preferences owned by the frontend (board orientation, pane sizes…).
     pub ui: serde_json::Map<String, serde_json::Value>,
+    /// Counts the changes to `ui` since start-up (not saved). Every window
+    /// keeps its own copy of the preferences (DB-07), and two changes to the
+    /// same one can reach a window in either order, so each carries the
+    /// revision it was saved at and the window keeps the newer.
+    #[serde(skip)]
+    pub ui_revision: u64,
 }
 
 impl Settings {
@@ -150,6 +156,18 @@ impl Settings {
         let tmp = dir.join(format!("{FILE}.tmp"));
         std::fs::write(&tmp, json)?;
         std::fs::rename(&tmp, dir.join(FILE))
+    }
+
+    /// Sets one frontend preference (`null` removes it) and returns the
+    /// revision it's saved at (see `ui_revision`).
+    pub fn set_ui(&mut self, key: String, value: serde_json::Value) -> u64 {
+        if value.is_null() {
+            self.ui.remove(&key);
+        } else {
+            self.ui.insert(key, value);
+        }
+        self.ui_revision += 1;
+        self.ui_revision
     }
 
     /// Whether to open the welcome guide at start-up: on a first run, but
@@ -268,6 +286,25 @@ mod tests {
         // Unknown and missing fields are fine.
         std::fs::write(dir.path().join(FILE), br#"{"recentDatabases": ["/c"], "future": 1}"#).unwrap();
         assert_eq!(Settings::load(dir.path()).recent_databases, [PathBuf::from("/c")]);
+    }
+
+    #[test]
+    fn numbers_each_change_to_the_frontend_prefs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Settings::default();
+        assert_eq!(s.set_ui("appTheme".into(), "dark".into()), 1);
+        assert_eq!(s.set_ui("libraryFavorites".into(), serde_json::json!(["/a.chessdb"])), 2);
+        assert_eq!(s.set_ui("appTheme".into(), serde_json::Value::Null), 3, "a removal counts too");
+        assert!(!s.ui.contains_key("appTheme"));
+        assert_eq!(s.ui["libraryFavorites"], serde_json::json!(["/a.chessdb"]));
+
+        // The revision lasts for the session only: it isn't saved.
+        s.save(dir.path()).unwrap();
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(!text.contains("uiRevision"), "{text}");
+        let loaded = Settings::load(dir.path());
+        assert_eq!(loaded.ui_revision, 0);
+        assert_eq!(loaded.ui, s.ui);
     }
 
     #[test]

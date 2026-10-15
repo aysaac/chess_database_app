@@ -283,7 +283,7 @@
     await until(() => Math.abs(movesH() - (h0 + 60)) < 3 && Math.abs(linesH() - (l0 - 60)) < 3,
       `the moves 60px taller, the lines 60px shorter: ${h0}→${movesH()}, ${l0}→${linesH()}`);
     await untilAsync(async () => {
-      const s = (await api.uiPrefs()).referenceSizes;
+      const s = (await api.uiPrefs()).values.referenceSizes;
       return s && Math.abs(s.moves - reference.sizes.moves) < 0.002 && s.moves > 0.3;
     }, "the sizes saved");
     const l1 = linesH();

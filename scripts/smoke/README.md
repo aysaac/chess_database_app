@@ -16,7 +16,8 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke\run.ps1 [scripts\smoke\la
 
 Debug builds only. `app/src-tauri/src/lib.rs` evaluates the file in
 `CHESSDB_SMOKE` after page load. `app/src/main.ts` exposes
-`window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, api, invoke }`.
+`window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, library, appearance, api, invoke }`
+once the window's shell is mounted.
 The driver calls the stores exactly as the UI does and reports through the
 `dev_log` command as `[smoke] …` lines.
 
@@ -41,6 +42,8 @@ Each driver's header comment says what it covers in full.
 | `ribbon.js` | UI-18 and IO-08: the groups, Copy game then Paste game through the real clipboard, Paste position, the messages for a clipboard without a game, Ctrl+V with a PGN, the New game menu and Ctrl+N, the reference dropdown, and narrower widths: labels drop, then groups collapse into dropdowns. |
 | `reference.js` | OPEN-14, on the fixture `testdata/pgn/reference.pgn` with known counts: the moves with Hot and Best players, the main line and lines, the top games' order, playing a move, the mini board stepping on its own and resetting when the board moves, opening a top game where it reaches the position, the dividers, the stacked narrow layout, the note without a reference database. |
 | `dock.js` | UI-04: every panel tab dragged to each side and into other groups with synthetic pointer events, next to the nearest group, reordering a strip, Escape and a release elsewhere cancelling, the tab menu from a right-click, Shift+F10 and the context-menu key, empty groups and sides going, the dividers by keys, pointer and double-click and their limits, View ▸ Reset layout, and the `layout` pref read back after reloads, also from a version 1 layout with `listShare`, an incomplete one and an unreadable one. |
+| `library.js` | DB-07: the library window (cards with counts, the preview, its mini board, resizing it, the bottom layout), Open spawning an editor window, favourites and the preview layout and size surviving a reload, the theme applying to the library itself, and preferences changed in one window reaching the other both ways (the orientation, a per-window one, staying put). Runs in both windows, which take turns through a `smokeStep` pref. |
+| `collapse.js` | UI-04: minimizing the Game list group to the status bar and restoring it, after a reload too. Opens an editor window from the library and runs there. |
 | `cbh.js` | IO-03: Import games in the ribbon, a `.cbh` whose files are missing, and, with the databases that ship with ChessBase linked into `testdata/large/cbh-samples/`, Openings' four-language comments shown in one language and Marathon's set-up positions. |
 
 `search.js`, `tree.js`, `view.js` and `reference.js` time the 1M-game
@@ -51,13 +54,20 @@ database when `__BIG__`; `drag.js` times copying it.
 - **A new flow is a new driver.** Copy `basic.js`; the placeholders
   `__ROOT__`, `__OUT__` and `__BIG__` are filled in by `run.sh`. Log
   `shot:<name>` to request a screenshot and `FAILED: …` to fail.
+- **The main window is the library (DB-07), not an editor.** A driver
+  that needs the board or the panels opens an editor window from it
+  (`api.openEditorWindow`) and does its work there: the harness runs the
+  driver in every window that loads a page (`collapse.js`, `library.js`).
+  An editor window doesn't reopen its database after a reload. Drivers
+  written before DB-07 still expect an editor in the main window.
 - **Never open native dialogs from a driver:** nobody can click them on the
   private display, so the driver hangs until it times out. Every driver
   starts with `game.confirmDiscard = async () => true`.
 - **Reloading:** the harness runs the driver again after every page load,
   so a driver can test what a restart restores with `location.reload()`.
   Keep the phase it's in in `sessionStorage`, and wait for debounced pref
-  writes to reach `api.uiPrefs()` first (`panels.js` does both).
+  writes to reach `api.uiPrefs()` first (`panels.js` does both; it's
+  `{ values, revision }`).
 - **Clipboard:** a driver logs `clip:<name>` to have the harness save the
   private display's clipboard (`wl-paste`) as `<out-dir>/clips/<name>.png`
   or `.txt`, and print the types on offer. Linux only; it never reads the

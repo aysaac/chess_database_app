@@ -15,8 +15,6 @@
   import StatusBar from "./lib/components/StatusBar.svelte";
   import WelcomeGuide from "./lib/components/WelcomeGuide.svelte";
   import { analysis } from "./lib/stores/analysis.svelte";
-  import { appearance } from "./lib/stores/appearance.svelte";
-  import { board as boardPrefs } from "./lib/stores/board.svelte";
   import { db } from "./lib/stores/db.svelte";
   import { drag } from "./lib/stores/drag.svelte";
   import { game } from "./lib/stores/game.svelte";
@@ -65,18 +63,6 @@
     boardSize = Math.max(BOARD_MIN, (Math.floor((fit * dpr) / 8) * 8 + 0.5) / dpr);
   }
 
-  // The board colours (UI-01) apply to every board through <html>.
-  $effect(() => {
-    document.documentElement.dataset.boardTheme = boardPrefs.theme;
-  });
-
-  // The app's colour theme (Settings): "system" leaves app.css to the OS.
-  $effect(() => {
-    const theme = appearance.theme;
-    if (theme === "system") delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = theme;
-  });
-
   onMount(() => {
     game.newGame();
     fitBoard();
@@ -103,12 +89,12 @@
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
       if (!(await game.confirmDiscard(game.tabs))) event.preventDefault();
     });
-    // Restore the session's preferences, then open whatever database the
-    // library window spawned this editor window for (DB-07); it's the
-    // library, not this window, that remembers "last used" now.
+    // The preferences are loaded before any window mounts (main.ts), and
+    // the panel layout (UI-04) follows from them (panels.svelte.ts). Open
+    // whatever database the library window spawned this editor window for
+    // (DB-07); it's the library, not this window, that remembers "last
+    // used" now.
     void (async () => {
-      // The panel layout (UI-04) follows from the prefs (panels.svelte.ts).
-      await prefs.load();
       game.orientation = prefs.get<string>("orientation", "white") === "black" ? "black" : "white";
       const target = await api.takeEditorTarget(getCurrentWindow().label).catch(() => null);
       if (target) await db.openAt(target);

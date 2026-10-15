@@ -1,6 +1,11 @@
 // Smoke-test driver for the panel-group minimize button (collapse.js,
 // scratch): minimizing the Game list group to a status bar icon and
 // restoring it, and that the layout pref round-trips after a reload.
+//
+// The panels are an editor's (DB-07): the main window is the library, so
+// there the driver only opens an editor window, which runs the same script
+// and does the checks. An editor doesn't reopen its database after a reload,
+// so the driver opens it again.
 (async () => {
   const ROOT = "__ROOT__";
   const OUT = "__OUT__";
@@ -28,6 +33,12 @@
   );
 
   const phase = sessionStorage.getItem("collapse-phase") || "start";
+
+  if (document.querySelector(".home")) {
+    await log("library window: opening an editor window for the checks");
+    await api.openEditorWindow(null);
+    return;
+  }
 
   try {
     await log("start, phase=" + phase);
@@ -66,6 +77,7 @@
     }
 
     if (phase === "reloaded") {
+      await db.openAt(OUT + "/smoke.chessdb");
       await until(() => db.info, "the database reopened");
       const gamesGroup = panels.groupOf("games");
       expect(!!gamesGroup, "the games panel still has a group after reload");

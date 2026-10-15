@@ -468,10 +468,10 @@
         "the notation left of the game list: " + where());
       panels.resizeSide("right", 0.4);
       await untilAsync(async () => {
-        const l = (await api.uiPrefs()).layout;
+        const l = (await api.uiPrefs()).values.layout;
         return l?.version === 2 && l.zones.right.size === 0.4 && l.zones.bottom.groups.map((x) => x.panels.join("+")).join(" | ") === "notation | games";
       }, "the layout saved");
-      const saved = await api.uiPrefs();
+      const saved = (await api.uiPrefs()).values;
       expect(!("treeVisible" in saved) && !("listShare" in saved), "no older prefs");
       expect(saved.layout.zones.bottom.groups.every((x) => !("id" in x)), "group ids aren't saved");
       sessionStorage.setItem("smoke-dock-right", String(sizeOf("right")));
@@ -517,7 +517,7 @@
         `listShare carried over to the bottom side: ${sizeOf("bottom")} of ${appBox().height}`);
       tab("notation").click();
       await untilAsync(async () => {
-        const p = await api.uiPrefs();
+        const p = (await api.uiPrefs()).values;
         return p.layout?.version === 2 && p.layout.zones.bottom.size === 0.4 && !("listShare" in p);
       }, "the layout saved with the bottom side at 0.4, and listShare gone");
       // A version 2 layout without the Reference tab (a panel added later):

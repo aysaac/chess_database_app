@@ -36,6 +36,8 @@ import type { ShapeDto } from "./bindings/ShapeDto";
 import type { SortSpecDto } from "./bindings/SortSpecDto";
 import type { StepDto } from "./bindings/StepDto";
 import type { TreeDto } from "./bindings/TreeDto";
+import type { UiPrefChangeDto } from "./bindings/UiPrefChangeDto";
+import type { UiPrefsDto } from "./bindings/UiPrefsDto";
 import type { VariationPolicyDto } from "./bindings/VariationPolicyDto";
 
 export const api = {
@@ -162,8 +164,9 @@ export const api = {
 
   recentDatabases: () => invoke<RecentDbDto[]>("recent_databases"),
   forgetRecentDatabase: (path: string) => invoke<void>("forget_recent_database", { path }),
-  uiPrefs: () => invoke<Record<string, unknown>>("ui_prefs"),
-  setUiPref: (key: string, value: unknown) => invoke<void>("set_ui_pref", { key, value }),
+  uiPrefs: () => invoke<UiPrefsDto>("ui_prefs"),
+  /** Saves one preference (null removes it); resolves to the revision it's saved at. */
+  setUiPref: (key: string, value: unknown) => invoke<number>("set_ui_pref", { key, value }),
 
   onboardingStatus: () => invoke<OnboardingDto>("onboarding_status"),
   finishWelcome: () => invoke<void>("finish_welcome"),
@@ -177,6 +180,11 @@ export function onAnalysis(cb: (update: AnalysisDto) => void): Promise<UnlistenF
 
 export function onJob(cb: (job: JobDto) => void): Promise<UnlistenFn> {
   return listen<JobDto>("job", (e) => cb(e.payload));
+}
+
+/** A preference saved by any window, this one included (DB-07). */
+export function onUiPref(cb: (change: UiPrefChangeDto) => void): Promise<UnlistenFn> {
+  return listen<UiPrefChangeDto>("ui-pref", (e) => cb(e.payload));
 }
 
 export function isAppError(e: unknown): e is AppError {

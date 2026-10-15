@@ -200,6 +200,14 @@ pub struct DbInfo {
     pub size_bytes: u64,
 }
 
+/// A database's game count and size on disk, read without opening it
+/// ([`Database::summary`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DbSummary {
+    pub games: u32,
+    pub size_bytes: u64,
+}
+
 pub struct Database {
     dir: PathBuf,
     id: String,
@@ -276,6 +284,50 @@ fn header(magic: &[u8; 8], size: u64) -> Vec<u8> {
     }
     h.resize(size as usize, 0);
     h
+}
+
+/// The format version and id in `dir`'s `db.meta`, if it's a database this
+/// version can open.
+fn read_meta(dir: &Path) -> Result<(u32, String), DbError> {
+    let meta =
+        std::fs::read_to_string(dir.join(META_FILE)).map_err(|_| DbError::NotADatabase(dir.to_path_buf()))?;
+    let mut lines = meta.lines();
+    let version = lines
+        .next()
+        .and_then(|l| l.strip_prefix("chessdb "))
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .ok_or_else(|| DbError::NotADatabase(dir.to_path_buf()))?;
+    if !(1..=META_VERSION).contains(&version) {
+        return Err(DbError::UnsupportedVersion(version));
+    }
+    let id = lines.find_map(|l| l.strip_prefix("id ")).unwrap_or_default().trim().to_owned();
+    Ok((version, id))
+}
+
+/// The committed game count in an index file's header, checked against the
+/// records the file holds, and the length the file should have: records
+/// past the count are uncommitted (see the commit protocol above).
+fn committed_count(idx: &File) -> Result<(u32, u64), DbError> {
+    let mut count_buf = [0u8; 8];
+    read_exact_at(idx, &mut count_buf, IDX_COUNT_OFFSET)?;
+    let count = u64_at(&count_buf, 0);
+    let expected_len = IDX_HEADER + count * RECORD_SIZE as u64;
+    let idx_len = idx.metadata()?.len();
+    if idx_len < expected_len {
+        return Err(DbError::Corrupt(format!(
+            "index holds {} records but header says {count}",
+            idx_len.saturating_sub(IDX_HEADER) / RECORD_SIZE as u64
+        )));
+    }
+    let count = u32::try_from(count).map_err(|_| DbError::Corrupt("game count too large".into()))?;
+    Ok((count, expected_len))
+}
+
+/// The total size of the files in `dir`.
+fn dir_size(dir: &Path) -> u64 {
+    std::fs::read_dir(dir)
+        .map(|rd| rd.filter_map(|e| e.ok()?.metadata().ok()).map(|m| m.len()).sum())
+        .unwrap_or(0)
 }
 
 fn check_header(file: &File, magic: &[u8; 8], what: &Path) -> Result<(), DbError> {
@@ -355,18 +407,7 @@ impl Database {
 
     pub fn open(path: &Path) -> Result<Database, DbError> {
         let dir = path.to_path_buf();
-        let meta =
-            std::fs::read_to_string(dir.join(META_FILE)).map_err(|_| DbError::NotADatabase(dir.clone()))?;
-        let mut lines = meta.lines();
-        let version = lines
-            .next()
-            .and_then(|l| l.strip_prefix("chessdb "))
-            .and_then(|v| v.trim().parse::<u32>().ok())
-            .ok_or_else(|| DbError::NotADatabase(dir.clone()))?;
-        if !(1..=META_VERSION).contains(&version) {
-            return Err(DbError::UnsupportedVersion(version));
-        }
-        let id = lines.find_map(|l| l.strip_prefix("id ")).unwrap_or_default().trim().to_owned();
+        let (version, id) = read_meta(&dir)?;
 
         let lock = lock_dir(&dir)?;
         recover_compaction(&dir)?;
@@ -382,22 +423,11 @@ impl Database {
         check_header(&idx, IDX_MAGIC, &dir.join(IDX_FILE))?;
         check_header(&blob, BLOB_MAGIC, &dir.join(BLOB_FILE))?;
 
-        let mut count_buf = [0u8; 8];
-        read_exact_at(&idx, &mut count_buf, IDX_COUNT_OFFSET)?;
-        let count = u64_at(&count_buf, 0);
-        let expected_len = IDX_HEADER + count * RECORD_SIZE as u64;
-        let idx_len = idx.metadata()?.len();
-        if idx_len < expected_len {
-            return Err(DbError::Corrupt(format!(
-                "index holds {} records but header says {count}",
-                (idx_len - IDX_HEADER) / RECORD_SIZE as u64
-            )));
-        }
-        if idx_len > expected_len {
+        let (count, expected_len) = committed_count(&idx)?;
+        if idx.metadata()?.len() > expected_len {
             log::warn!("dropping uncommitted index records in {}", dir.display());
             idx.set_len(expected_len)?;
         }
-        let count = u32::try_from(count).map_err(|_| DbError::Corrupt("game count too large".into()))?;
         let blob_len = blob.metadata()?.len();
         for name in NAME_FILES {
             // Left over from a rename interrupted before its swap.
@@ -428,6 +458,29 @@ impl Database {
             name_counts: HashMap::new(),
             name_ranks: HashMap::new(),
         })
+    }
+
+    /// The game count and size of the database at `path`, as
+    /// [`info`](Self::info) gives them, without opening it (DB-07's library
+    /// lists them for every recent database). It reads the committed count
+    /// in the index header and takes no lock, so it stays quick however
+    /// big the database is (opening one of a million games takes about
+    /// half a second) and works while another process has it open. It
+    /// fails where `open` would on a folder that isn't a database, a newer
+    /// format or a truncated index.
+    pub fn summary(path: &Path) -> Result<DbSummary, DbError> {
+        read_meta(path)?;
+        // After a crash during a compaction's swap, the next open finishes
+        // it with the new index (see `recover_compaction`).
+        let mut idx_path = path.join(IDX_FILE);
+        let new_idx = path.join(format!("{IDX_FILE}{NEW_SUFFIX}"));
+        if path.join(COMPACT_MARKER).exists() && new_idx.exists() {
+            idx_path = new_idx;
+        }
+        let idx = File::open(&idx_path)?;
+        check_header(&idx, IDX_MAGIC, &idx_path)?;
+        let (games, _) = committed_count(&idx)?;
+        Ok(DbSummary { games, size_bytes: dir_size(path) })
     }
 
     pub fn path(&self) -> &Path {
@@ -467,9 +520,7 @@ impl Database {
     }
 
     pub fn info(&self) -> DbInfo {
-        let size_bytes = std::fs::read_dir(&self.dir)
-            .map(|rd| rd.filter_map(|e| e.ok()?.metadata().ok()).map(|m| m.len()).sum())
-            .unwrap_or(0);
+        let size_bytes = dir_size(&self.dir);
         DbInfo {
             name: self.name(),
             path: self.dir.clone(),
@@ -1217,6 +1268,7 @@ mod tests {
         drop(db);
         // Crash before the commit: stray .new files are deleted.
         std::fs::write(path.join("games.idx.new"), b"partial").unwrap();
+        assert_eq!(Database::summary(&path).unwrap().games, 2, "the old index stands");
         let db = Database::open(&path).unwrap();
         assert_eq!(db.count(), 2);
         assert!(!path.join("games.idx.new").exists());
@@ -1232,10 +1284,40 @@ mod tests {
             }
         }
         std::fs::write(path.join(COMPACT_MARKER), b"compact\n").unwrap();
+        assert_eq!(Database::summary(&path).unwrap().games, 1, "the new index, as opening will make it");
         let db = Database::open(&path).unwrap();
         assert_eq!(db.count(), 1);
         assert_eq!(db.row(0).unwrap().white, "Bob");
         assert!(!path.join(COMPACT_MARKER).exists());
+    }
+
+    #[test]
+    fn summary_reads_the_count_and_size_without_opening() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Summary")).unwrap();
+        let path = db.path().to_path_buf();
+        let empty = Database::summary(&path).unwrap();
+        assert_eq!((empty.games, empty.size_bytes), (0, db.info().size_bytes));
+        for g in sample_games() {
+            db.append(&g).unwrap();
+        }
+        // While this handle has it open (and locked), as another process might.
+        let info = db.info();
+        assert_eq!(Database::summary(&path).unwrap(), DbSummary { games: 2, size_bytes: info.size_bytes });
+        drop(db);
+
+        // Uncommitted records past the count don't count.
+        {
+            let idx = OpenOptions::new().append(true).open(path.join(IDX_FILE)).unwrap();
+            std::io::Write::write_all(&mut &idx, &[0u8; RECORD_SIZE]).unwrap();
+        }
+        assert_eq!(Database::summary(&path).unwrap().games, 2);
+        assert_eq!(Database::open(&path).unwrap().count(), 2);
+
+        // It fails where opening fails.
+        assert!(matches!(Database::summary(dir.path()), Err(DbError::NotADatabase(_))));
+        std::fs::write(path.join(META_FILE), "chessdb 99\n").unwrap();
+        assert!(matches!(Database::summary(&path), Err(DbError::UnsupportedVersion(99))));
     }
 
     #[test]

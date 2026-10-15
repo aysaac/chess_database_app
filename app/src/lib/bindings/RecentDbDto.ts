@@ -2,6 +2,6 @@
 
 export type RecentDbDto = { path: string, name: string, exists: boolean, 
 /**
- * `None` when `exists` is false, or it couldn't be read (in use elsewhere, say).
+ * `None` when `exists` is false, or it couldn't be read (not a database any more, say).
  */
 games: number | null, sizeBytes: number | null, };

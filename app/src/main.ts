@@ -11,55 +11,70 @@ import "./app.css";
 import "./board-theme.css";
 import App from "./App.svelte";
 import LibraryHome from "./lib/components/LibraryHome.svelte";
+import { applyAppearance } from "./lib/stores/appearance.svelte";
+import { prefs } from "./lib/stores/prefs.svelte";
 
 // The library (DB-07) is the app's main window; opening a database or
 // starting a new game spawns a separate "editor-…" window for it
 // (commands::window::open_editor_window), so several can be open side by
 // side. Any window that isn't the main one is an editor.
 const isMain = getCurrentWindow().label === "main";
-const app = mount(isMain ? LibraryHome : App, { target: document.getElementById("app")! });
 
-// Dev builds expose the stores so smoke-test scripts can drive the UI
-// (see CHESSDB_SMOKE in src-tauri/src/lib.rs).
-if (import.meta.env.DEV) {
-  void (async () => {
-    const [
-      { db },
-      { game },
-      { jobs },
-      { analysis },
-      { prefs },
-      { tree },
-      { panels },
-      { dock },
-      { reference },
-      { onboarding },
-      { notices },
-      { api },
-      { invoke },
-    ] = await Promise.all([
-      import("./lib/stores/db.svelte"),
-      import("./lib/stores/game.svelte"),
-      import("./lib/stores/jobs.svelte"),
-      import("./lib/stores/analysis.svelte"),
-      import("./lib/stores/prefs.svelte"),
-      import("./lib/stores/tree.svelte"),
-      import("./lib/stores/panels.svelte"),
-      import("./lib/stores/dock.svelte"),
-      import("./lib/stores/reference.svelte"),
-      import("./lib/stores/onboarding.svelte"),
-      import("./lib/stores/notify.svelte"),
-      import("./lib/api"),
-      import("@tauri-apps/api/core"),
-    ]);
-    Object.assign(window, {
-      __chessdb: {
-        db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, api, invoke,
-        win: getCurrentWindow(),
-        LogicalSize,
-      },
-    });
-  })();
+// Every window starts the same way, whichever shell it shows: the saved
+// preferences first (kept in step with the other windows from then on), then
+// the theme from them, then the shell. So no shell reads a default where a
+// preference is saved, or saves a change made from one over it, and no
+// window flashes the wrong theme.
+async function start() {
+  await prefs.init();
+  applyAppearance();
+  mount(isMain ? LibraryHome : App, { target: document.getElementById("app")! });
+  if (import.meta.env.DEV) await exposeStores();
 }
 
-export default app;
+// Dev builds expose the stores so smoke-test scripts can drive the UI
+// (see CHESSDB_SMOKE in src-tauri/src/lib.rs). Only once the shell is
+// mounted: drivers look at the page as soon as they find these.
+async function exposeStores() {
+  const [
+    { db },
+    { game },
+    { jobs },
+    { analysis },
+    { tree },
+    { panels },
+    { dock },
+    { reference },
+    { onboarding },
+    { notices },
+    { library },
+    { appearance },
+    { api },
+    { invoke },
+  ] = await Promise.all([
+    import("./lib/stores/db.svelte"),
+    import("./lib/stores/game.svelte"),
+    import("./lib/stores/jobs.svelte"),
+    import("./lib/stores/analysis.svelte"),
+    import("./lib/stores/tree.svelte"),
+    import("./lib/stores/panels.svelte"),
+    import("./lib/stores/dock.svelte"),
+    import("./lib/stores/reference.svelte"),
+    import("./lib/stores/onboarding.svelte"),
+    import("./lib/stores/notify.svelte"),
+    import("./lib/stores/library.svelte"),
+    import("./lib/stores/appearance.svelte"),
+    import("./lib/api"),
+    import("@tauri-apps/api/core"),
+  ]);
+  Object.assign(window, {
+    __chessdb: {
+      db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, library, appearance,
+      api, invoke,
+      win: getCurrentWindow(),
+      LogicalSize,
+    },
+  });
+}
+
+void start();

@@ -21,7 +21,9 @@ use std::path::PathBuf;
 
 pub use cb::import::import_cb;
 pub use copy::{CopySummary, copy_games};
-pub use database::{CompactSummary, Database, DbInfo, EXTENSION, GameRow, GameStat, NameKind, PreparedGame};
+pub use database::{
+    CompactSummary, Database, DbInfo, DbSummary, EXTENSION, GameRow, GameStat, NameKind, PreparedGame,
+};
 pub use export::export_pgn;
 pub use import::{ImportSummary, ImportWarning, game_label, import_pgn, import_reader};
 pub use names::NameTable;

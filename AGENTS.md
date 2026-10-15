@@ -57,6 +57,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace            # also regenerates app/src/lib/bindings/
 cd app && npm run check           # svelte-check (TypeScript + Svelte)
 cd app && npm run build           # production frontend build
+cd app && npm test                # frontend unit tests (node --test; Node 22.18+)
 
 # Regenerate the TypeScript types after changing a DTO in app/src-tauri/src/dto.rs
 cd app && npm run bindings
