@@ -30,8 +30,11 @@
   color-scheme: light;
 }
 
+/* Dark values, either from the OS (unless overridden to light) or forced by
+   the theme setting (App.svelte sets [data-theme] from Settings). Keep the
+   two blocks in sync. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --paper: #182022;
     --panel: #1f2a2c;
     --ink: #dfe6e1;
@@ -50,6 +53,26 @@
     --eval-black-ink: #dfe6e1;
     color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --paper: #182022;
+  --panel: #1f2a2c;
+  --ink: #dfe6e1;
+  --ink-soft: #95a39d;
+  --rule: #33413f;
+  --felt: #6fb59c;
+  --felt-soft: #25443b;
+  --brass: #d9ad55;
+  --brass-soft: #3d3420;
+  --danger: #e27b69;
+  --board-light: #cfcbb2;
+  --board-dark: #5d7a59;
+  --eval-white: #d9d6c8;
+  --eval-white-ink: #182022;
+  --eval-black: #0e1415;
+  --eval-black-ink: #dfe6e1;
+  color-scheme: dark;
 }
 
 *,

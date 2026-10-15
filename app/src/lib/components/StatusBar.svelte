@@ -8,9 +8,11 @@
   import Icon from "./Icon.svelte";
   import ImportWarnings from "./ImportWarnings.svelte";
   import Modal from "./Modal.svelte";
+  import SettingsDialog from "./SettingsDialog.svelte";
 
   let confirmCompact = $state(false);
   let showWarnings = $state(false);
+  let showSettings = $state(false);
 
   function percent(done: number, total: number) {
     return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
@@ -73,6 +75,9 @@
     {notices.current?.text ?? ""}
   </span>
 
+  <button class="cog" aria-label="Settings" title="Settings" onclick={() => (showSettings = true)}>
+    <Icon name="settings" size={14} />
+  </button>
   <button
     class="help"
     aria-label="Getting started"
@@ -80,6 +85,10 @@
     onclick={() => onboarding.show()}>?</button
   >
 </footer>
+
+{#if showSettings}
+  <SettingsDialog onClose={() => (showSettings = false)} />
+{/if}
 
 {#if showWarnings && db.importReport}
   <ImportWarnings report={db.importReport} onClose={() => (showWarnings = false)} />
@@ -116,7 +125,7 @@
 <style>
   footer {
     display: grid;
-    grid-template-columns: auto auto 1fr minmax(0, auto) auto;
+    grid-template-columns: auto auto 1fr minmax(0, auto) auto auto;
     align-items: center;
     gap: 16px;
     height: 30px;
@@ -203,6 +212,21 @@
 
   .notice.error {
     color: var(--danger);
+  }
+
+  .cog {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border-color: var(--rule);
+    border-radius: 50%;
+    color: var(--ink-soft);
+  }
+
+  .cog:hover {
+    color: var(--ink);
   }
 
   /* Opens the welcome guide (QOL-08). */

@@ -14,6 +14,7 @@
   import StatusBar from "./lib/components/StatusBar.svelte";
   import WelcomeGuide from "./lib/components/WelcomeGuide.svelte";
   import { analysis } from "./lib/stores/analysis.svelte";
+  import { appearance } from "./lib/stores/appearance.svelte";
   import { board as boardPrefs } from "./lib/stores/board.svelte";
   import { db } from "./lib/stores/db.svelte";
   import { drag } from "./lib/stores/drag.svelte";
@@ -66,6 +67,13 @@
   // The board colours (UI-01) apply to every board through <html>.
   $effect(() => {
     document.documentElement.dataset.boardTheme = boardPrefs.theme;
+  });
+
+  // The app's colour theme (Settings): "system" leaves app.css to the OS.
+  $effect(() => {
+    const theme = appearance.theme;
+    if (theme === "system") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = theme;
   });
 
   onMount(() => {
