@@ -8,7 +8,7 @@ export, a game list that scrolls through millions of games, a board with
 notation for replaying and editing games, Stockfish analysis and blunder
 check, an opening tree and position search, header search and filters.
 What's planned beyond it is in [docs/feature-catalog.md](docs/feature-catalog.md);
-the current state is in [handoff.md](handoff.md).
+the status of each feature is in the [Feature Status doc](https://claude.ai/artifact/SfWucTSjakLh9oNSWSNQrV#93fdfc30-cba2).
 
 ## What you can do
 
@@ -74,8 +74,8 @@ alone; needs `sway` and `grim`):
 scripts/smoke/run.sh
 ```
 
-Working on the code? Read [AGENTS.md](AGENTS.md) for conventions and
-[handoff.md](handoff.md) for the current state and next steps.
+Working on the code? Read [AGENTS.md](AGENTS.md) for conventions and the
+[Feature Status doc](https://claude.ai/artifact/SfWucTSjakLh9oNSWSNQrV#93fdfc30-cba2) for where the project stands.
 
 ## Layout
 

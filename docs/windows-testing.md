@@ -1,7 +1,7 @@
 # Windows: what's left to test and fix
 
 For the agent working on the user's Windows PC. Read [AGENTS.md](../AGENTS.md)
-and [handoff.md](../handoff.md) first; this file is the Windows to-do list.
+first; this file is the Windows to-do list.
 
 **Status (2026-09-28).** PR #2 is merged: on Windows 10 fmt, clippy, the
 156 tests, svelte-check, the frontend build, all six smoke drivers (through
@@ -22,14 +22,13 @@ depends on what B3 finds.
   PRs #1 and #2 both started from an old `main`, fixed the same lints twice
   and conflicted.
 - **One PR per code item** (A1, A2…). The checks in part B can share one
-  PR that updates this file and the handoff.
+  PR that updates this file.
 - **Before opening a PR:** rebase onto `origin/main` and run the
   [baseline checks](#baseline-checks). The PR description gets what changed,
   a results table and what wasn't verified, like PRs #1 and #2.
 - **Record progress here:** tick the boxes of the items the PR does, with a
-  one-line result. Windows notes for the next agent go in `handoff.md` under
-  `### Windows` in "Environment notes", not in the TL;DR list, so Mac and
-  Windows PRs don't edit the same lines.
+  one-line result. Windows notes for the next agent go under
+  [Notes for the next agent](#notes-for-the-next-agent) at the end.
 - **Keep Linux and macOS unchanged.** Every PR is reviewed on Linux with the
   smoke harness before it's merged. Use `#[cfg(windows)]` for code that
   only makes sense there.
@@ -499,7 +498,7 @@ cargo run --release -p chess-db --example import_bench -- testdata/large/lichess
 cargo run --release -p chess-db --example import_bench -- testdata/large/twic1600.pgn
 ```
 
-Compare with Linux (16-core laptop, release build; from `handoff.md`):
+Compare with Linux (16-core laptop, release build):
 
 | | Linux |
 |---|---|
@@ -598,3 +597,38 @@ sway display. With real input:
 - **Which installer to ship** (NSIS per user, MSI per machine), and
   whether the app opens `.pgn` files from Explorer.
 - **CI** on GitHub Actions for Linux, Windows and macOS.
+
+## Notes for the next agent
+
+What earlier runs on the PC found out. Add yours here.
+
+- Windows 10 PC; PR #2 ran the Windows toolchain from WSL2 through
+  `cmd.exe`. The user allows visible windows there (no private display).
+- Settings live in `%APPDATA%\dev.chessdb.desktop\settings.json`.
+- **2026-09-28:** A1–A3 are PRs #3–#5, and a duplicate-engine race found
+  on the way is #6 (all platforms). Part B is done except other scales in
+  B6 and B8. An MSI installed after an NSIS one lands in the NSIS folder
+  (B1). B2/B3 ran with real input (`SendInput`) while the user was away;
+  they found A4 (reload, print, find bar) and A7 (three small bugs).
+  Fixes: A4 #10, A5 #9, A6 #8, A7 #11. #4 conflicts with #6 and #9 in a
+  few lines; rebase whichever merges after #4. B4 found two bugs for every platform,
+  now A5 and A6 in the to-do list.
+- **2026-09-28 (Linux review):** #3 and #5–#11 were tested on Linux
+  (checks, all smoke drivers, throwaway drivers reproducing each bug on
+  `main`) and merged. #9 needed a second fix: the reopened database got a
+  second index build writing the same temp files (A5). #4 was merged as
+  #12, rebased onto #6 and #9.
+- From WSL, Windows programs inherit a PATH without
+  `C:\Users\isaac\.cargo\bin`; prepend it in each `powershell.exe`
+  call. `gh` is in `C:\Program Files\GitHub CLI\` and logged in. Commit
+  and push with Windows git (`cmd.exe /c git …`); WSL git has no identity.
+- The display uses custom scaling (120%), so the Scale setting is greyed
+  out; test other ratios through the webview zoom
+  (`core:webview:allow-set-webview-zoom` in a temporary capability).
+- A release build can be driven without the mouse: UI Automation finds
+  the webview's buttons (Invoke or Toggle) and inputs (Value); file
+  dialogs take `WM_SETTEXT` on the name box and `BM_CLICK` on OK; keys
+  posted to `Chrome_RenderWidgetHostHWND` reach the page (arrows and
+  Enter did, typed letters didn't). Real input needs `SendInput` and the
+  user's OK to leave the PC alone; the webview's keyboard layout belongs
+  to the focus window's thread (`GetGUIThreadInfo`), not the top window's.

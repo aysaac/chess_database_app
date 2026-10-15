@@ -1,12 +1,31 @@
 # AGENTS.md
 
-Guidance for AI agents (and humans) working in this repo. Read this first,
-then [handoff.md](handoff.md) for where the project stands and what's next.
+Guidance for AI agents (and humans) working in this repo. Read this first.
+
+**Where the project stands** (what's built, partly built or planned, and
+the known gaps) is tracked in the
+[Feature Status doc](https://claude.ai/artifact/SfWucTSjakLh9oNSWSNQrV#93fdfc30-cba2).
+Read it before picking up work, and update it when a feature's status
+changes. It's a Claude Doc: open it with the Claude Docs tools (`read` the
+link), not a web fetch. Without those tools, ask the user.
 
 **The project:** a desktop chess database and analysis app, an open
 alternative to ChessBase and Fritz. Rust core, Tauri 2 shell, Svelte 5 +
 TypeScript UI. GPL-3.0-or-later. Linux first; the code is kept portable to
 Windows and macOS.
+
+This file holds what applies everywhere. The rest lives next to what it's
+about; read it when your task gets there:
+
+| Before you… | Read |
+|---|---|
+| Change anything under `app/` (Svelte UI, Tauri shell) | [`app/AGENTS.md`](app/AGENTS.md): its conventions and gotchas |
+| Change `crates/chess-db`: the file format, import/export, `.cbh`, benchmarks | [`crates/chess-db/AGENTS.md`](crates/chess-db/AGENTS.md), then [`docs/file-format.md`](docs/file-format.md) or [`docs/io-03-cbh.md`](docs/io-03-cbh.md) |
+| Run or write a smoke test, or open any window | [`scripts/smoke/README.md`](scripts/smoke/README.md) |
+| Work on the ribbon, panel tabs, docking or the Reference tab | [`docs/workspace-ui.md`](docs/workspace-ui.md): the spec for UI-18/19, UI-04 and OPEN-14, with the build order |
+| Work on the Windows PC | [`docs/windows-testing.md`](docs/windows-testing.md): code fixes and checks, with how to verify each |
+| Pick or scope a feature | [`docs/feature-catalog.md`](docs/feature-catalog.md): every ChessBase/Fritz feature with IDs (`DB-01`, `ENG-02`…), tiers P0–P5 and dependencies. **Features are referred to by these IDs**. Their status is in the Feature Status doc (above) |
+| Add a dependency or make a stack decision | [`docs/stack.md`](docs/stack.md) |
 
 ## Where things are
 
@@ -14,23 +33,19 @@ Windows and macOS.
 |---|---|
 | `crates/chess-core` | Chess domain: rules glue over `shakmaty`, notation, game tree (`game/mod.rs`), editing session with undo (`game/editor.rs`), PGN reader and writer (`pgn/`) |
 | `crates/chess-jobs` | Background jobs: threads, throttled progress, cooperative cancellation |
-| `crates/chess-db` | Native database: file format, crash-safe commits, import/export, sorted views, header search, position index (`positions.rs`), the Reference tab's queries (`reference.rs`), compaction, ChessBase `.cbh` import (`cb/`, IO-03; spec in `docs/io-03-cbh.md`) |
+| `crates/chess-db` | Native database: file format, crash-safe commits, import/export, sorted views, header search, position index (`positions.rs`), the Reference tab's queries (`reference.rs`), compaction, ChessBase `.cbh` import (`cb/`, IO-03) |
 | `crates/chess-engine` | UCI engine host, analysis driver thread, blunder check (`review.rs`); `src/bin/fake_uci.rs` is a toy engine for tests |
 | `crates/chess-diagram` | Board images (QOL-06): a position as SVG or PNG, drawn like the app's board (resvg); vendored pieces and font in `data/` (licences in `data/COPYING`) |
 | `app/src-tauri` | Tauri shell: commands (`src/commands/`), DTOs (`src/dto.rs`), view building (`src/view.rs`), state (`src/state.rs`), engines and analysis (`src/engines.rs`), settings (`src/settings.rs`) |
 | `app/src` | Svelte UI: `lib/api.ts` (typed commands), `lib/stores/` (state), `lib/components/` (the ribbon is `Ribbon.svelte`, the docked panels around the board `Dock.svelte`), `lib/bindings/` (generated types), `lib/icons/` (vendored Lucide icons; licence in `COPYING`) |
-| `docs/feature-catalog.md` | Every ChessBase/Fritz feature, with IDs (`DB-01`, `ENG-02`…), priority tiers P0–P5 and dependencies. **Features are referred to by these IDs** |
-| `docs/stack.md` | Stack decisions and the cross-platform rules |
-| `docs/file-format.md` | On-disk database format spec and benchmark numbers |
-| `docs/workspace-ui.md` | Spec for the ribbon, panel tabs, docking and the Reference tab (UI-18/19, UI-04, OPEN-14), with the build order |
-| `docs/windows-testing.md` | Windows to-do list: code fixes and checks for the agent on the Windows PC, with how to verify each |
 | `testdata/pgn/` | Small edge-case PGN fixtures (committed) |
 | `testdata/large/` | Big real-world PGNs (git-ignored; see `scripts/fetch-testdata.sh`) |
 | `scripts/smoke/` | End-to-end smoke test harness for the running app |
 
 ## Commands
 
-Run from the repo root unless noted.
+Run from the repo root unless noted. Benchmarks, the lossless round trip
+and ChessBase imports are in [`crates/chess-db/AGENTS.md`](crates/chess-db/AGENTS.md).
 
 ```sh
 # Run the app (hot reload for the UI; Rust changes trigger a rebuild)
@@ -49,221 +64,40 @@ cd app && npm run bindings
 # Stockfish 19 for this machine → app/src-tauri/binaries/ (git-ignored, ~100 MB)
 scripts/fetch-stockfish.sh
 
-# Real-world data and performance
-scripts/fetch-testdata.sh         # TWIC issue + first 1M Lichess games → testdata/large/ (~2.2 GB)
-cargo run --release -p chess-db --example import_bench -- testdata/large/lichess_1m.pgn
-cargo run --release -p chess-db --example import_bench -- path/to/existing.chessdb   # skip the import
-cargo test --release -p chess-db -- --ignored        # lossless import → export → import on TWIC
-LARGE_PGN=path/to.pgn cargo test --release -p chess-db -- --ignored
+# Real-world data: TWIC issue + first 1M Lichess games → testdata/large/ (~2.2 GB)
+scripts/fetch-testdata.sh
 
-# ChessBase databases (IO-03; not committed: link or copy them into testdata/large/)
-cargo run --release -p chess-db --example import_bench -- "testdata/large/Mega Database 2019.cbh"
-cargo test --release -p chess-db --test cb_import -- --ignored   # CBH_SAMPLES=dir, CBH_MEGA=file.cbh
-cargo run --release -p chess-db --example cb_decode_stats -- "path/to/Base"  [STEP | show ID]
-
-# End-to-end smoke test of the real app, on a private headless display (see below; needs sway)
-scripts/smoke/run.sh
-# The same on Windows (the window opens on the desktop; PowerShell 5.1+)
-powershell -ExecutionPolicy Bypass -File scripts\smoke\run.ps1 [scripts\smoke\layout.js]
+# End-to-end smoke test of the real app, on a private headless display (needs sway)
+scripts/smoke/run.sh [scripts/smoke/DRIVER.js]
 
 # Any other window you need to open: run it off-screen, never on the user's desktop
 scripts/offscreen.sh COMMAND [ARGS...]
+
+# A FEN as a board image (QOL-06), with a sample arrow, to check diagrams without the app
+cargo run -p chess-diagram --example render -- out.png [FEN] [SIZE] [black]   # or out.svg
 ```
 
-## Utilities
+## The user's machine
 
-### Smoke test harness (`scripts/smoke/`)
+The user works on this machine while you test.
 
-`scripts/smoke/run.sh [driver.js] [out-dir]` launches the app in dev mode
-on a private headless display and runs a driver script inside the webview.
-It exits 0 only if the driver logs `done`. It doesn't touch the user's
-desktop, so it's safe to run while they work.
+- **Open every window on a private headless display:** a window that pops
+  up, takes focus or grabs a tile makes the computer unusable. The app goes
+  through `scripts/smoke/run.sh`, anything else through
+  `scripts/offscreen.sh`. `SMOKE_VISIBLE=1` puts the app on the user's
+  desktop; only use it when they ask to watch.
+- **Their own database is `app/src-tauri/test_/My games.chessdb`**
+  (git-ignored user data): never delete or move it.
+- **They may be running `npm run tauri dev` themselves** (port 1420; the
+  smoke harness uses 1430). Don't kill processes you didn't start.
+- **Never change the user's Hyprland session to test something:** no
+  `hyprctl output create`, `hyprctl keyword` or `hyprctl dispatch`.
+  Read-only queries (`hyprctl -j clients`, `monitors`, `cursorpos`) are
+  fine for checking. If the cursor is ever gone,
+  `hyprctl keyword monitor ",preferred,auto,1.25"` restores it.
 
-- **How it works:** debug builds only. `app/src-tauri/src/lib.rs` evaluates the file in
-  `CHESSDB_SMOKE` after page load. `app/src/main.ts` exposes
-  `window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, api, invoke }`. The driver calls the
-  stores exactly as the UI does and reports through the `dev_log` command
-  as `[smoke] …` lines.
-- **Default driver:** `scripts/smoke/basic.js`. It imports the fixtures, sorts, opens a
-  game, picks a branch in the next-move picker (with its arrows), changes
-  the board appearance, adds a variation through the popover, types
-  comments inline, promotes the variation, undoes, saves, reopens, folds
-  variations, types moves, inserts a move, edits the intro comment,
-  promotes a pawn and lists import warnings, asserting each step. With `testdata/large/lichess_1m.pgn`
-  present it also imports 1M games and checks scrolling and sorting
-  (`SMOKE_BIG=0` skips that).
-- **Layout driver:** `scripts/smoke/layout.js` resizes `#app` to several window
-  sizes (tiled, full screen, narrow, short) in three panel layouts (UI-04:
-  the default, the notation docked at the bottom, every panel on the left)
-  and checks the board stays square, inside the dock's middle and clear of
-  every side and divider, sides keep their minimums, with the promotion
-  picker inside the board, nothing wider than the window (no sideways page
-  scroll), every group's panel tabs fitting their strip, the game list's
-  columns fitting it, and the ribbon (UI-18) on one row with every group
-  inside it. Run it after layout changes.
-- **Feature drivers:** `engine.js` (analysis, lines, blunder check; needs
-  `scripts/fetch-stockfish.sh`), `search.js` (filters, header search, tabs,
-  name lists, compaction, recent databases), `tree.js` (position index,
-  opening tree, position search, opening names, reference database),
-  `setup.js` (position editor), `goto.js` (QOL-10: Ctrl+V with a FEN, the
-  "Go to position" dialog), `image.js` (board images: the menu, copy as PNG
-  and SVG, save, a failed save), `onboarding.js` (welcome guide, sample
-  games, engine page, import wizard; QOL-08), `view.js` (QOL-07: resizing
-  columns, and the sort, widths and each kind of filter coming back after
-  reopening), `drag.js` (selecting several games, dragging them onto another
-  database, the board and the tab strip, Shift to move, Escape, the list
-  menu's copy dialog, copying into a new and into the reference database;
-  QOL-04/DB-06), `panels.js` (UI-19: the Notation, Opening tree and
-  Reference tabs, the eval graph in Notation, the tree querying only while
-  its tab shows, the move popovers from the tree tab, the keyboard, and the
-  active tab restored after a reload, also from the old `treeVisible` pref),
-  `ribbon.js` (UI-18 and IO-08: the groups, Copy game then Paste game
-  through the real clipboard, Paste position, the messages for a clipboard
-  without a game, Ctrl+V with a PGN, the New game menu and Ctrl+N, the
-  reference dropdown, and narrower widths: labels drop, then groups
-  collapse into dropdowns), `reference.js` (OPEN-14, on the fixture
-  `testdata/pgn/reference.pgn` with known counts: the moves with Hot and
-  Best players, the main line and lines, the top games' order, playing a
-  move, the mini board stepping on its own and resetting when the board
-  moves, opening a top game where it reaches the position, the dividers,
-  the stacked narrow layout, the note without a reference database),
-  `dock.js` (UI-04: every panel tab dragged to each side and into other
-  groups with synthetic pointer events, next to the nearest group,
-  reordering a strip, Escape and a release elsewhere cancelling, the tab
-  menu from a right-click, Shift+F10 and the context-menu key, empty
-  groups and sides going, the dividers by keys, pointer and double-click
-  and their limits, View ▸ Reset layout, and the `layout` pref read back
-  after reloads, also from a version 1 layout with `listShare`, an
-  incomplete one and an unreadable one), `cbh.js` (IO-03: Import games in
-  the ribbon, a `.cbh` whose files are missing, and, with the databases
-  that ship with ChessBase linked into `testdata/large/cbh-samples/`,
-  Openings' four-language comments shown in one language and Marathon's
-  set-up positions).
-  `search.js`, `tree.js`, `view.js` and `reference.js` time the 1M-game
-  database when `__BIG__`; `drag.js` times copying it.
-- **Reloading:** the harness runs the driver again after every page load,
-  so a driver can test what a restart restores with `location.reload()`.
-  Keep the phase it's in in `sessionStorage`, and wait for debounced pref
-  writes to reach `api.uiPrefs()` first (`panels.js` does both).
-- **Clipboard:** a driver logs `clip:<name>` to have the harness save the
-  private display's clipboard (`wl-paste`) as `<out-dir>/clips/<name>.png`
-  or `.txt`, and print the types on offer. Linux only; it never reads the
-  user's clipboard (not with `SMOKE_VISIBLE`). Look at the images. Drivers
-  put text on the clipboard with `api.copyText`, as Copy game does: WebKit
-  refuses `navigator.clipboard.writeText` without a real user gesture.
-- **First run:** every run starts with fresh settings, so the harness writes
-  `{"welcomeDone": true}` first and the welcome guide stays closed. A driver
-  that contains the text `smoke: first-run` (only `onboarding.js`) starts
-  with no settings, as on a first run.
-- **Never open native dialogs from a driver:** nobody can click them on the
-  private display, so the driver hangs until it times out. Every driver
-  starts with `game.confirmDiscard = async () => true`.
-- **Settings:** the harness sets `CHESSDB_CONFIG_DIR` to `<out-dir>/config`,
-  so runs never touch the user's settings. The app keeps its data there
-  too (the sample database), not in the user's data folder.
-- **Writing a driver:** a new flow is a new driver. Copy `basic.js`; the placeholders
-  `__ROOT__`, `__OUT__` and `__BIG__` are filled in by `run.sh`. Log
-  `shot:<name>` to request a screenshot and `FAILED: …` to fail.
-- **Screenshots:** taken with `grim` of the whole private display (the app
-  window fills it), into `<out-dir>/shots/`. Look at them: a passing driver
-  doesn't prove the layout is right. The display is 2560×1600 at scale 1.25
-  like the user's screen (`OFFSCREEN_SIZE`, `OFFSCREEN_SCALE`), and the
-  window has focus, so focus rings render. The webview follows the user's
-  GTK theme, which is dark; `GTK_THEME=Adwaita scripts/smoke/run.sh …`
-  shoots light mode.
-- **Ports and output:** it uses dev port 1430 (`SMOKE_PORT`), so it can run next to a
-  normal `tauri dev` on 1420. Output goes to `target/smoke/<timestamp>/`,
-  including the display's log (`sway.log`).
-- **Windows:** `scripts/smoke/run.ps1` takes the same drivers, placeholders
-  and variables. Windows has no private display, so the window opens on the
-  desktop; screenshots use `PrintWindow`, so covered windows still shoot.
-  Paths reach the drivers with forward slashes (`C:/…`).
-- **Off-screen:** the app runs on a private headless display
-  (`scripts/offscreen.sh`, next section) and never shows on, or changes,
-  the user's desktop. Without sway the harness stops with exit code 2; it
-  never falls back to the user's screen. `SMOKE_VISIBLE=1` opens the window
-  on the user's desktop instead (it takes a tile and focus; no
-  screenshots); only use it when the user asks to watch.
-- **macOS:** there is no private display, so the window opens on the
-  desktop and takes focus (only with the user's OK). Shots are
-  `screencapture` of the app window and need Screen Recording permission
-  for the terminal; without it the run goes on without shots. The script
-  keeps to macOS's bash 3.2.
-- **What it can't do:** it can't drag pieces or press real keys (no input tools are
-  installed), and chessground ignores synthetic mouse events. It calls the
-  same functions those gestures call. The app's own pointer handling (list
-  selection, dragging games) does take synthetic `PointerEvent`s: `drag.js`
-  dispatches them at elements' real positions, with `buttons: 1` on moves
-  (a move without it ends the drag, as a release outside the window does).
-
-### Running windows off-screen (`scripts/offscreen.sh`)
-
-The user works on the same machine while tests run, and a window that pops
-up, takes focus or grabs a tile makes the computer unusable. So any window
-you open for testing goes to a **private headless display**:
-
-```sh
-scripts/offscreen.sh COMMAND [ARGS...]
-# e.g. an app plus a screenshot of it:
-scripts/offscreen.sh sh -c 'some-app & sleep 5; grim shot.png; kill %1'
-```
-
-It starts a headless sway (`WLR_BACKENDS=headless`) with its own runtime
-directory, runs the command on it and stops it afterwards. Inside the
-command, `grim` screenshots the display and `swaymsg -t get_tree` gives
-window geometry. Scripts can `source` it instead (`offscreen_start`,
-`"${OFFSCREEN_RUN[@]}" cmd`, `offscreen_shot`, `offscreen_stop`), as
-`scripts/smoke/run.sh` does. Needs `sway` (Arch: `pacman -S sway`); only
-its headless mode is used, and it's never the user's session.
-
-What keeps it isolated:
-- **A separate compositor.** Sway on the headless backend opens no DRM
-  device, no input devices and no logind session, so it can't take the
-  screen, seat or keyboard from Hyprland. Its sockets live in a private
-  directory under `$XDG_RUNTIME_DIR`, so no client finds it by accident.
-- **No way back to the user's desktop.** The command runs with
-  `WAYLAND_DISPLAY` set to the private socket (absolute path), `DISPLAY`
-  and `HYPRLAND_INSTANCE_SIGNATURE` unset and `GDK_BACKEND=wayland`: GTK
-  fails instead of falling back to the user's Xwayland, and `hyprctl`
-  inside it can't reach Hyprland.
-- **Its own D-Bus session**, which starts no services. On the user's bus,
-  GTK single-instance apps (ghostty, for one) open their window through
-  the user's running instance, and portals show dialogs on the user's
-  screen. With service activation, the private bus would start a second
-  xdg-desktop-portal, gvfs or keyring against the user's shared state
-  (they try to mount `/run/user/<uid>/doc` and `/run/user/<uid>/gvfs`).
-
-**Never change the user's Hyprland session to test something:** no
-`hyprctl output create`, `hyprctl keyword` or `hyprctl dispatch`. Read-only
-queries (`hyprctl -j clients`, `monitors`, `cursorpos`) are fine for checking.
-The previous harness added a headless output to the user's Hyprland; that
-moved their auto-placed monitor to x=22048, and Hyprland 0.54.3 left the
-cursor off screen when the output was removed. Waybar and windows vanished
-too (`HYPRLAND-DISRUPTION-REPORT.md`). If the cursor is ever gone again,
-`hyprctl keyword monitor ",preferred,auto,1.25"` restores it.
-
-Check it worked: read-only snapshots of `hyprctl -j monitors all`,
-`hyprctl cursorpos`, `hyprctl -j activewindow` and `hyprctl -j clients`
-stay identical before, during and after the run.
-
-### Other helpers
-
-- `crates/chess-db/examples/import_bench.rs`: imports a PGN or a `.cbh` and
-  times open, paging, sorting and random game reads. Use it to catch
-  performance regressions.
-- `crates/chess-db/examples/cb_decode_stats.rs`: decodes every game (or
-  every STEP-th) of a ChessBase database and counts the outcomes by
-  message; `show ID` prints one game as PGN. The first stop when a `.cbh`
-  imports badly.
-- `crates/chess-db/examples/extract_cb_key.rs`: finds the `.cbg`
-  translation table in a ChessBase install and checks it against real
-  databases (how the built-in table was made; `docs/io-03-cbh.md` §3.2).
-- `crates/chess-diagram/examples/render.rs`: draws a FEN as a board image
-  (`cargo run -p chess-diagram --example render -- out.png [FEN] [SIZE] [black]`,
-  or `out.svg`), with a sample arrow and highlights, to check diagrams
-  without the app.
-- `window.__chessdb` in `npm run tauri dev`: handy from the webview
-  inspector (right-click → Inspect Element in dev builds).
+Why, how the display is kept apart and how to check it worked:
+[`scripts/smoke/README.md`](scripts/smoke/README.md#the-private-display).
 
 ## Conventions
 
@@ -271,11 +105,23 @@ stay identical before, during and after the run.
 - Refer to features by their catalog IDs (for example "SRCH-04 position
   index") in commits, comments and docs.
 - Keep `docs/` current: new decisions go in `docs/stack.md`, format changes
-  in `docs/file-format.md`, and progress in `handoff.md`.
+  in `docs/file-format.md`, and progress in the Feature Status doc.
 - Only add GPL-3-compatible dependencies. Check the license first, and also
   check whether the package is deprecated (the old `chessground` npm package
   was; use `@lichess-org/chessground`).
-- Don't commit or push unless the user asks.
+- **Git:** one commit per finished feature or fix, with its catalog ID in
+  the subject.
+  - **On a branch other than `main`:** commit and push to `origin` as you
+    go (`git push -u origin <branch>`), without asking. When the work is
+    done and the checks pass, open a PR against `main` with
+    `gh pr create`: what changed, the checks you ran and what wasn't
+    verified. The user merges it.
+  - **On `main`:** commit or push only when the user asks.
+  - Never force-push without asking.
+- Area guidance goes in the area's file (`app/AGENTS.md`,
+  `crates/chess-db/AGENTS.md`, `scripts/smoke/README.md`), and a trap in a
+  single file goes in a comment there. Only what applies everywhere goes
+  here.
 
 ### Rust
 - Edition 2024, MSRV 1.89. `rustfmt.toml` sets `max_width = 110` and
@@ -296,42 +142,9 @@ stay identical before, during and after the run.
 - Hot paths are optimized even in dev builds (`[profile.dev.package.*]` in
   the root `Cargo.toml`). Keep it that way, or `tauri dev` imports get ~5×
   slower.
-
-### Storage format (`crates/chess-db`)
-- Any change to the on-disk layout must bump the format version, update
-  `docs/file-format.md`, and keep crash safety: write data, fsync, then
-  publish (the committed count is written last).
-- A move byte is the move's index in the legal moves **sorted by
-  (from, to, promotion)** as defined in `blob.rs`, never shakmaty's
-  generation order.
-- Import must stay lossless: `cargo test --release -p chess-db -- --ignored`
-  re-imports an export and compares blob bytes.
-
-### Tauri boundary (`app/src-tauri`)
-- Commands are `async fn … -> AppResult<T>`. Sync commands run on the
-  main thread and freeze the UI.
-- Rust owns all state; the frontend only renders views and sends intents.
-  Large data never crosses IPC in bulk (the game list is paged).
-- DTOs: `#[derive(Serialize, TS)] #[serde(rename_all = "camelCase")]
-  #[ts(export)]`, with `#[ts(type = "number")]` on `u64`. Regenerate and
-  commit `app/src/lib/bindings/` after changing them.
-- Register every new command in `generate_handler!` in `src/lib.rs` and add
-  a typed wrapper in `app/src/lib/api.ts`. Components never call `invoke`
-  directly.
-- Background job updates are emitted as the `job` event (`JobDto`).
-
-### Frontend (`app/src`)
-- Svelte 5 runes only (`$state`, `$derived`, `$effect`, `$props`). Shared
-  state lives in classes in `lib/stores/*.svelte.ts`.
-- Use the design tokens in `app.css` (`--paper`, `--ink`, `--felt`,
-  `--brass`, `--board-*`, `--font-book`, `--font-ui`). Don't hardcode
-  colors. Every color needs a dark-mode value.
-- UI copy: sentence case, plain verbs that say what happens ("Save
-  changes", "Import PGN"), no ALL-CAPS labels, errors that say what went
-  wrong and what to do.
-- Accessibility floor: visible `:focus-visible`, aria labels on icon
-  buttons, keyboard paths for list and board navigation.
-- Keyboard shortcuts use Ctrl **or** Cmd (`e.ctrlKey || e.metaKey`).
+- shakmaty 0.30 moved `zobrist_hash` onto the `Position` trait. `pgn-reader`
+  0.29 uses a `Visitor` with `Tags`/`Movetext`/`Output` associated types
+  and `ControlFlow`.
 
 ### Cross-platform rules (from `docs/stack.md`)
 - Use `Path`/`PathBuf`, never paths built from strings. No hardcoded
@@ -346,103 +159,19 @@ stay identical before, during and after the run.
   `core.autocrlf=true`, so WSL and Windows git see the same files and diffs
   don't turn every line over. Fixtures in `testdata/` are kept byte for byte.
 
-## Gotchas (each one cost time)
+## Gotchas that cross areas
 
-- **chessground puts `cg-wrap` and `orientation-*` on the element you pass
-  it**, not on a child. The board theme lives in `app/src/board-theme.css`
-  (shared by the main board and the setup editor) as
-  `.chessboard.cg-wrap.orientation-white …`; give a new board the
-  `chessboard` class.
-- **Board colours come in pairs:** each theme in `board-theme.css` sets
-  `--board-light-base`/`--board-dark-base` (light mode) and `-dimmed`
-  (dark mode), and `--board-light`/`--board-dark` pick one. Board images
-  (QOL-06) read the `-base` ones in any mode and parse them in Rust, so
-  keep them `#rrggbb`.
+The ones for one area are in its file (see the table at the top).
+
 - **Game ids change on compaction.** Anything that stores `(handle, game)`
   must be remapped (`AppState::remap_sources`) or dropped (filters, sorts,
   the position index).
-- **Svelte keeps whitespace between template nodes.** `NotationLine.svelte`
-  deliberately has no whitespace between nodes and uses explicit `{" "}`,
-  so parentheses hug their moves. Keep it that way when editing.
-- **An `auto` grid column can't measure a board sized by `height: %` +
-  `aspect-ratio`.** The column only fit the nav bar, and the board spilled
-  over the notation at full screen. `fitBoard()` in `App.svelte` sizes the
-  board in pixels from the dock's middle (UI-04) less its padding, eval bar
-  and the nav bar's measured height; keep its constants (and `middleMin`,
-  the room dividers stop at) in step with the CSS of the board column and
-  `BoardNav.svelte`.
-- **Flex grow factors that add up to less than 1 leave the rest empty.**
-  A dock side's groups grow by their shares, and the engine analysis takes
-  only its content's height while the engine is off, so the other groups'
-  shares no longer added up to 1 and a quarter of the side stayed blank.
-  `Dock.svelte` (`grow`) divides each share by the shares of the groups
-  that take one.
-- **During a tab drag (UI-04) the edge bands overlap tab strips.** The
-  strips are raised above the bands (`body.dragging-tab`), so a drop on a
-  strip joins the group. A driver aiming at a left or right band near its
-  top must stay below the strips there (`dock.js`'s `onBand`). The top band
-  sits over the ribbon's lower edge and the bottom one over the status bar,
-  so a side full of groups can still get a new one.
-- **`container-type` makes an element the containing block of its
-  `position: fixed` children** (layout containment). The board column holds
-  the board settings dialog, so the nav bar's compact form is chosen in
-  `fitBoard()` from the middle's width, not by a container query.
-- **WebKit fires no `paste` event where nothing is editable**, and
-  `navigator.clipboard.readText()` needs clipboard access Tauri doesn't
-  enable. So Ctrl+V with a FEN (QOL-10) first moves the focus to a hidden
-  textarea (`FenPaste.svelte`); the paste lands there and the focus goes
-  back. Drivers can't press Ctrl+V: `goto.js` sends the keydown, then a
-  paste event with a stubbed `clipboardData`.
-- **Browsers cap element height** (~17–33M px). `GameList.svelte` scales the
-  scrollbar above 8M px and handles wheel scrolling itself. Test big lists
-  with the 1M-game database.
-- shakmaty 0.30 moved `zobrist_hash` onto the `Position` trait. `pgn-reader`
-  0.29 uses a `Visitor` with `Tags`/`Movetext`/`Output` associated types
-  and `ControlFlow`.
-- `svelte-check` doesn't support TypeScript 7 yet. Stay on TS 6.
-- **A hidden panel tab hides everything in it** (UI-19 hides inactive
-  panels with `hidden`, so `display: none`), `position: fixed` popovers
-  included. Popovers that must open while their panel is hidden live
-  outside it, like the move popovers in `MovePopovers.svelte`. Panels stay
-  mounted while hidden; anything that queries must check
-  `panels.isShowing(id)`, as the opening tree does.
-- **The ribbon has a hidden copy of itself.** `Ribbon.svelte` renders every
-  group in each form (full, compact, collapsed) in an inert, invisible
-  `.ribbon .measure` to measure them, so it never has to try forms on the
-  live buttons. Drivers look for ribbon buttons under `.ribbon > .groups`
-  (by `aria-label`, which every ribbon button has); a plain
-  `querySelectorAll("button")` also finds the copies, after the live ones.
-- **WebKit only writes the clipboard during a user gesture**, and the
-  gesture ends at the first `await`. Copy game and Copy position write
-  through Rust (`copy_text`), and the paste buttons read through it
-  (`clipboard_text`); only Ctrl+V uses the page's paste event.
-- **Table cells from a child component miss the parent's scoped CSS.**
-  The moves tables of the opening tree and the Reference tab share their
-  cells (`StatsHead.svelte`, `StatsCells.svelte`), so their styles are
-  global, under `.stats-table` in `app.css`; a table that changes them
-  uses `:global(…)` (`ReferenceMoves.svelte`). For a column that takes
-  the rest of a WebKit table, give it `width: 100%; max-width: 0`: a
-  fixed width on another column doesn't stop that one taking it.
-- **The Reference tab's lines job is quiet.** Its kind (`reference`) gets
-  no notice when done or cancelled (`jobs.svelte.ts`): the tab cancels it
-  whenever the board leaves the position, and shows its own progress.
-- **Svelte 5 props are live getters.** A dialog shown by `{#if thing}` with
-  `prop={thing.x}` throws once its `onClose` sets `thing = null` and it then
-  reads `prop`. Copy props into locals before calling `onClose`
-  (`CopyGamesDialog.svelte`).
-- TWIC rejects `curl` without browser-like headers (HTTP 406). The fetch
-  script sends them.
-- **`.cbh` counts a game's main line in full moves, not plies** (and
-  modulo 256 past 255). Checking decoded games against plies made the right
-  translation table look wrong for a whole session; use
-  `GameRecord::main_line_matches`.
-- Editing files under `app/src` or the crates while `tauri dev` runs
-  triggers a hot reload or rebuild. If a smoke run is in progress, that
-  reload re-runs the driver.
-- **Any write under `app/src-tauri/` or `crates/*` restarts the app under
-  `tauri dev`**, and it looks like a crash. It happened when a database
-  lived in `src-tauri/`, which is `tauri dev`'s working directory and where
-  file dialogs used to start (they start in Documents now).
+- **`tauri dev` reloads on edits.** Editing files under `app/src`
+  hot-reloads the UI, and **any write under `app/src-tauri/` or `crates/*`
+  rebuilds and restarts the app**, which looks like a crash. A smoke run in
+  progress then re-runs its driver. It happened when a database lived in
+  `src-tauri/`, which is `tauri dev`'s working directory and where file
+  dialogs used to start (they start in Documents now).
   `app/src-tauri/.taurignore` ignores `*.chessdb/`. The watcher filters
   events only through `.taurignore`, not `.gitignore`. It also only watches
   folders that existed when `tauri dev` started, and nothing under the

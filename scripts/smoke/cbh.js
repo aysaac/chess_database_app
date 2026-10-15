@@ -1,7 +1,7 @@
 // Smoke-test driver for importing a ChessBase database (IO-03): the
 // ribbon's Import games, a `.cbh` whose files are missing, and, when the
 // databases that ship with ChessBase are linked into
-// testdata/large/cbh-samples/ (they aren't committed; see AGENTS.md),
+// testdata/large/cbh-samples/ (they aren't committed; see crates/chess-db/AGENTS.md),
 // Openings (comments in four languages) and Marathon (set-up positions).
 (async () => {
   const OUT = "__OUT__";

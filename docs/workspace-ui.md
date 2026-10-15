@@ -2,8 +2,8 @@
 
 Build spec for the ChessBase-style workspace the user asked for on
 2026-09-30: a ribbon, tabbed panels that dock to the four sides of the
-window, and a Reference tab. Read [AGENTS.md](../AGENTS.md) and
-[handoff.md](../handoff.md) first; this file says what to build, in what
+window, and a Reference tab. Read [AGENTS.md](../AGENTS.md)
+first; this file says what to build, in what
 order, and how to check it.
 
 The user's notes and the ChessBase 18 screenshots they're based on are
@@ -212,7 +212,7 @@ below about 1,400 px.
   as now, then a PGN game. If neither works: "The clipboard has no game or
   position. Copy a PGN game, a FEN or a Lichess link and try again."
 - **Reading the clipboard from a button:** a page only gets the clipboard
-  in a paste event (see the WebKit gotcha in AGENTS.md), so read it in Rust.
+  in a paste event (see the WebKit gotcha in `app/AGENTS.md`), so read it in Rust.
   Add a command `clipboard_text() -> AppResult<Option<String>>` that uses
   `tauri_plugin_clipboard_manager`. It's already a dependency, and
   `commands/image.rs` writes with it. The frontend keeps no clipboard
@@ -414,7 +414,7 @@ reference database, or the open one when none is set, with the line
     games, at any position, the starting position included.
   - Under 500 ms for the lines, for positions fewer than 50,000 games reach.
   - Measure in the smoke driver's `__BIG__` part and record the numbers in
-    handoff.md.
+    `docs/file-format.md`.
 
 ### Checks
 
@@ -526,7 +526,7 @@ a choice, this is what was taken (ask the user if one looks wrong):
 - **The board:** it's the largest square that fits the middle. That's
   `fitBoard()` in `App.svelte`, now measured from the middle area instead of
   the workspace minus `NOTATION_MIN`. Keep its constants in step with the
-  CSS (an AGENTS.md gotcha), and keep the 8-device-pixel snapping.
+  CSS (a gotcha in `app/AGENTS.md`), and keep the 8-device-pixel snapping.
 - **Panels at any size:** every panel works at any side's size. It scrolls
   inside, the page never scrolls sideways, and the game list's columns stay
   usable when it's docked on a side.
@@ -635,9 +635,10 @@ choice, this is what was taken (ask the user if one looks wrong):
 - **Screenshots:** look at them, in light mode too; only dark mode has been
   screenshotted so far.
 - **The user's desktop:** it stays unchanged (the `hyprctl` snapshots
-  described in AGENTS.md).
+  described in `scripts/smoke/README.md`).
 - **Docs:** update the status notes on the IDs in `docs/feature-catalog.md`,
-  update `handoff.md`, and update this file if a decision changes.
+  update the [Feature Status doc](https://claude.ai/artifact/SfWucTSjakLh9oNSWSNQrV#93fdfc30-cba2),
+  and update this file if a decision changes.
 
 ## Code map
 
