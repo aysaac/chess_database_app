@@ -12,11 +12,10 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Chess Database",
         "width": 1440,
-        "height": 900,
-        "minWidth": 960,
-        "minHeight": 620
+        "height": 900
       }
     ],
     "security": {

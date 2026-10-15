@@ -204,6 +204,11 @@ pub struct AppState {
     /// store them (and to ask `jobs` about its jobs), never while taking a
     /// database or session lock.
     pub lines: Mutex<LinesCache>,
+    next_window: AtomicU32,
+    /// A database an editor window should open on start-up (the library
+    /// window spawned it for this path), by the new window's label; taken
+    /// (removed) once that window reads it.
+    pub editor_targets: Mutex<HashMap<String, Option<PathBuf>>>,
 }
 
 impl AppState {
@@ -230,6 +235,12 @@ impl AppState {
             log::warn!("couldn't save settings in {}: {e}", dir.display());
         }
         out
+    }
+
+    /// A fresh, unique label for an editor window (DB-07's library window
+    /// opens one of these per database).
+    pub fn new_editor_label(&self) -> String {
+        format!("editor-{}", self.next_window.fetch_add(1, Ordering::Relaxed) + 1)
     }
 
     pub fn db(&self, handle: u32) -> AppResult<SharedDb> {

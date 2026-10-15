@@ -18,6 +18,7 @@
   import BoardImageMenu from "./BoardImageMenu.svelte";
   import EngineDialog from "./EngineDialog.svelte";
   import FenDialog from "./FenDialog.svelte";
+  import LibraryView from "./LibraryView.svelte";
   import RecentMenu from "./RecentMenu.svelte";
   import ReferenceMenu from "./ReferenceMenu.svelte";
   import RibbonButton from "./RibbonButton.svelte";
@@ -25,6 +26,7 @@
   import SetupEditor from "./SetupEditor.svelte";
 
   let setup = $state(false);
+  let libraryView = $state(false);
   let gotoDialog = $state(false);
   let engineDialog = $state(false);
   let blunderDialog = $state(false);
@@ -256,6 +258,15 @@
   </div>
   <div class="col">
     <RibbonButton
+      icon="database"
+      label="Database manager"
+      title="Browse your databases: folders, favourites and a preview (DB-07)"
+      {compact}
+      onclick={() => (libraryView = true)}
+    />
+  </div>
+  <div class="col">
+    <RibbonButton
       icon="file-down"
       label="Import games"
       title="Add the games of a PGN file or a ChessBase database (.cbh) to the open database"
@@ -359,6 +370,10 @@
 
 {#if gotoDialog}
   <FenDialog onClose={() => (gotoDialog = false)} />
+{/if}
+
+{#if libraryView}
+  <LibraryView onClose={() => (libraryView = false)} />
 {/if}
 
 <style>

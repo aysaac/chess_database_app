@@ -1,4 +1,5 @@
 import { mount } from "svelte";
+import { LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
 import "@fontsource-variable/source-serif-4/opsz.css";
 import "@fontsource-variable/source-serif-4/opsz-italic.css";
 import "@fontsource/ibm-plex-sans-condensed/400.css";
@@ -9,8 +10,14 @@ import "@lichess-org/chessground/assets/chessground.cburnett.css";
 import "./app.css";
 import "./board-theme.css";
 import App from "./App.svelte";
+import LibraryHome from "./lib/components/LibraryHome.svelte";
 
-const app = mount(App, { target: document.getElementById("app")! });
+// The library (DB-07) is the app's main window; opening a database or
+// starting a new game spawns a separate "editor-…" window for it
+// (commands::window::open_editor_window), so several can be open side by
+// side. Any window that isn't the main one is an editor.
+const isMain = getCurrentWindow().label === "main";
+const app = mount(isMain ? LibraryHome : App, { target: document.getElementById("app")! });
 
 // Dev builds expose the stores so smoke-test scripts can drive the UI
 // (see CHESSDB_SMOKE in src-tauri/src/lib.rs).
@@ -46,7 +53,11 @@ if (import.meta.env.DEV) {
       import("@tauri-apps/api/core"),
     ]);
     Object.assign(window, {
-      __chessdb: { db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, api, invoke },
+      __chessdb: {
+        db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, api, invoke,
+        win: getCurrentWindow(),
+        LogicalSize,
+      },
     });
   })();
 }

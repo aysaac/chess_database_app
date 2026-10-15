@@ -10,3 +10,4 @@ pub mod onboarding;
 pub mod reference;
 pub mod settings;
 pub mod tree;
+pub mod window;

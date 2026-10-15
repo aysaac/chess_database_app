@@ -3,14 +3,15 @@ use std::sync::Arc;
 
 use chess_db::{
     Database, EloMode, GameId, GameSet, HeaderQuery, ResultFilter, SortSpec, build_sort,
-    export_pgn as export_db, import_pgn as import_db, page_ids, search_headers,
+    export_pgn as export_db, game_mainline, import_pgn as import_db, page_ids, search_headers,
 };
 use chess_jobs::JobError;
 use tauri::{AppHandle, Manager, State};
 
+use crate::commands::reference::{positions, year_of};
 use crate::dto::{
-    CopyModeDto, DbInfoDto, FilterDto, GamePage, GameRowDto, HeaderQueryDto, ImportReportDto, IndexStatusDto,
-    ListSelectionDto, ReferenceDbDto, SortSpecDto,
+    CopyModeDto, DbInfoDto, FilterDto, GameLineDto, GamePage, GameRowDto, HeaderQueryDto, ImportReportDto,
+    IndexStatusDto, ListSelectionDto, ReferenceDbDto, SortSpecDto,
 };
 use crate::error::{AppError, AppResult};
 use crate::settings::FilterStep;
@@ -87,6 +88,62 @@ pub(crate) fn open_for(state: &AppState, path: &Path, usage: DbUse) -> AppResult
 pub async fn open_db(state: State<'_, AppState>, path: String) -> AppResult<DbInfoDto> {
     let handle = open_for(&state, Path::new(&path), DbUse::List)?;
     info(&state, handle)
+}
+
+/// Reads from the database at `path` without opening it for use (DB-07's
+/// library screen): the one already open under a handle, if there is one, or
+/// a `Database` opened just for this call and dropped right after, so a peek
+/// never pins a database open in the background or disturbs a lock a
+/// background job holds on it.
+pub(crate) fn peek<T>(
+    state: &AppState,
+    path: &Path,
+    f: impl FnOnce(&Database) -> AppResult<T>,
+) -> AppResult<T> {
+    let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if let Some(handle) = state.find_db(&path) {
+        let db = state.db(handle)?;
+        let db = db.lock().expect("db lock");
+        return f(&db);
+    }
+    let db = Database::open(&path)?;
+    f(&db)
+}
+
+/// A sample of a database's games (DB-07's library preview), in natural
+/// order: the one already open, if there is one, else a database opened
+/// just for this and closed right after (see `peek`).
+#[tauri::command]
+pub async fn peek_database(state: State<'_, AppState>, path: String, limit: u32) -> AppResult<GamePage> {
+    let limit = limit.min(MAX_PAGE);
+    peek(&state, Path::new(&path), |db| {
+        let ids = page_ids(db, SortSpec::NATURAL, 0, limit)?;
+        let rows = db.rows(&ids)?.into_iter().map(GameRowDto::from).collect();
+        Ok(GamePage { total: db.count(), offset: 0, rows })
+    })
+}
+
+/// One sample game's whole main line (DB-07's library preview mini board):
+/// the same shape the Reference tab's mini board steps through, but always
+/// from the start, since there's no board position here to resume at.
+#[tauri::command]
+pub async fn peek_game_line(state: State<'_, AppState>, path: String, game: u32) -> AppResult<GameLineDto> {
+    peek(&state, Path::new(&path), |db| {
+        let row = db.row(game)?;
+        let (start, moves) = game_mainline(db, game)?;
+        Ok(GameLineDto {
+            id: row.id,
+            year: year_of(&row.date),
+            white: row.white,
+            white_elo: row.white_elo,
+            black: row.black,
+            black_elo: row.black_elo,
+            result: row.result.as_str().to_owned(),
+            event: row.event,
+            positions: positions(&start, &moves),
+            start: 0,
+        })
+    })
 }
 
 /// Removes a database from the game list. It stays open while it's the

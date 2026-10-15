@@ -1,7 +1,8 @@
 <script lang="ts">
-  // App settings: appearance, for now; more sections join this dialog
-  // later.
+  // App settings: appearance and the database manager, for now; more
+  // sections join this dialog later.
   import { APP_THEMES, appearance } from "../stores/appearance.svelte";
+  import { PREVIEW_LAYOUTS, library } from "../stores/library.svelte";
   import Modal from "./Modal.svelte";
 
   let { onClose }: { onClose: () => void } = $props();
@@ -25,6 +26,23 @@
       {/each}
     </div>
   </section>
+  <section>
+    <h3>Database manager preview</h3>
+    <div class="themes" role="radiogroup" aria-label="Preview layout">
+      {#each PREVIEW_LAYOUTS as l (l.id)}
+        <label class="theme" class:on={library.previewLayout === l.id}>
+          <input
+            type="radio"
+            name="preview-layout"
+            value={l.id}
+            checked={library.previewLayout === l.id}
+            onchange={() => (library.previewLayout = l.id)}
+          />
+          {l.label}
+        </label>
+      {/each}
+    </div>
+  </section>
   {#snippet actions()}
     <button class="primary" onclick={onClose}>Done</button>
   {/snippet}
@@ -36,6 +54,10 @@
     font-size: 13px;
     font-weight: 600;
     color: var(--ink-soft);
+  }
+
+  section + section {
+    margin-top: 18px;
   }
 
   .themes {

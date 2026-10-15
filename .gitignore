@@ -23,3 +23,6 @@ node_modules/
 
 # Engine binaries fetched by scripts/fetch-stockfish.sh (Tauri sidecars)
 /app/src-tauri/binaries/
+
+# Scratch UI mockups (static webapps, no backend) — design exploration only
+/mockups/

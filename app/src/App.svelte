@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { api } from "./lib/api";
   import Board from "./lib/components/Board.svelte";
   import BoardNav from "./lib/components/BoardNav.svelte";
   import Dock from "./lib/components/Dock.svelte";
@@ -102,12 +103,16 @@
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
       if (!(await game.confirmDiscard(game.tabs))) event.preventDefault();
     });
-    // Restore the last session's preferences and database (QOL-01).
+    // Restore the session's preferences, then open whatever database the
+    // library window spawned this editor window for (DB-07); it's the
+    // library, not this window, that remembers "last used" now.
     void (async () => {
       // The panel layout (UI-04) follows from the prefs (panels.svelte.ts).
       await prefs.load();
       game.orientation = prefs.get<string>("orientation", "white") === "black" ? "black" : "white";
-      await db.reopenLast();
+      const target = await api.takeEditorTarget(getCurrentWindow().label).catch(() => null);
+      if (target) await db.openAt(target);
+      else await db.loadRecent();
       // The welcome guide on a first run (QOL-08).
       void onboarding.check();
       void db.loadReference();

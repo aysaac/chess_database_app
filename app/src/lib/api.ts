@@ -41,6 +41,11 @@ import type { VariationPolicyDto } from "./bindings/VariationPolicyDto";
 export const api = {
   createDb: (path: string) => invoke<DbInfoDto>("create_db", { path }),
   openDb: (path: string) => invoke<DbInfoDto>("open_db", { path }),
+  peekDatabase: (path: string, limit: number) => invoke<GamePage>("peek_database", { path, limit }),
+  peekGameLine: (path: string, game: number) => invoke<GameLineDto>("peek_game_line", { path, game }),
+  openEditorWindow: (path: string | null) => invoke<void>("open_editor_window", { path }),
+  takeEditorTarget: (label: string) => invoke<string | null>("take_editor_target", { label }),
+  listWindows: () => invoke<string[]>("list_windows"),
   closeDb: (handle: number) => invoke<void>("close_db", { handle }),
   referenceDb: () => invoke<ReferenceDbDto | null>("reference_db"),
   setReferenceDb: (path: string | null) => invoke<ReferenceDbDto | null>("set_reference_db", { path }),

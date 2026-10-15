@@ -110,6 +110,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::db::create_db,
             commands::db::open_db,
+            commands::db::peek_database,
+            commands::db::peek_game_line,
+            commands::window::open_editor_window,
+            commands::window::take_editor_target,
+            commands::window::list_windows,
             commands::db::close_db,
             commands::db::reference_db,
             commands::db::set_reference_db,

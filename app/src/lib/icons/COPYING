@@ -5,15 +5,16 @@ lucide.ts
     Icons from Lucide (https://lucide.dev), lucide-static 1.49.0 on npm (ISC
     licence, not deprecated; checked 2026-09-30). Only the icons the app
     uses are copied: the children of each icon's <svg> in
-    package/icons/<name>.svg, unchanged. The icons are badge-alert, check,
-    chess-knight, chevron-down, clipboard, clipboard-copy, clipboard-paste,
-    copy, cpu, crosshair, database, database-plus, database-search,
-    file-down, file-plus, file-up, folder-open, grid-3x3, history, image,
-    layout-dashboard, library, list, minus, network, panel-right, redo-2,
-    save, save-plus, settings, settings-2 and undo-2. Of these, check,
-    chevron-down, clipboard, crosshair and database are derived from the
-    Feather project, under the MIT licence below. Both licences are
-    compatible with the app's GPL-3.0-or-later.
+    package/icons/<name>.svg, unchanged. The icons are badge-alert,
+    bookmark, check, chess-knight, chevron-down, clipboard, clipboard-copy,
+    clipboard-paste, clock, copy, cpu, crosshair, database, database-plus,
+    database-search, file-down, file-plus, file-up, folder-open, grid-3x3,
+    history, hourglass, image, layout-dashboard, library, list, mail, minus,
+    network, panel-right, redo-2, save, save-plus, settings, settings-2,
+    star, target, undo-2 and zap. Of these, check, chevron-down, clipboard,
+    crosshair and database are derived from the Feather project, under the
+    MIT licence below. Both licences are compatible with the app's
+    GPL-3.0-or-later.
 
 -----------------------------------------------------------------------
 ISC License

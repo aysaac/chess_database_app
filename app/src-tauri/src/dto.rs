@@ -709,6 +709,10 @@ pub struct RecentDbDto {
     pub path: String,
     pub name: String,
     pub exists: bool,
+    /// `None` when `exists` is false, or it couldn't be read (in use elsewhere, say).
+    pub games: Option<u32>,
+    #[ts(type = "number | null")]
+    pub size_bytes: Option<u64>,
 }
 
 /// State of the welcome guide (QOL-08).

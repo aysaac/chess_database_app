@@ -29,7 +29,7 @@ fn surname(name: &str) -> String {
     name.split(',').next().unwrap_or(name).trim().to_owned()
 }
 
-fn year_of(date: &str) -> Option<u16> {
+pub(crate) fn year_of(date: &str) -> Option<u16> {
     date.get(..4).and_then(|y| y.parse().ok()).filter(|&y| y > 0)
 }
 
@@ -110,7 +110,7 @@ pub async fn reference_view(
 }
 
 /// The positions of `moves` from `start`: `start` itself, then one per move.
-fn positions(start: &Chess, moves: &[Move]) -> Vec<LinePositionDto> {
+pub(crate) fn positions(start: &Chess, moves: &[Move]) -> Vec<LinePositionDto> {
     let mut pos = start.clone();
     let mut out = Vec::with_capacity(moves.len() + 1);
     out.push(LinePositionDto {
