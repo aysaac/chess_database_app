@@ -19,6 +19,7 @@
     isStacked,
     panels,
     sidePixels,
+    visibleGroups,
     type Group,
     type Side,
   } from "../stores/panels.svelte";
@@ -45,7 +46,7 @@
   let dockH = $state(0);
 
   const layout = $derived(panels.layout);
-  const has = (side: Side) => layout.zones[side].groups.length > 0;
+  const has = (side: Side) => visibleGroups(layout, side).length > 0;
   const gap = (side: Side) => (has(side) ? DIVIDER : 0);
   const px = $derived(sidePixels(layout, { appW: dockW, appH: appHeight, dockW, dockH }, middleMin));
   const columns = $derived(`${px.left}px ${gap("left")}px minmax(0, 1fr) ${gap("right")}px ${px.right}px`);
@@ -84,9 +85,7 @@
    * docking.
    */
   function fits(side: Side, g: Group): boolean {
-    return (
-      isStacked(side) && !engineOn && fitsContent(g) && layout.zones[side].groups.some((o) => !fitsContent(o))
-    );
+    return isStacked(side) && !engineOn && fitsContent(g) && visibleGroups(layout, side).some((o) => !fitsContent(o));
   }
 
   /**
@@ -95,7 +94,7 @@
    * the rest empty.)
    */
   function grow(side: Side, g: Group): number {
-    const total = layout.zones[side].groups.reduce((sum, o) => sum + (fits(side, o) ? 0 : o.share), 0);
+    const total = visibleGroups(layout, side).reduce((sum, o) => sum + (fits(side, o) ? 0 : o.share), 0);
     return total > 0 ? g.share / total : 1;
   }
 
@@ -104,7 +103,7 @@
    * on each side of it that take a share (not their content's size).
    */
   function pairAt(side: Side, i: number): [Group, Group] | null {
-    const groups = layout.zones[side].groups;
+    const groups = visibleGroups(layout, side);
     const a = groups
       .slice(0, i)
       .reverse()
@@ -148,7 +147,7 @@
 
   /** The length of a side along which its groups lie, less its dividers between groups. */
   function sideLength(side: Side): number {
-    const n = layout.zones[side].groups.length;
+    const n = visibleGroups(layout, side).length;
     const length = isStacked(side) ? dockH - px.top - px.bottom - gap("top") - gap("bottom") : dockW;
     return Math.max(1, length - (n - 1) * DIVIDER);
   }
@@ -159,7 +158,7 @@
 {#snippet sideBlock(side: Side)}
   {#if has(side)}
     {@const first = side === "top" || side === "left"}
-    {@const groups = layout.zones[side].groups}
+    {@const groups = visibleGroups(layout, side)}
     {@const stacked = isStacked(side)}
     {#if !first}{@render sideDivider(side)}{/if}
     <div

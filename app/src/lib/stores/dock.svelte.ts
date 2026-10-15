@@ -10,6 +10,7 @@ import {
   groupName,
   isStacked,
   panels,
+  visibleGroups,
   type DockDest,
   type PanelId,
   type Side,
@@ -69,7 +70,7 @@ function edgeTarget(side: Side, x: number, y: number): DockTarget | null {
   const dock = rectOf(".dock");
   const middle = rectOf(".dock-middle");
   if (!dock || !middle) return null;
-  const groups = panels.layout.zones[side].groups;
+  const groups = visibleGroups(panels.layout, side);
   const stacked = isStacked(side);
   if (!groups.length) {
     // The side as it will open: its saved size (or the default), between

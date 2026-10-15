@@ -7,6 +7,7 @@
 // when it's resized) and groups a share of their side. Any tab can be
 // dragged to another side or group (`stores/dock.svelte.ts`); the whole
 // layout is saved as the `layout` pref.
+import type { IconName } from "../icons/lucide";
 import { prefs } from "./prefs.svelte";
 
 /** A panel: what a panel tab shows. */
@@ -16,9 +17,11 @@ export type Side = "left" | "right" | "top" | "bottom";
 /**
  * Panels shown as tabs; `active` is the one showing, `share` the group's
  * part of its side. `id` names the group while the app runs, so moving a
- * tab doesn't rebuild the groups it leaves alone; it isn't saved.
+ * tab doesn't rebuild the groups it leaves alone; it isn't saved. A
+ * `collapsed` group keeps its tabs and size but shows neither: it's an icon
+ * in the status bar instead (PyCharm's minimized tool windows).
  */
-export type Group = { id: string; panels: PanelId[]; active: PanelId; share: number };
+export type Group = { id: string; panels: PanelId[]; active: PanelId; share: number; collapsed: boolean };
 /**
  * A side's groups, stacked top to bottom on the left and right and side by
  * side at the top and bottom. `size` is the side's share of the window's
@@ -45,6 +48,15 @@ export const PANEL_TITLES: Record<PanelId, string> = {
 };
 
 const PANEL_IDS = Object.keys(PANEL_TITLES) as PanelId[];
+
+/** The icon a minimized panel's status bar button shows. */
+export const PANEL_ICONS: Record<PanelId, IconName> = {
+  notation: "chess-knight",
+  tree: "network",
+  reference: "library",
+  analysis: "cpu",
+  games: "list",
+};
 
 /** The sides as the tab menu names them (Move to ▸ Left…). */
 export const SIDE_NAMES: Record<Side, string> = { left: "Left", right: "Right", top: "Top", bottom: "Bottom" };
@@ -92,14 +104,20 @@ export function defaultLayout(): Layout {
       right: {
         size: DEFAULT_SIZES.right,
         groups: [
-          { id: newId(), panels: ["notation", "tree", "reference"], active: "notation", share: 0.75 },
-          { id: newId(), panels: ["analysis"], active: "analysis", share: 0.25 },
+          {
+            id: newId(),
+            panels: ["notation", "tree", "reference"],
+            active: "notation",
+            share: 0.75,
+            collapsed: false,
+          },
+          { id: newId(), panels: ["analysis"], active: "analysis", share: 0.25, collapsed: false },
         ],
       },
       top: empty("top"),
       bottom: {
         size: DEFAULT_SIZES.bottom,
-        groups: [{ id: newId(), panels: ["games"], active: "games", share: 1 }],
+        groups: [{ id: newId(), panels: ["games"], active: "games", share: 1, collapsed: false }],
       },
     },
   };
@@ -108,6 +126,11 @@ export function defaultLayout(): Layout {
 /** Every group of a layout, side by side in `SIDES` order. */
 export function allGroups(layout: Layout): Group[] {
   return SIDES.flatMap((side) => layout.zones[side].groups);
+}
+
+/** A side's groups that aren't minimized: what actually takes room there. */
+export function visibleGroups(layout: Layout, side: Side): Group[] {
+  return layout.zones[side].groups.filter((g) => !g.collapsed);
 }
 
 /** A group by its id, with its side. */
@@ -160,7 +183,7 @@ function parseZones(raw: unknown): Record<Side, Zone> | null {
         panels.push(p);
       }
       if (!isPanel(g.active) || !panels.includes(g.active)) return null;
-      groups.push({ id: newId(), panels, active: g.active, share: g.share });
+      groups.push({ id: newId(), panels, active: g.active, share: g.share, collapsed: g.collapsed === true });
     }
     zones[side] = { size: zone.size, groups };
   }
@@ -183,7 +206,7 @@ function complete(layout: Layout): Layout {
         present.add(p);
         const home = allGroups(layout).find((g) => g.panels.some((q) => dg.panels.includes(q)));
         if (home) home.panels.push(p);
-        else layout.zones[side].groups.push({ id: newId(), panels: [p], active: p, share: 1 });
+        else layout.zones[side].groups.push({ id: newId(), panels: [p], active: p, share: 1, collapsed: false });
       }
     }
   }
@@ -245,12 +268,20 @@ export function restoreLayout(saved: unknown, treeVisible: unknown, listShare: u
 /** The layout as the `layout` pref saves it: no group ids, sizes to 3 decimals. */
 export function toPref(layout: Layout) {
   const round = (n: number) => Math.round(n * 1000) / 1000;
-  const zones = {} as Record<Side, { size: number; groups: { panels: PanelId[]; active: PanelId; share: number }[] }>;
+  const zones = {} as Record<
+    Side,
+    { size: number; groups: { panels: PanelId[]; active: PanelId; share: number; collapsed: boolean }[] }
+  >;
   for (const side of SIDES) {
     const zone = layout.zones[side];
     zones[side] = {
       size: round(zone.size),
-      groups: zone.groups.map((g) => ({ panels: [...g.panels], active: g.active, share: round(g.share) })),
+      groups: zone.groups.map((g) => ({
+        panels: [...g.panels],
+        active: g.active,
+        share: round(g.share),
+        collapsed: g.collapsed,
+      })),
     };
   }
   return { version: 2 as const, zones };
@@ -304,7 +335,7 @@ export function sidePixels(
   frame: { appW: number; appH: number; dockW: number; dockH: number },
   middle: (width: number) => { w: number; h: number },
 ): Record<Side, number> {
-  const has = (side: Side) => layout.zones[side].groups.length > 0;
+  const has = (side: Side) => visibleGroups(layout, side).length > 0;
   const want = (side: Side, whole: number) =>
     has(side) ? Math.max(SIDE_MIN[side], layout.zones[side].size * whole) : 0;
   const fit = (a: Side, b: Side, whole: number, room: number): [number, number] => {
@@ -362,7 +393,8 @@ class PanelStore {
    * opening tree's queries, for one) only while it's showing.
    */
   isShowing(panel: PanelId): boolean {
-    return this.groupOf(panel)?.active === panel;
+    const group = this.groupOf(panel);
+    return group?.active === panel && !group.collapsed;
   }
 
   /**
@@ -439,7 +471,7 @@ class PanelStore {
       const w = weight([panel]);
       const share = zone.groups.length ? w / (zone.groups.reduce((sum, g) => sum + weight(g.panels), 0) + w) : 1;
       for (const g of zone.groups) g.share *= 1 - share;
-      zone.groups.splice(slot, 0, { id: newId(), panels: [panel], active: panel, share });
+      zone.groups.splice(slot, 0, { id: newId(), panels: [panel], active: panel, share, collapsed: false });
       normalize(zone);
     }
     this.#commit(next);
@@ -460,6 +492,33 @@ class PanelStore {
     const next = clone(this.layout);
     for (const g of next.zones[side].groups) if (g.id in shares) g.share = Math.max(0.01, shares[g.id]);
     normalize(next.zones[side]);
+    this.#commit(next);
+  }
+
+  /** Every minimized group, for the status bar's tray of icons. */
+  get minimized(): Group[] {
+    return allGroups(this.layout).filter((g) => g.collapsed);
+  }
+
+  /**
+   * Minimizes `group` to an icon in the status bar (PyCharm's tool window
+   * minimize): it keeps its tabs, side and size, but shows neither until
+   * restored.
+   */
+  collapse(id: string) {
+    const next = clone(this.layout);
+    const found = findGroup(next, id);
+    if (!found || found.group.collapsed) return;
+    found.group.collapsed = true;
+    this.#commit(next);
+  }
+
+  /** Restores a minimized group to its side. */
+  restore(id: string) {
+    const next = clone(this.layout);
+    const found = findGroup(next, id);
+    if (!found || !found.group.collapsed) return;
+    found.group.collapsed = false;
     this.#commit(next);
   }
 

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { dock } from "../stores/dock.svelte";
-  import { PANEL_TITLES, panels, type Group, type PanelId } from "../stores/panels.svelte";
+  import { groupLabel, PANEL_TITLES, panels, type Group, type PanelId } from "../stores/panels.svelte";
   import DropShelf from "./DropShelf.svelte";
+  import Icon from "./Icon.svelte";
   import Panel from "./Panel.svelte";
 
   // A group of panels shown as tabs (UI-19). These are panel tabs, not the
@@ -86,6 +87,14 @@
         <span class="label bold" aria-hidden="true">{PANEL_TITLES[id]}</span>
       </button>
     {/each}
+    <button
+      class="collapse"
+      title="Minimize {groupLabel(group)}"
+      aria-label="Minimize {groupLabel(group)}"
+      onclick={() => panels.collapse(group.id)}
+    >
+      <Icon name="minus" size={14} />
+    </button>
   </div>
   {#each group.panels as id (id)}
     <div class="panel" role="tabpanel" id="panel-{id}" aria-labelledby="panel-tab-{id}" hidden={id !== group.active}>
@@ -146,6 +155,26 @@
   /* Inside the strip, which clips what sticks out. */
   .tabs button:focus-visible {
     outline-offset: -2px;
+  }
+
+  /* Minimizes the group to a status bar icon (not a tab, so it stays put
+     while tabs shrink and sits after them). */
+  .tabs button.collapse {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    margin: 2px 0 3px auto;
+    padding: 0;
+    border-radius: 4px;
+    color: var(--ink-soft);
+  }
+
+  .tabs button.collapse:hover {
+    background: var(--felt-soft);
+    color: var(--ink);
   }
 
   .label {

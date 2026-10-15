@@ -4,6 +4,8 @@
   import { jobs } from "../stores/jobs.svelte";
   import { notices } from "../stores/notify.svelte";
   import { onboarding } from "../stores/onboarding.svelte";
+  import { groupLabel, PANEL_ICONS, panels } from "../stores/panels.svelte";
+  import Icon from "./Icon.svelte";
   import ImportWarnings from "./ImportWarnings.svelte";
   import Modal from "./Modal.svelte";
 
@@ -16,6 +18,19 @@
 </script>
 
 <footer>
+  <span class="minimized">
+    {#each panels.minimized as group (group.id)}
+      <button
+        title="Restore {groupLabel(group)}"
+        aria-label="Restore {groupLabel(group)}"
+        onclick={() => panels.restore(group.id)}
+      >
+        <Icon name={PANEL_ICONS[group.active]} size={14} />
+        <span>{groupLabel(group)}</span>
+      </button>
+    {/each}
+  </span>
+
   <span class="db">
     {#if db.info}
       <strong>{db.info.name}</strong>
@@ -101,7 +116,7 @@
 <style>
   footer {
     display: grid;
-    grid-template-columns: auto 1fr minmax(0, auto) auto;
+    grid-template-columns: auto auto 1fr minmax(0, auto) auto;
     align-items: center;
     gap: 16px;
     height: 30px;
@@ -109,6 +124,32 @@
     border-top: 1px solid var(--rule);
     background: var(--panel);
     font-size: 13px;
+  }
+
+  .minimized {
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .minimized button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    max-width: 160px;
+    color: var(--ink-soft);
+  }
+
+  .minimized button:hover {
+    background: var(--felt-soft);
+    color: var(--ink);
+  }
+
+  .minimized button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .db {
