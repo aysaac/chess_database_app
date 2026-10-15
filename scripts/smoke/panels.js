@@ -43,7 +43,7 @@
   const panel = (id) => $(`#panel-${id}`);
   const shown = (el) => !!el && el.getClientRects().length > 0;
   const key = (el, k) => el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
-  const saved = () => api.uiPrefs();
+  const saved = async () => (await api.uiPrefs()).values;
   const savedActive = (p) => p.layout?.zones?.right?.groups?.find((g) => g.panels.includes("tree"))?.active;
   // Which tab shows, as the store, the tab strip and the panels say it.
   const showing = (id) =>

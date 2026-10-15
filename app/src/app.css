@@ -31,8 +31,9 @@
 }
 
 /* Dark values, either from the OS (unless overridden to light) or forced by
-   the theme setting (App.svelte sets [data-theme] from Settings). Keep the
-   two blocks in sync. */
+   the theme setting (applyAppearance in stores/appearance.svelte.ts sets
+   [data-theme] from Settings, in every window). Keep the two blocks in
+   sync. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --paper: #182022;

@@ -709,10 +709,36 @@ pub struct RecentDbDto {
     pub path: String,
     pub name: String,
     pub exists: bool,
-    /// `None` when `exists` is false, or it couldn't be read (in use elsewhere, say).
+    /// `None` when `exists` is false, or it couldn't be read (not a database any more, say).
     pub games: Option<u32>,
     #[ts(type = "number | null")]
     pub size_bytes: Option<u64>,
+}
+
+/// The frontend's saved preferences (INF-02), as of `revision` (see
+/// `Settings::ui_revision`).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UiPrefsDto {
+    #[ts(type = "Record<string, unknown>")]
+    pub values: serde_json::Map<String, serde_json::Value>,
+    #[ts(type = "number")]
+    pub revision: u64,
+}
+
+/// A preference one window saved, sent to every window (the `ui-pref`
+/// event, DB-07) so their copies stay current.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UiPrefChangeDto {
+    pub key: String,
+    /// Null when the preference was removed.
+    #[ts(type = "unknown")]
+    pub value: serde_json::Value,
+    #[ts(type = "number")]
+    pub revision: u64,
 }
 
 /// State of the welcome guide (QOL-08).

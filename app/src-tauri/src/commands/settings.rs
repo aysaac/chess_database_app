@@ -1,12 +1,15 @@
 //! Settings the frontend reads and writes (INF-02): recent databases
 //! (DB-07) and its own preferences.
 
-use tauri::State;
+use chess_db::Database;
+use tauri::{AppHandle, Emitter, State};
 
-use crate::commands::db::peek;
-use crate::dto::RecentDbDto;
+use crate::dto::{RecentDbDto, UiPrefChangeDto, UiPrefsDto};
 use crate::error::AppResult;
 use crate::state::AppState;
+
+/// Event carrying a [`UiPrefChangeDto`] whenever a window saves a preference.
+pub const UI_PREF_EVENT: &str = "ui-pref";
 
 #[tauri::command]
 pub async fn recent_databases(state: State<'_, AppState>) -> AppResult<Vec<RecentDbDto>> {
@@ -15,9 +18,11 @@ pub async fn recent_databases(state: State<'_, AppState>) -> AppResult<Vec<Recen
         .into_iter()
         .map(|p| {
             let exists = p.is_dir();
-            // A peek's own open failing (in use elsewhere, a stale entry) just
+            // Read from the index header, not by opening each database: that
+            // took about half a second for one of a million games, every time
+            // the library listed it. Failing (not a database any more) just
             // means no count or size to show; recent databases still lists it.
-            let counted = exists.then(|| peek(&state, &p, |db| Ok(db.info())).ok()).flatten();
+            let counted = exists.then(|| Database::summary(&p).ok()).flatten();
             RecentDbDto {
                 path: p.to_string_lossy().into_owned(),
                 name: p.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -35,20 +40,28 @@ pub async fn forget_recent_database(state: State<'_, AppState>, path: String) ->
     Ok(())
 }
 
-/// The frontend's saved preferences, as it stored them.
+/// The frontend's saved preferences, as it stored them, and their revision.
 #[tauri::command]
-pub async fn ui_prefs(state: State<'_, AppState>) -> AppResult<serde_json::Map<String, serde_json::Value>> {
-    Ok(state.settings.lock().expect("settings lock").ui.clone())
+pub async fn ui_prefs(state: State<'_, AppState>) -> AppResult<UiPrefsDto> {
+    let settings = state.settings.lock().expect("settings lock");
+    Ok(UiPrefsDto { values: settings.ui.clone(), revision: settings.ui_revision })
 }
 
+/// Saves one preference (`null` removes it) and tells every window, the
+/// one that saved it included (`UI_PREF_EVENT`). Returns the revision it's
+/// saved at.
 #[tauri::command]
-pub async fn set_ui_pref(state: State<'_, AppState>, key: String, value: serde_json::Value) -> AppResult<()> {
-    state.update_settings(|s| {
-        if value.is_null() {
-            s.ui.remove(&key);
-        } else {
-            s.ui.insert(key, value);
-        }
-    });
-    Ok(())
+pub async fn set_ui_pref(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    key: String,
+    value: serde_json::Value,
+) -> AppResult<u64> {
+    let revision = state.update_settings(|s| s.set_ui(key.clone(), value.clone()));
+    // Sent after the settings lock is released: windows order changes by
+    // revision, not by when they arrive.
+    if let Err(e) = app.emit(UI_PREF_EVENT, UiPrefChangeDto { key, value, revision }) {
+        log::warn!("failed to emit a preference change: {e}");
+    }
+    Ok(revision)
 }

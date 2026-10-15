@@ -36,7 +36,7 @@
 
   const bottom = $derived(library.previewLayout === "bottom");
 
-  /** Size while dragging (and after), before the pref has it. */
+  /** Size while dragging; the pref has it after, so it follows other windows. */
   let localPreviewSize = $state<number | null>(null);
   const previewSize = $derived(
     localPreviewSize ?? clampPreview(prefs.get("libraryPreviewSize", DEFAULT_PREVIEW_SIZE)),
@@ -63,6 +63,7 @@
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
       if (localPreviewSize != null) prefs.set("libraryPreviewSize", localPreviewSize);
+      localPreviewSize = null;
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
@@ -75,12 +76,10 @@
     if (!dn || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault();
     e.stopPropagation();
-    localPreviewSize = clampPreview(previewSize + dn);
-    prefs.set("libraryPreviewSize", localPreviewSize);
+    prefs.set("libraryPreviewSize", clampPreview(previewSize + dn));
   }
 
   function resetPreviewSize() {
-    localPreviewSize = DEFAULT_PREVIEW_SIZE;
     prefs.set("libraryPreviewSize", DEFAULT_PREVIEW_SIZE);
   }
 
