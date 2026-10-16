@@ -173,6 +173,7 @@ fn status(state: &AppState) -> AnalysisStatusDto {
             engine_name: Some(a.engine_name.clone()),
             session: Some(a.session),
             multipv: a.multipv,
+            threat: a.has_threat(),
         },
         None => AnalysisStatusDto {
             running: false,
@@ -180,6 +181,7 @@ fn status(state: &AppState) -> AnalysisStatusDto {
             engine_name: None,
             session: None,
             multipv: 1,
+            threat: false,
         },
     }
 }
@@ -194,7 +196,8 @@ fn stop_analysis_now(state: &AppState) {
 }
 
 /// Starts analysing the position on screen in `session` with `engine` (the
-/// default engine if `None`), replacing any running analysis.
+/// default engine if `None`), replacing any running analysis. With
+/// `threat`, the opponent's threat is searched too (ENG-07).
 #[tauri::command]
 pub async fn start_analysis(
     app: AppHandle,
@@ -202,6 +205,7 @@ pub async fn start_analysis(
     session: u32,
     engine: Option<String>,
     multipv: u32,
+    threat: Option<bool>,
 ) -> AppResult<AnalysisStatusDto> {
     let config = {
         let s = state.settings.lock().expect("settings lock");
@@ -214,8 +218,9 @@ pub async fn start_analysis(
         return Err(AppError::new(ErrorCode::Engine, "no engine is set up yet: add one under Engines"));
     };
     stop_analysis_now(&state);
+    let threat = threat.unwrap_or(false);
     let analysis =
-        tauri::async_runtime::spawn_blocking(move || Analysis::start(&config, session, multipv, app))
+        tauri::async_runtime::spawn_blocking(move || Analysis::start(&config, session, multipv, threat, app))
             .await
             .map_err(|e| AppError::new(ErrorCode::Internal, e.to_string()))??;
     *state.analysis.lock().expect("analysis lock") = Some(analysis);
@@ -243,6 +248,56 @@ pub async fn set_analysis_lines(state: State<'_, AppState>, multipv: u32) -> App
     });
     if let Some(session) = session {
         state.with_session(session, |_| Ok(()))?;
+    }
+    Ok(status(&state))
+}
+
+/// Turns the threat search (ENG-07) on or off for the running analysis. On
+/// starts a second engine process (blocking a moment) that follows the
+/// analysis; off lets it quit. Without a running analysis nothing happens:
+/// `start_analysis` takes the setting.
+#[tauri::command]
+pub async fn set_analysis_threat(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    on: bool,
+) -> AppResult<AnalysisStatusDto> {
+    if !on {
+        let old = state.analysis.lock().expect("analysis lock").as_mut().and_then(|a| a.set_threat(None));
+        if let Some(old) = old {
+            std::thread::spawn(move || drop(old));
+        }
+        return Ok(status(&state));
+    }
+    let running = {
+        let analysis = state.analysis.lock().expect("analysis lock");
+        analysis.as_ref().filter(|a| a.is_alive() && !a.has_threat()).map(|a| (a.serial, a.engine_id.clone()))
+    };
+    let Some((serial, engine_id)) = running else {
+        return Ok(status(&state));
+    };
+    let config = state.settings.lock().expect("settings lock").engine(&engine_id).cloned();
+    let Some(config) = config else {
+        return Err(AppError::not_found("engine"));
+    };
+    let threat = tauri::async_runtime::spawn_blocking(move || engines::ThreatSearch::start(&config, app))
+        .await
+        .map_err(|e| AppError::new(ErrorCode::Internal, e.to_string()))??;
+    let (session, old) = {
+        let mut analysis = state.analysis.lock().expect("analysis lock");
+        match analysis.as_mut() {
+            Some(a) if a.serial == serial => (Some(a.session), a.set_threat(Some(threat))),
+            // The analysis stopped or was replaced while the engine started.
+            _ => (None, Some(threat)),
+        }
+    };
+    if let Some(old) = old {
+        std::thread::spawn(move || drop(old));
+    }
+    if let Some(session) = session {
+        // Search the position on the board right away. The session may
+        // have closed meanwhile; the next one attached is searched anyway.
+        let _ = state.with_session(session, |_| Ok(()));
     }
     Ok(status(&state))
 }

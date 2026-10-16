@@ -35,6 +35,7 @@ import type { SaveModeDto } from "./bindings/SaveModeDto";
 import type { ShapeDto } from "./bindings/ShapeDto";
 import type { SortSpecDto } from "./bindings/SortSpecDto";
 import type { StepDto } from "./bindings/StepDto";
+import type { ThreatDto } from "./bindings/ThreatDto";
 import type { TreeDto } from "./bindings/TreeDto";
 import type { UiPrefChangeDto } from "./bindings/UiPrefChangeDto";
 import type { UiPrefsDto } from "./bindings/UiPrefsDto";
@@ -152,11 +153,13 @@ export const api = {
   setDefaultEngine: (id: string) => invoke<EngineDto[]>("set_default_engine", { id }),
   setEngineOptions: (id: string, options: [string, string][]) =>
     invoke<EngineDto[]>("set_engine_options", { id, options }),
-  startAnalysis: (session: number, engine: string | null, multipv: number) =>
-    invoke<AnalysisStatusDto>("start_analysis", { session, engine, multipv }),
+  startAnalysis: (session: number, engine: string | null, multipv: number, threat = false) =>
+    invoke<AnalysisStatusDto>("start_analysis", { session, engine, multipv, threat }),
   stopAnalysis: () => invoke<AnalysisStatusDto>("stop_analysis"),
   analysisStatus: () => invoke<AnalysisStatusDto>("analysis_status"),
   setAnalysisLines: (multipv: number) => invoke<AnalysisStatusDto>("set_analysis_lines", { multipv }),
+  /** Turns the threat search (ENG-07) of the running analysis on or off. */
+  setAnalysisThreat: (on: boolean) => invoke<AnalysisStatusDto>("set_analysis_threat", { on }),
   addEngineLine: (session: number, moves: string[], comment: string | null, goto: boolean) =>
     invoke<GameViewDto>("add_engine_line", { session, moves, comment, goto }),
   blunderCheck: (session: number, engine: string | null, movetimeMs: number) =>
@@ -176,6 +179,11 @@ export const api = {
 
 export function onAnalysis(cb: (update: AnalysisDto) => void): Promise<UnlistenFn> {
   return listen<AnalysisDto>("analysis", (e) => cb(e.payload));
+}
+
+/** The opponent's threat in the analysed position (ENG-07). */
+export function onThreat(cb: (threat: ThreatDto) => void): Promise<UnlistenFn> {
+  return listen<ThreatDto>("threat", (e) => cb(e.payload));
 }
 
 export function onJob(cb: (job: JobDto) => void): Promise<UnlistenFn> {

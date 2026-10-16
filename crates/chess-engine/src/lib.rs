@@ -1,6 +1,6 @@
 //! UCI engine host (ENG-01): runs engines as child processes, parses the
 //! protocol, drives interactive analysis (ENG-02) and batch annotation such
-//! as the blunder check (ANL-01).
+//! as the blunder check (ANL-01), and works out threats (ENG-07).
 //!
 //! No UI dependencies: engines are plain processes, and results are plain
 //! data for the caller to present.
@@ -8,6 +8,7 @@
 mod analysis;
 mod engine;
 pub mod review;
+pub mod threat;
 pub mod uci;
 
 use std::path::PathBuf;

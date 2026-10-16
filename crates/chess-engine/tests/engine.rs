@@ -185,6 +185,46 @@ fn analyzer_reports_engine_failure() {
     panic!("the analyzer should stop after a failure");
 }
 
+/// 1.e4 e5 2.Bc4 Nc6 3.Qh5, Black to move: White threatens 4.Qxf7#.
+const SCHOLAR_THREAT: &str = "r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 3 3";
+
+#[test]
+fn threat_engine_finds_the_mate_after_a_pass() {
+    use chess_engine::threat::{self, THREAT_LIMITS};
+
+    let pos = chess_core::position::from_fen(SCHOLAR_THREAT).unwrap();
+    let after = threat::null_move(&pos).unwrap();
+    let declared = Engine::start(fake()).unwrap().id().options.clone();
+    let options =
+        threat::engine_options(&declared, &[("MultiPV".into(), "3".into()), ("Delay".into(), "1".into())]);
+    assert_eq!(options, [("Delay", "1"), ("Hash", "16")].map(|(n, v)| (n.to_owned(), v.to_owned())));
+
+    let (tx, rx) = channel();
+    let mut analyzer = Analyzer::start(fake(), &options, move |e| {
+        let _ = tx.send(e);
+    })
+    .unwrap();
+    let id = analyzer.analyze(AnalysisRequest {
+        position: threat::search_position(&after),
+        multipv: 1,
+        limits: THREAT_LIMITS,
+    });
+    // The search is capped: it ends by itself with the threat.
+    let done = loop {
+        match rx.recv_timeout(Duration::from_secs(5)).expect("an update") {
+            AnalyzerEvent::Update(u) if u.request == id && u.finished => break u,
+            AnalyzerEvent::Update(_) => {}
+            AnalyzerEvent::Failed(e) => panic!("engine failed: {e}"),
+        }
+    };
+    assert_eq!(done.best.as_deref(), Some("h5f7"));
+    assert_eq!(done.depth, 20, "searched to the depth cap");
+    let found = threat::threat_line(&after, &done.lines[0], 8).unwrap();
+    assert_eq!((found.moves[0].san.as_str(), found.moves[0].move_number), ("Qxf7#", 4));
+    assert_eq!(found.score, Score::Mate(1), "White mates");
+    assert!(analyzer.is_alive(), "the engine idles after a capped search");
+}
+
 #[test]
 fn blunder_check_marks_the_hung_queen() {
     use chess_core::game::Nag;
@@ -248,4 +288,19 @@ fn real_stockfish_if_present() {
     assert_eq!(r.best.as_deref(), Some("e4d5"));
     assert_eq!(r.lines.len(), 2);
     assert!(r.lines[0].wdl.is_some());
+
+    // ENG-07: had Black passed after 3.Qh5, White mates on f7.
+    use chess_engine::threat;
+    let after = threat::null_move(&chess_core::position::from_fen(SCHOLAR_THREAT).unwrap()).unwrap();
+    engine.set_option("MultiPV", "1").unwrap();
+    let r = engine
+        .search(
+            &threat::search_position(&after),
+            &Limits { depth: Some(10), ..Limits::default() },
+            &mut |_| {},
+            &|| false,
+        )
+        .unwrap();
+    let found = threat::threat_line(&after, &r.lines[0], 8).unwrap();
+    assert_eq!((found.moves[0].san.as_str(), found.score), ("Qxf7#", Score::Mate(1)));
 }
