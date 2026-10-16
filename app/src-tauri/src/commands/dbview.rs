@@ -7,8 +7,8 @@ use std::sync::Mutex;
 
 use chess_core::position;
 use chess_db::{
-    Database, GameId, GameSet, NameKind, Progress, SortSpec, find_position, games_with_name, scan_position,
-    search_headers,
+    Database, DuplicateOptions, GameId, GameSet, NameKind, Progress, SortSpec, find_duplicates,
+    find_position, games_with_name, scan_position, search_headers,
 };
 use chess_jobs::JobError;
 use tauri::{AppHandle, Manager, State};
@@ -135,6 +135,11 @@ pub fn run_steps(
                     // than the index goes.
                     _ => scan_position(db, &pos, progress).map_err(to_job_error)?,
                 }
+            }
+            FilterStep::Duplicates { fuzzy } => {
+                find_duplicates(db, DuplicateOptions { fuzzy: *fuzzy }, progress)
+                    .map_err(to_job_error)?
+                    .listed()
             }
         };
         if let Some(set) = &within

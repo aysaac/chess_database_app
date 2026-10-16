@@ -10,6 +10,7 @@ import type { CopyModeDto } from "./bindings/CopyModeDto";
 import type { CrossTableDto } from "./bindings/CrossTableDto";
 import type { DbInfoDto } from "./bindings/DbInfoDto";
 import type { DbViewDto } from "./bindings/DbViewDto";
+import type { DuplicatesDto } from "./bindings/DuplicatesDto";
 import type { EngineDto } from "./bindings/EngineDto";
 import type { FenCheckDto } from "./bindings/FenCheckDto";
 import type { GameLineDto } from "./bindings/GameLineDto";
@@ -74,6 +75,14 @@ export const api = {
     invoke<number | null>("search_games", { handle, query, within, quick }),
   clearFilter: (handle: number) => invoke<DbInfoDto>("clear_filter", { handle }),
   compactDb: (handle: number) => invoke<number>("compact_db", { handle }),
+  /** Starts looking for duplicate games (DB-08); the result is in `duplicatesReport`. */
+  findDuplicates: (handle: number, fuzzy: boolean) =>
+    invoke<number>("find_duplicates", { handle, fuzzy }),
+  duplicatesReport: (handle: number) =>
+    invoke<DuplicatesDto | null>("duplicates_report", { handle }),
+  deleteDuplicates: (handle: number) => invoke<number>("delete_duplicates", { handle }),
+  restoreDuplicates: (handle: number) => invoke<number>("restore_duplicates", { handle }),
+  showDuplicates: (handle: number) => invoke<DbInfoDto>("show_duplicates", { handle }),
   dbView: (handle: number) => invoke<DbViewDto>("db_view", { handle }),
   saveDbLayout: (handle: number, sort: SortSpecDto, columns: Record<string, number>) =>
     invoke<void>("save_db_layout", { handle, sort, columns }),

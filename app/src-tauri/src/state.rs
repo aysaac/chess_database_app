@@ -7,6 +7,7 @@ use chess_core::game::GameEditor;
 use chess_db::{Database, GameId, SortSpec, sorted_subset};
 use chess_jobs::{JobId, JobManager};
 
+use crate::commands::duplicates::DuplicateScan;
 use crate::dto::{ImportReportDto, LinesDto};
 use crate::engines::Analysis;
 use crate::error::{AppError, AppResult};
@@ -121,7 +122,9 @@ impl LinesCache {
 
 /// Search results the game list is limited to (SRCH-14).
 pub struct ActiveFilter {
-    /// Ascending game ids.
+    /// Ascending game ids; a duplicates filter (DB-08) lists each kept game
+    /// before its copies instead, so the list's natural order shows them
+    /// together.
     pub ids: Arc<Vec<GameId>>,
     pub description: String,
     /// How the filter was made, to make it again when the database is
@@ -200,6 +203,9 @@ pub struct AppState {
     pub analysis: Mutex<Option<Analysis>>,
     /// The last import into each database (by handle), while it had warnings.
     pub import_reports: Mutex<HashMap<u32, ImportReportDto>>,
+    /// The last search for duplicate games (DB-08) in each database, by
+    /// handle. Lock order: `duplicates` before a database.
+    pub duplicates: Mutex<HashMap<u32, DuplicateScan>>,
     /// The Reference tab's counted lines (OPEN-14). Held only to read or
     /// store them (and to ask `jobs` about its jobs), never while taking a
     /// database or session lock.

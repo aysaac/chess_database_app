@@ -41,6 +41,13 @@ pub enum FilterStep {
         #[serde(default)]
         full: bool,
     },
+    /// Duplicate games (DB-08), each kept game followed by its copies;
+    /// `fuzzy` found fuzzy copies too.
+    #[serde(rename_all = "camelCase")]
+    Duplicates {
+        #[serde(default)]
+        fuzzy: bool,
+    },
 }
 
 /// A filter to make again when its database is reopened.
