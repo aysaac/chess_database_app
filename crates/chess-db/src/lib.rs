@@ -6,6 +6,7 @@ pub mod blob;
 mod bytes;
 pub mod cb;
 mod copy;
+pub mod crosstable;
 mod database;
 mod export;
 mod import;

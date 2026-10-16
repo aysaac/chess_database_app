@@ -238,3 +238,11 @@ The index is about as large as the games themselves for online games (46
 positions per game on average). Ways to shrink it if 10M-game databases
 matter: fewer plies (`max_ply` is stored per segment), or storing positions
 reached by a single game in a compact side table.
+
+Tournament cross-tables (DB-16) read only the index records: one scan for
+the event's games, then the standings in memory. Release build: all 55
+TWIC 1600 events in 40 ms together. In the app (`tauri dev`, Oct 2026), from
+the click to the table on screen: a 10-player round robin 50 ms, the
+597-player Titled Tuesday Swiss 260–470 ms; on the 1M Lichess games, the
+"Rated Blitz game" month (428,886 games, too big for a table) 253 ms and a
+1,446-game arena 278 ms.

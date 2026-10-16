@@ -1122,6 +1122,134 @@ pub struct NameListDto {
     pub rows: Vec<NameRowDto>,
 }
 
+/// How a tournament was paired (DB-16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PairingDto {
+    RoundRobin,
+    Swiss,
+    KnockOut,
+    Match,
+    /// No round numbers: online arenas, or rounds not recorded.
+    Unrounded,
+}
+
+/// A game's result for one player in a cross-table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CrossOutcomeDto {
+    Win,
+    Draw,
+    Loss,
+    Unfinished,
+}
+
+/// One game of a player in a cross-table.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CrossResultDto {
+    pub game: u32,
+    /// Column in the rounds view: the round, or the player's n-th game when
+    /// the event has no rounds; 0 for a game without a round.
+    pub slot: u16,
+    /// As the game's header has it ("5", "5.2"), or empty.
+    pub round: String,
+    /// The opponent's index in `CrossTableDto::rows`; `None` for a bye.
+    pub opponent: Option<u32>,
+    pub white: bool,
+    pub outcome: CrossOutcomeDto,
+    /// Decisive without a move played.
+    pub forfeit: bool,
+}
+
+/// A player's line in a cross-table, in rank order.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CrossRowDto {
+    pub name: String,
+    pub elo: Option<u16>,
+    /// Players level on points and every tie-break share `rank..=rankTo`.
+    pub rank: u32,
+    pub rank_to: u32,
+    pub points: f64,
+    /// Games with a result, byes and forfeits included.
+    pub games: u32,
+    pub wins: u32,
+    pub draws: u32,
+    pub losses: u32,
+    /// Score in percent of `games`.
+    pub percent: Option<f64>,
+    /// Average Elo of the opponents met over the board who have one.
+    pub avg_opponent: Option<u16>,
+    pub performance: Option<i32>,
+    /// Games the average and the performance are over.
+    pub rated_games: u32,
+    /// Values of `CrossTableDto::tieBreaks`, in the same order.
+    pub tie_breaks: Vec<f64>,
+    pub results: Vec<CrossResultDto>,
+}
+
+/// A tie-break column: its heading and what it means.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct TieBreakDto {
+    pub short: String,
+    pub title: String,
+}
+
+/// One edition of an event (the games of one stretch of dates).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct EditionDto {
+    /// "2019", "2018–2019", "Year unknown".
+    pub label: String,
+    pub games: u32,
+}
+
+/// A tournament cross-table (DB-16): one edition of an event.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CrossTableDto {
+    /// Event name id (as in the Events list).
+    pub event_id: u32,
+    pub event: String,
+    pub site: String,
+    /// "2025.06.28 – 2025.07.06", or empty.
+    pub dates: String,
+    pub editions: Vec<EditionDto>,
+    pub edition: u32,
+    /// Named players and games in the edition.
+    pub players: u32,
+    pub games: u32,
+    /// Why there's no table (the edition is too big), else `None`.
+    pub too_big: Option<String>,
+    pub pairing: PairingDto,
+    /// Times everyone meets everyone, in a round robin.
+    pub cycles: u16,
+    /// "Double round robin", "Swiss", …
+    pub kind: String,
+    /// Whether slots are rounds (else each player's games in order).
+    pub by_round: bool,
+    /// The slots with games, ascending.
+    pub slots: Vec<u16>,
+    /// Some games have no round (slot 0).
+    pub unslotted: bool,
+    pub tie_breaks: Vec<TieBreakDto>,
+    pub rows: Vec<CrossRowDto>,
+    pub unfinished: u32,
+    pub forfeits: u32,
+    pub byes: u32,
+    /// Games left out: without two named players.
+    pub skipped: u32,
+    /// Whether the grid view fits (few enough players).
+    pub grid: bool,
+}
+
 /// Result of checking a FEN: the normalized FEN, or `error` in plain words.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]

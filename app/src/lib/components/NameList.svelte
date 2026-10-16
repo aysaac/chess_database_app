@@ -6,6 +6,7 @@
   import { formatCount } from "../format";
   import { db } from "../stores/db.svelte";
   import { notices } from "../stores/notify.svelte";
+  import CrossTableDialog from "./CrossTableDialog.svelte";
   import Modal from "./Modal.svelte";
 
   let { kind, onShowGames }: { kind: NameKindDto; onShowGames: () => void } = $props();
@@ -24,6 +25,8 @@
   let selected = $state(0);
   let renaming = $state<NameRowDto | null>(null);
   let newName = $state("");
+  /** The event whose cross-table is open (DB-16). */
+  let crossTable = $state<number | null>(null);
   let seq = 0;
 
   // Reload when the list, the filter text or the database changes.
@@ -104,6 +107,13 @@
     <span class="spacer"></span>
     <button disabled={!data?.rows.length} onclick={() => show(data?.rows[selected])}>Show games</button>
     <button disabled={!data?.rows.length} title="F2" onclick={() => startRename(data?.rows[selected])}>Rename…</button>
+    {#if kind === "event"}
+      <button
+        disabled={!data?.rows.length}
+        title="Standings and results of the selected event"
+        onclick={() => (crossTable = data?.rows[selected]?.id ?? null)}>Cross-table</button
+      >
+    {/if}
   </div>
   <div class="head row">
     <button class="cell" onclick={() => (byGames = false)}
@@ -133,6 +143,10 @@
     {/each}
   </div>
 </section>
+
+{#if crossTable !== null && db.info}
+  <CrossTableDialog handle={db.info.handle} event={crossTable} onClose={() => (crossTable = null)} {onShowGames} />
+{/if}
 
 {#if renaming}
   <Modal title="Rename {nouns[kind][0]}" onClose={() => (renaming = null)} width="480px">

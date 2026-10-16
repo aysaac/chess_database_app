@@ -7,6 +7,7 @@ import type { AppError } from "./bindings/AppError";
 import type { BoardImageDto } from "./bindings/BoardImageDto";
 import type { CommentSlotDto } from "./bindings/CommentSlotDto";
 import type { CopyModeDto } from "./bindings/CopyModeDto";
+import type { CrossTableDto } from "./bindings/CrossTableDto";
 import type { DbInfoDto } from "./bindings/DbInfoDto";
 import type { DbViewDto } from "./bindings/DbViewDto";
 import type { EngineDto } from "./bindings/EngineDto";
@@ -82,6 +83,9 @@ export const api = {
     invoke<DbInfoDto>("show_name_games", { handle, kind, id }),
   renameName: (handle: number, kind: NameKindDto, id: number, name: string) =>
     invoke<string>("rename_name", { handle, kind, id, name }),
+  /** A tournament cross-table (DB-16): of event `event`, or of `game`'s event. */
+  crossTable: (handle: number, event: number | null, game: number | null, edition: number | null = null) =>
+    invoke<CrossTableDto>("cross_table", { handle, event, game, edition }),
   updateIndex: (handle: number) => invoke<number | null>("update_index", { handle }),
   openingTree: (handle: number, session: number) => invoke<TreeDto>("opening_tree", { handle, session }),
   searchPosition: (handle: number, session: number) =>
