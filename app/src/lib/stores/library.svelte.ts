@@ -41,23 +41,34 @@ export const PREVIEW_LAYOUTS = [
 ] as const;
 export type PreviewLayout = (typeof PREVIEW_LAYOUTS)[number]["id"];
 
+/** The paths in a saved favourites list (the file may hold anything). */
+function paths(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string") : [];
+}
+
 class Library {
   /** Favourited database paths, most recently starred last. */
   get favorites(): string[] {
-    const raw = prefs.raw("libraryFavorites");
-    return Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string") : [];
+    return paths(prefs.raw("libraryFavorites"));
   }
 
   isFavorite(path: string): boolean {
     return this.favorites.includes(path);
   }
 
+  /**
+   * Stars the database if it shows no star, else unstars it. The change is
+   * made to the saved list (prefs.update), which can hold more than this
+   * window's copy until the preferences have loaded, so what was shown
+   * decides, not a toggle of the saved list.
+   */
   toggleFavorite(path: string) {
-    const favs = this.favorites;
-    prefs.set(
-      "libraryFavorites",
-      favs.includes(path) ? favs.filter((p) => p !== path) : [...favs, path],
-    );
+    const star = !this.isFavorite(path);
+    prefs.update("libraryFavorites", (saved) => {
+      const favs = paths(saved);
+      if (!star) return favs.filter((p) => p !== path);
+      return favs.includes(path) ? favs : [...favs, path];
+    });
   }
 
   /** Side (a right-hand panel) or bottom (a ChessBase-style horizontal one). */

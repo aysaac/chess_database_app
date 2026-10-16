@@ -9,7 +9,11 @@
 // - changes reaching the other open window both ways (the theme, a star,
 //   the preview layout), a star made in each window keeping the other's
 //   (no stale copy saved over a newer list), and the board orientation
-//   staying with its own window (a per-window pref, prefs.svelte.ts).
+//   staying with its own window (a per-window pref, prefs.svelte.ts);
+// - a change made just before a window closes being saved (windowClose.ts):
+//   the editor sets a pref and closes at once, and the library finds it
+//   saved and in its copy; then the library does the same and a second
+//   editor window checks.
 //
 // CHESSDB_SMOKE re-runs this same script in EVERY window that loads a page,
 // including the editor window this driver causes to open (see AGENTS.md).
@@ -23,7 +27,7 @@
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   while (!window.__chessdb) await wait(100);
-  const { db, game, invoke, prefs, api, library, appearance } = window.__chessdb;
+  const { db, game, invoke, prefs, api, library, appearance, win } = window.__chessdb;
   game.confirmDiscard = async () => true;
   const log = (m) => invoke("dev_log", { message: String(m) });
   const shot = async (name) => {
@@ -75,6 +79,29 @@
   const closeSettings = async () => {
     settingsDialog().querySelector("button.primary").click();
     await until(() => !settingsDialog(), "the settings dialog closed");
+  };
+  // Closing (DB-07): a change made just before a window closes, while it
+  // still waits for its debounce, must be saved.
+  const CLOSE_EDITOR = "set just before the editor closed";
+  const CLOSE_LIBRARY = "set just before the library closed";
+  // Asks this window to close, as its title-bar button does: Tauri then
+  // holds the close and sends the window `tauri://close-requested`, since
+  // its page listens for it (windowClose.ts), so this sends that.
+  // (`win.close()` needs `core:window:allow-close`, which the app doesn't.)
+  const requestClose = () =>
+    invoke("plugin:event|emit_to", {
+      target: { kind: "Window", label: win.label },
+      event: "tauri://close-requested",
+      payload: null,
+    });
+  // Waits for `label`'s window to go, then checks that `key` was saved as
+  // `value` before it went, and that the change reached this window's copy.
+  const checkSavedOnClose = async (label, key, value) => {
+    await until(async () => !(await api.listWindows()).includes(label), "the " + label + " window closed", 200);
+    // No waiting here: the window saves before it closes.
+    const got = (await saved())[key];
+    expect(got === value, "the change made just before " + label + " closed saved, got " + JSON.stringify(got));
+    await until(() => prefs.raw(key) === value, () => "it reached this window's copy, got " + JSON.stringify(prefs.raw(key)));
   };
   const card = (name) => [...document.querySelectorAll(".card")].find((c) => c.querySelector(".card-name")?.textContent.trim() === name);
   const favouriteRows = () => [...document.querySelectorAll(".folders .mini-row .name")].map((n) => n.textContent.trim());
@@ -210,7 +237,8 @@
       document.querySelector(".preview button.primary").click(); // "Open"
       await until(async () => (await api.listWindows()).length > before.length, "a new OS window opened");
       const labels = await api.listWindows();
-      expect(labels.some((l) => l.startsWith("editor-")), "an editor-* window, got " + labels.join(", "));
+      const editorLabel = labels.find((l) => !before.includes(l));
+      expect(editorLabel?.startsWith("editor-"), "an editor-* window, got " + labels.join(", "));
       await shot("05-after-open-spawns-window");
 
       // Bug 3, editor to library: the editor switches to Light, stars
@@ -241,6 +269,28 @@
       }, "the library's changes saved, keeping the editor's star");
       await log("library checks passed; waiting for the editor window's own checks");
       await step("library-changed");
+
+      // The editor sets a pref and closes at once (below).
+      await turn("editor-closing");
+      await checkSavedOnClose(editorLabel, "smokeCloseEditor", CLOSE_EDITOR);
+      await shot("09-library-after-editor-closed");
+
+      // The library does the same; a second editor window checks.
+      await step("second-editor");
+      await api.openEditorWindow(null);
+      await turn("second-editor-ready");
+      await step("library-closing");
+      await log("closing the library window right after a change");
+      prefs.set("smokeCloseLibrary", CLOSE_LIBRARY);
+      await requestClose();
+    } else if (inEditor() && (await saved()).smokeStep === "second-editor") {
+      // The second editor window, opened to see the library close.
+      await log("start (second editor window)");
+      await step("second-editor-ready");
+      await turn("library-closing");
+      await checkSavedOnClose("main", "smokeCloseLibrary", CLOSE_LIBRARY);
+      await shot("10-editor-after-library-closed");
+      await log("done");
     } else if (inEditor()) {
       // This is the editor window the library window just spawned.
       await log("start (editor window)");
@@ -270,7 +320,12 @@
       expect(game.orientation === "black" && prefs.raw("orientation") === "black", "the editor's own board still flipped");
       expect(document.documentElement.dataset.theme === "light", "the editor still light");
       await shot("08-editor-after-library-changes");
-      await log("done");
+
+      // A change, then the window closes before its debounce is over.
+      await step("editor-closing");
+      await log("closing the editor window right after a change");
+      prefs.set("smokeCloseEditor", CLOSE_EDITOR);
+      await requestClose();
     } else {
       await log("FAILED: neither the library nor an editor shell is on screen");
     }

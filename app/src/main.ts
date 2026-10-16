@@ -13,6 +13,7 @@ import App from "./App.svelte";
 import LibraryHome from "./lib/components/LibraryHome.svelte";
 import { applyAppearance } from "./lib/stores/appearance.svelte";
 import { prefs } from "./lib/stores/prefs.svelte";
+import { handleClose } from "./lib/windowClose";
 
 // The library (DB-07) is the app's main window; opening a database or
 // starting a new game spawns a separate "editor-…" window for it
@@ -23,9 +24,13 @@ const isMain = getCurrentWindow().label === "main";
 // Every window starts the same way, whichever shell it shows: the saved
 // preferences first (kept in step with the other windows from then on), then
 // the theme from them, then the shell. So no shell reads a default where a
-// preference is saved, or saves a change made from one over it, and no
-// window flashes the wrong theme.
+// preference is saved, and no window flashes the wrong theme. If the read
+// fails or doesn't answer, `init` gives up waiting after two seconds and
+// the window shows anyway; the preferences fill in when a later read
+// succeeds (prefsLedger.ts). Closing any window saves its last changes
+// (windowClose.ts).
 async function start() {
+  void handleClose().catch((e) => console.error("couldn't watch for this window closing:", e));
   await prefs.init();
   applyAppearance();
   mount(isMain ? LibraryHome : App, { target: document.getElementById("app")! });

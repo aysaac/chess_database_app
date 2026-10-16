@@ -589,6 +589,30 @@ sway display. With real input:
   that open and work. At 120% scaling nothing in the ribbon is cut off.
 - `scripts\smoke\ribbon.js` passes under `run.ps1`.
 
+### B12. The library and a compaction in another instance (DB-07)
+
+- [ ] Done
+
+The library window reads each recent database's game count from its
+`games.idx` (`Database::summary`), without its lock, so it can count a
+database another process has open. A compaction renames its new files over
+the old ones, and Windows can refuse to rename over a file another handle
+has open. The app's own compactions can't meet this: for a database it has
+open, the library asks the open handle (`recent_databases`). Two instances
+of the app can. With the installed app and a dev build (`npm run tauri
+dev`), both listing the same database:
+
+- Import TWIC into a database in instance A, delete about half the games
+  and start **Compact**. While it runs, reload instance B's library window
+  (F5 in the dev build) several times; each reload lists the database.
+- A's compaction finishes without "Access is denied" or a sharing
+  violation, and the database then opens in A with the count A reported.
+- B's card shows a count and a size during the compaction and the new
+  ones after it, not about twice the size (a compaction's `.new` files
+  aren't counted).
+- If the rename fails, `summary` has to stay off a database while its
+  `compact.commit` or `.new` files are there: note it here as A8.
+
 ## Not on this list (decisions for the user)
 
 - **Signing** the installers, which removes the SmartScreen warning.
