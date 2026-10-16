@@ -626,6 +626,41 @@ pub struct AnalysisStatusDto {
     pub engine_name: Option<String>,
     pub session: Option<u32>,
     pub multipv: u32,
+    /// The threat search (ENG-07) runs next to the analysis.
+    pub threat: bool,
+}
+
+/// Why a position has no threat to show (ENG-07).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum NoThreatDto {
+    /// Mate, stalemate or too little material.
+    GameOver,
+    /// The side to move is in check, so it can't pass.
+    InCheck,
+    /// After a pass the opponent would have no legal move.
+    NoMoves,
+}
+
+/// The threat in the analysed position (ENG-07, event `threat`): the
+/// opponent's best line had the side to move passed. Until the first line
+/// comes, `line`, `unavailable` and `error` are all `None`.
+#[derive(Debug, Clone, Default, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThreatDto {
+    pub session: u32,
+    /// The position on the board (before the pass).
+    pub fen: String,
+    pub depth: u32,
+    /// The capped search is over.
+    pub finished: bool,
+    /// From the opponent's first move; the eval is from White's point of view.
+    pub line: Option<PvLineDto>,
+    pub unavailable: Option<NoThreatDto>,
+    /// The threat engine failed; the threat search has stopped.
+    pub error: Option<String>,
 }
 
 /// A UCI option as the engine declares it.

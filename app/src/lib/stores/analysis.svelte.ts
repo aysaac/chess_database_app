@@ -1,9 +1,10 @@
-import { api, onAnalysis } from "../api";
+import { api, onAnalysis, onThreat } from "../api";
 import type { AnalysisDto } from "../bindings/AnalysisDto";
 import type { AnalysisStatusDto } from "../bindings/AnalysisStatusDto";
 import type { EngineDto } from "../bindings/EngineDto";
 import type { EvalDto } from "../bindings/EvalDto";
 import type { PvLineDto } from "../bindings/PvLineDto";
+import type { ThreatDto } from "../bindings/ThreatDto";
 import { formatEval } from "../format";
 import { game } from "./game.svelte";
 import { jobs } from "./jobs.svelte";
@@ -16,25 +17,37 @@ const STOPPED: AnalysisStatusDto = {
   engineName: null,
   session: null,
   multipv: 1,
+  threat: false,
 };
 
-/** Engines (ENG-01), the running analysis (ENG-02) and the blunder check (ANL-01). */
+/** Engines (ENG-01), the running analysis (ENG-02), threats (ENG-07) and the blunder check (ANL-01). */
 class AnalysisStore {
   engines = $state<EngineDto[]>([]);
   status = $state<AnalysisStatusDto>(STOPPED);
   /** True while the engine starts. */
   starting = $state(false);
   #latest = $state<AnalysisDto | null>(null);
+  #threat = $state<ThreatDto | null>(null);
 
   constructor() {
     onAnalysis((update) => {
       if (update.error) {
         this.status = STOPPED;
         this.#latest = null;
+        this.#threat = null;
         notices.show(`The engine stopped: ${update.error}. Start the analysis again to retry.`, "error");
         return;
       }
       this.#latest = update;
+    });
+    onThreat((threat) => {
+      if (threat.error && this.showThreat) {
+        notices.show(
+          `The threat search stopped: ${threat.error}. Turn "Show threat" off and on to retry.`,
+          "error",
+        );
+      }
+      this.#threat = threat;
     });
   }
 
@@ -43,6 +56,40 @@ class AnalysisStore {
     const u = this.#latest;
     const view = game.view;
     return u && view && u.session === view.session && u.fen === view.fen ? u : null;
+  }
+
+  /**
+   * Whether the engine also shows what the opponent threatens (ENG-07): the
+   * position on the board searched as if the side to move passed. An app
+   * preference, so it's remembered and every window follows it.
+   */
+  get showThreat(): boolean {
+    return prefs.get("showThreat", false);
+  }
+
+  /**
+   * The threat in the position on the board while the engine runs with
+   * "Show threat" on: the opponent's line, why there's none, or the threat
+   * engine's failure; null until its search has said anything.
+   */
+  get threat(): ThreatDto | null {
+    const t = this.#threat;
+    const view = game.view;
+    if (!t || !view || !this.showThreat || !(this.status.running || this.starting)) return null;
+    if (t.error) return t;
+    return t.session === view.session && t.fen === view.fen ? t : null;
+  }
+
+  /** Turns "Show threat" on or off, for the running analysis too. */
+  async setShowThreat(on: boolean) {
+    prefs.set("showThreat", on);
+    this.#threat = null;
+    if (!this.status.running) return;
+    try {
+      this.status = await api.setAnalysisThreat(on);
+    } catch (e) {
+      notices.error(e);
+    }
   }
 
   get lines(): number {
@@ -123,8 +170,13 @@ class AnalysisStore {
       return;
     }
     this.starting = true;
+    this.#threat = null;
     try {
-      this.status = await api.startAnalysis(session, engine, this.lines);
+      this.status = await api.startAnalysis(session, engine, this.lines, this.showThreat);
+      // "Show threat" may have changed while the engine started.
+      if (this.status.running && this.status.threat !== this.showThreat) {
+        this.status = await api.setAnalysisThreat(this.showThreat);
+      }
     } catch (e) {
       notices.error(e);
     } finally {
@@ -136,6 +188,7 @@ class AnalysisStore {
     try {
       this.status = await api.stopAnalysis();
       this.#latest = null;
+      this.#threat = null;
     } catch (e) {
       notices.error(e);
     }

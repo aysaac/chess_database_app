@@ -2,16 +2,23 @@
   import type { PvLineDto } from "../bindings/PvLineDto";
   import { figurine, formatCount, formatEval, formatNps } from "../format";
   import { analysis } from "../stores/analysis.svelte";
+  import { game } from "../stores/game.svelte";
 
   const current = $derived(analysis.current);
   const status = $derived(analysis.status);
   const wdl = $derived(current?.lines[0]?.wdl ?? null);
+  const threat = $derived(analysis.threat);
+  // Who would pass, and who gets the extra move (ENG-07).
+  const mover = $derived(game.view?.turn === "black" ? "Black" : "White");
+  const opponent = $derived(mover === "White" ? "Black" : "White");
 
   function boundMark(line: PvLineDto): string {
     return line.bound === "lower" ? "≥" : line.bound === "upper" ? "≤" : "";
   }
 
   const pct = (permille: number) => `${Math.round(permille / 10)}%`;
+  const blackAhead = (line: PvLineDto) =>
+    line.eval.mate !== null ? line.eval.mate < 0 : (line.eval.cp ?? 0) < 0;
 </script>
 
 <section class="analysis" aria-label="Engine analysis">
@@ -40,14 +47,19 @@
         onclick={() => analysis.setLines(status.multipv + 1)}>+</button
       >
     </span>
+    <button
+      class="toggle"
+      aria-pressed={analysis.showThreat}
+      title="Show what the opponent threatens: the engine also looks at the position as if the side to move passed"
+      onclick={() => analysis.setShowThreat(!analysis.showThreat)}>Show threat</button
+    >
     <button class="stop" title="Stop the engine (Ctrl+Shift+A)" onclick={() => analysis.stop()}>Stop</button>
   </header>
 
   <ol>
     {#each current?.lines ?? [] as line (line.multipv)}
       <li>
-        <span class="eval" class:ahead-black={line.eval.mate !== null ? line.eval.mate < 0 : (line.eval.cp ?? 0) < 0}
-          >{boundMark(line)}{formatEval(line.eval)}</span
+        <span class="eval" class:ahead-black={blackAhead(line)}>{boundMark(line)}{formatEval(line.eval)}</span
         >
         <span class="pv"
           >{#each line.moves as m, i (i)}<button
@@ -69,6 +81,34 @@
   </ol>
   {#if wdl}
     <p class="wdl">White wins {pct(wdl[0])} · draw {pct(wdl[1])} · Black wins {pct(wdl[2])}</p>
+  {/if}
+  {#if analysis.showThreat}
+    <!-- ENG-07: the opponent's best line had the side to move passed. -->
+    <p class="threat">
+      <span class="label">Threat</span>
+      {#if threat?.error}
+        <span class="note">The threat search stopped. Turn "Show threat" off and on to retry.</span>
+      {:else if threat?.unavailable === "inCheck"}
+        <span class="note">None while {mover} is in check: passing isn't legal.</span>
+      {:else if threat?.unavailable === "gameOver"}
+        <span class="note">None: the game is over.</span>
+      {:else if threat?.unavailable === "noMoves"}
+        <span class="note">None: {opponent} would have no legal move.</span>
+      {:else if threat?.line}
+        {@const line = threat.line}
+        <span class="eval" class:ahead-black={blackAhead(line)}>{boundMark(line)}{formatEval(line.eval)}</span>
+        <span class="pv"
+          >{#each line.moves as m, i (i)}<span class="tmove" class:first={i === 0}
+              >{#if m.white || i === 0}<span class="num">{m.moveNumber}{m.white ? "." : "…"}</span>{/if}{figurine(
+                m.san,
+              )}</span
+            >{" "}{/each}</span
+        >
+        <span class="depth">depth {line.depth}</span>
+      {:else}
+        <span class="note">Looking…</span>
+      {/if}
+    </p>
   {/if}
 </section>
 
@@ -111,9 +151,15 @@
     border-color: var(--rule);
   }
 
-  .stop {
+  .stop,
+  .toggle {
     border-color: var(--rule);
     padding: 1px 9px;
+  }
+
+  .toggle[aria-pressed="true"] {
+    background: var(--felt-soft);
+    border-color: var(--felt);
   }
 
   ol {
@@ -180,5 +226,41 @@
     padding: 0 14px 6px;
     color: var(--ink-soft);
     font-size: 12px;
+  }
+
+  /* ENG-07: one line, marked in the colour of the threat arrow on the board. */
+  .threat {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-height: 24px;
+    margin: 0 10px 6px 14px;
+    padding: 0 0 0 8px;
+    border-left: 3px solid var(--danger);
+  }
+
+  .threat .label {
+    flex: none;
+    color: var(--danger);
+    font-weight: 600;
+  }
+
+  .threat .note,
+  .threat .depth {
+    color: var(--ink-soft);
+  }
+
+  .threat .depth {
+    flex: none;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tmove {
+    padding: 0 2px;
+  }
+
+  .tmove.first {
+    font-weight: 600;
   }
 </style>

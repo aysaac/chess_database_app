@@ -2,13 +2,17 @@
   import { onMount } from "svelte";
   import { Chessground } from "@lichess-org/chessground";
   import type { Api } from "@lichess-org/chessground/api";
-  import type { DrawShape } from "@lichess-org/chessground/draw";
+  import type { DrawBrush, DrawBrushes, DrawShape } from "@lichess-org/chessground/draw";
   import type { Key } from "@lichess-org/chessground/types";
   import type { NotationMoveDto } from "../bindings/NotationMoveDto";
   import type { ShapeDto } from "../bindings/ShapeDto";
+  import { analysis } from "../stores/analysis.svelte";
   import { board as boardPrefs } from "../stores/board.svelte";
   import { game } from "../stores/game.svelte";
   import PromotionPicker from "./PromotionPicker.svelte";
+
+  // The colour here only fills a label; the CSS gives the arrow its own.
+  const THREAT_BRUSH: DrawBrush = { key: "threat", color: "#a23a2c", opacity: 0.9, lineWidth: 13 };
 
   let el: HTMLDivElement;
   let cg: Api | undefined = $state();
@@ -36,6 +40,9 @@
       },
       drawable: {
         enabled: true,
+        // Added to chessground's own brushes (its config merges). The
+        // threat arrow (ENG-07) is dashed, in --danger, by the CSS below.
+        brushes: { threat: THREAT_BRUSH } as Partial<DrawBrushes> as DrawBrushes,
         onChange: (shapes) =>
           game.setShapes(
             shapes
@@ -80,17 +87,21 @@
   });
 
   // While the next-move picker is open, its moves show as arrows (the
-  // highlighted one on top). Auto shapes aren't part of the game's drawings.
+  // highlighted one on top), over the opponent's threat (ENG-07) while the
+  // engine shows it. Auto shapes aren't part of the game's drawings.
   $effect(() => {
     const branch = game.branch;
     const selected = game.branchSelected;
+    const threat = analysis.threat?.line?.moves[0];
     if (!cg) return;
-    const arrow = (m: NotationMoveDto, brush: string): DrawShape => ({
+    const arrow = (m: { uci: string }, brush: string): DrawShape => ({
       orig: m.uci.slice(0, 2) as Key,
       dest: m.uci.slice(2, 4) as Key,
       brush,
     });
-    const arrows = (branch ?? []).filter((_, i) => i !== selected).map((m) => arrow(m, "paleGrey"));
+    const others = (branch ?? []).filter((_, i) => i !== selected);
+    const arrows = threat ? [arrow(threat, "threat")] : [];
+    arrows.push(...others.map((m: NotationMoveDto) => arrow(m, "paleGrey")));
     if (branch?.[selected]) arrows.push(arrow(branch[selected], "blue"));
     cg.setAutoShapes(arrows);
   });
@@ -108,5 +119,18 @@
   .board {
     width: 100%;
     height: 100%;
+  }
+
+  /* The threat arrow (ENG-07): dashed and in --danger, unlike the solid
+     arrows the user draws and the next-move picker's. CSS overrides the
+     colours chessground writes as attributes. */
+  .board :global(svg.cg-shapes line[marker-end="url(#arrowhead-threat)"]) {
+    stroke: var(--danger);
+    stroke-linecap: butt;
+    stroke-dasharray: 0.24 0.12;
+  }
+
+  .board :global(svg.cg-shapes marker#arrowhead-threat path) {
+    fill: var(--danger);
   }
 </style>

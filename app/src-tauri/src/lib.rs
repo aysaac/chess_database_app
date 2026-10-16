@@ -183,6 +183,7 @@ pub fn run() {
             commands::engine::stop_analysis,
             commands::engine::analysis_status,
             commands::engine::set_analysis_lines,
+            commands::engine::set_analysis_threat,
             commands::engine::add_engine_line,
             commands::engine::blunder_check,
             commands::settings::recent_databases,
