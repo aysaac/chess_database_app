@@ -155,7 +155,7 @@ Two sides of one program:
 | DB-13 | **Reference database** concept: one designated big DB that powers tree, prep, novelties | CB | P1 | DB-02 | Conceptual glue for L4 features. Chosen in the ribbon's reference dropdown since UI-18 (2026-09-30); the tree picks the open or the reference database; the Reference tab (OPEN-14) reads it |
 | DB-14 | Clip database (scratch DB for collecting games quickly) | CB | P2 | DB-06 | |
 | DB-15 | Physical sort / renumber DB | CB | P4 | DB-01 | |
-| DB-16 | Tournament cross-tables (round-robin & Swiss), standings, performance ratings | CB | P2 | DB-04 | |
+| DB-16 | Tournament cross-tables (round-robin & Swiss), standings, performance ratings | CB | P2 | DB-04 | Built (2026-10-15): Cross-table in the Events list and in the game header opens a dialog: points, games, score, average opponent Elo, FIDE performance, Sonneborn-Berger and wins (round robins) or Buchholz cut 1 and Buchholz (Swiss); knock-outs rank by the round reached. Detects round robin (with cycles), Swiss, knock-out, match and events without rounds; a grid by opponent or a row of rounds; clicking a result opens the game. Byes, forfeits (decisive, no moves), unfinished games, missing Elos and rounds are handled; an event name used for several editions is split by dates. `chess-db` `crosstable.rs` |
 | DB-17 | DB statistics: results by color, Elo averages, years, ECO distribution | CB | P2 | DB-01 | |
 | DB-18 | Team competitions (team index, match tables) | CB | P4 | DB-04 | |
 | DB-19 | Concurrent read while importing/writing | CB | P2 | DB-01, INF-01 | |

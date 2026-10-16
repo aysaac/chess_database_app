@@ -1,4 +1,5 @@
 pub mod clipboard;
+pub mod crosstable;
 pub mod db;
 pub mod dbview;
 pub mod engine;

@@ -2,9 +2,12 @@
   import type { HeadersDto } from "../bindings/HeadersDto";
   import { playerLabel, resultLabel } from "../format";
   import { game } from "../stores/game.svelte";
+  import CrossTableDialog from "./CrossTableDialog.svelte";
   import HeaderEditor from "./HeaderEditor.svelte";
 
   let editing = $state(false);
+  /** The cross-table of the game's event (DB-16): its database and game, while open. */
+  let crossTable = $state<{ handle: number; game: number } | null>(null);
 
   const view = $derived(game.view);
   const h = $derived(view?.headers);
@@ -48,7 +51,16 @@
         {/if}
         {#if resultLabel(h.result)}<span class="result">{resultLabel(h.result)}</span>{/if}
       </h1>
-      <button onclick={() => (editing = true)}>Edit details</button>
+      <div class="buttons">
+        {#if view.source && h.event}
+          <button
+            title="Standings and results of {h.event}"
+            onclick={() => (crossTable = view.source ? { handle: view.source.db, game: view.source.game } : null)}
+            >Cross-table</button
+          >
+        {/if}
+        <button onclick={() => (editing = true)}>Edit details</button>
+      </div>
     </div>
     {#if view.opening}
       <p class="opening">{view.opening.eco} · {view.opening.name}</p>
@@ -59,6 +71,11 @@
     </p>
     {#if status}<p class="status">{status}</p>{/if}
   </header>
+{/if}
+
+{#if crossTable}
+  {@const { handle, game: gameId } = crossTable}
+  <CrossTableDialog {handle} {gameId} onClose={() => (crossTable = null)} />
 {/if}
 
 {#if editing && h}
@@ -83,6 +100,12 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
+  }
+
+  .buttons {
+    display: flex;
+    flex: none;
+    gap: 2px;
   }
 
   h1 {

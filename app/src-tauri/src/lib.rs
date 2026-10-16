@@ -137,6 +137,7 @@ pub fn run() {
             commands::names::list_names,
             commands::names::show_name_games,
             commands::names::rename_name,
+            commands::crosstable::cross_table,
             commands::tree::update_index,
             commands::tree::opening_tree,
             commands::tree::search_position,
