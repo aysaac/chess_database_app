@@ -1,6 +1,7 @@
 pub mod clipboard;
 pub mod db;
 pub mod dbview;
+pub mod duplicates;
 pub mod engine;
 pub mod game;
 pub mod image;

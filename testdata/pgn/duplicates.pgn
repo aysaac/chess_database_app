@@ -1,0 +1,108 @@
+[Event "Fjord Masters"]
+[Site "Bergen NOR"]
+[Date "2023.04.12"]
+[Round "1"]
+[White "Hansen, Erik"]
+[Black "Larsen, Mads"]
+[Result "1/2-1/2"]
+[WhiteElo "2610"]
+[BlackElo "2595"]
+[ECO "C95"]
+[Annotator "Fixture"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3
+O-O 9. h3 Nb8 {The Breyer.} 10. d4 Nbd7 11. Nbd2 Bb7 12. Bc2 Re8 13. Nf1 Bf8 14.
+Ng3 g6 15. a4 (15. b3 c6 16. d5) 15... c5 $1 16. d5 c4 17. Bg5 h6 18. Be3 Nc5 19.
+Qd2 h5 20. Bg5 Be7 21. Ra3 Nfd7 22. Bh6 Bf6 23. Nh2 Bg7 24. Bxg7 Kxg7 25. Nf3
+Nf6 26. Qg5 Qd7 27. Qd2 Qe7 28. Qg5 Qd7 29. Qd2 Qe7 30. Qg5 Qd7 1/2-1/2
+
+[Event "Fjord Masters"]
+[Site "Bergen NOR"]
+[Date "2023.04.12"]
+[Round "1"]
+[White "Hansen, Erik"]
+[Black "Larsen, Mads"]
+[Result "1/2-1/2"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3
+O-O 9. h3 Nb8 10. d4 Nbd7 11. Nbd2 Bb7 12. Bc2 Re8 13. Nf1 Bf8 14. Ng3 g6 15. a4
+c5 16. d5 c4 17. Bg5 h6 18. Be3 Nc5 19. Qd2 h5 20. Bg5 Be7 21. Ra3 Nfd7 22. Bh6
+Bf6 23. Nh2 Bg7 24. Bxg7 Kxg7 25. Nf3 Nf6 26. Qg5 Qd7 27. Qd2 Qe7 28. Qg5 Qd7 29.
+Qd2 Qe7 30. Qg5 Qd7 1/2-1/2
+
+[Event "Fjord Masters 2023"]
+[Site "Bergen"]
+[Date "2023.04.??"]
+[Round "1.3"]
+[White "Hansen,E"]
+[Black "Mads Larsen"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3
+O-O 9. h3 Nb8 10. d4 Nbd7 11. Nbd2 Bb7 12. Bc2 Re8 13. Nf1 Bf8 14. Ng3 g6 15. a4
+c5 16. d5 c4 17. Bg5 h6 18. Be3 Nc5 19. Qd2 h5 20. Bg5 Be7 *
+
+[Event "Fjord Masters"]
+[Site "Bergen NOR"]
+[Date "2023.04.17"]
+[Round "6"]
+[White "Hansen, Erik"]
+[Black "Larsen, Mads"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3
+O-O 9. h3 Nb8 10. d4 Nbd7 11. c4 c6 12. cxb5 axb5 13. Nc3 Bb7 14. Bg5 b4 15. Nb1
+h6 16. Bh4 c5 17. dxe5 Nxe4 18. Bxe7 Qxe7 19. exd6 Qf6 20. Nbd2 Nxd6 1-0
+
+[Event "Fjord Masters"]
+[Site "Bergen NOR"]
+[Date "2023.04.13"]
+[Round "2"]
+[White "Berg, Anna"]
+[Black "Holm, Sara"]
+[Result "1/2-1/2"]
+
+1. d4 Nf6 2. c4 e6 3. Nc3 Bb4 4. e3 O-O 5. Bd3 d5 6. Nf3 c5 7. O-O Nc6 8. a3
+Bxc3 9. bxc3 dxc4 10. Bxc4 Qc7 11. Bd3 e5 12. Qc2 Re8 1/2-1/2
+
+[Event "Fjord Masters"]
+[Site "Bergen NOR"]
+[Date "2023.04.13"]
+[Round "2"]
+[White "Berg, Anna"]
+[Black "Holm, Sara"]
+[Result "1/2-1/2"]
+
+1. d4 Nf6 2. c4 e6 3. Nc3 Bb4 4. e3 O-O 5. Bd3 d5 6. Nf3 c5 7. O-O Nc6 8. a3
+Bxc3 9. bxc3 dxc4 10. Bxc4 Qc7 11. Bd3 e5 12. Qc2 Re8 1/2-1/2
+
+[Event "Fjord Masters"]
+[Site "Bergen NOR"]
+[Date "2023.04.13"]
+[Round "2"]
+[White "Berg, Anna"]
+[Black "Holm, Sara"]
+[Result "1/2-1/2"]
+
+1. d4 Nf6 2. c4 e6 3. Nc3 Bb4 4. e3 O-O 5. Bd3 d5 6. Nf3 c5 7. O-O Nc6 8. a3
+Bxc3 9. bxc3 dxc4 10. Bxc4 Qc7 11. Bd3 e5 12. Qc2 Re8 1/2-1/2
+
+[Event "Rated Bullet game"]
+[Site "https://lichess.org/aaaaaaaa"]
+[Date "2024.03.01"]
+[Round "-"]
+[White "alice"]
+[Black "bob"]
+[Result "1-0"]
+
+1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0
+
+[Event "Rated Bullet game"]
+[Site "https://lichess.org/bbbbbbbb"]
+[Date "2024.03.01"]
+[Round "-"]
+[White "alice"]
+[Black "bob"]
+[Result "1-0"]
+
+1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0
