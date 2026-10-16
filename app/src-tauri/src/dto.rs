@@ -198,6 +198,42 @@ pub enum CopyModeDto {
     Move,
 }
 
+/// What the last search for duplicate games (DB-08) in a database found.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DuplicatesDto {
+    /// Fuzzy copies were looked for too, not only exact ones.
+    pub fuzzy: bool,
+    /// Games looked at (those not marked as deleted then).
+    pub games: u32,
+    pub groups: u32,
+    /// Groups whose copies are all exact.
+    pub exact_groups: u32,
+    /// Copies to delete: every game of a group but the one kept.
+    pub to_remove: u32,
+    /// Copies this search marked as deleted, which Restore brings back.
+    pub deleted: u32,
+    /// The database was compacted since, so the games were renumbered:
+    /// look again.
+    pub stale: bool,
+    /// The first groups.
+    pub preview: Vec<DuplicateGroupDto>,
+}
+
+/// One group of copies of a game (DB-08).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DuplicateGroupDto {
+    /// The copy kept.
+    pub keep: GameRowDto,
+    /// The other copies, to delete.
+    pub copies: u32,
+    /// Every copy is exact.
+    pub exact: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

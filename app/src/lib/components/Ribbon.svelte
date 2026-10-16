@@ -16,6 +16,7 @@
   import { tree } from "../stores/tree.svelte";
   import BlunderCheckDialog from "./BlunderCheckDialog.svelte";
   import BoardImageMenu from "./BoardImageMenu.svelte";
+  import DuplicatesDialog from "./DuplicatesDialog.svelte";
   import EngineDialog from "./EngineDialog.svelte";
   import FenDialog from "./FenDialog.svelte";
   import LibraryView from "./LibraryView.svelte";
@@ -30,6 +31,7 @@
   let gotoDialog = $state(false);
   let engineDialog = $state(false);
   let blunderDialog = $state(false);
+  let duplicatesDialog = $state(false);
 
   type Form = "full" | "compact" | "collapsed";
   type Group = { id: string; label: string; icon: IconName; body: Snippet<[boolean]> };
@@ -264,6 +266,14 @@
       {compact}
       onclick={() => (libraryView = true)}
     />
+    <RibbonButton
+      icon="copy-x"
+      label="Find duplicates…"
+      title="Find copies of the same game in the open database, keep the best of each and delete the others"
+      {compact}
+      disabled={!db.info || db.info.games === 0}
+      onclick={() => (duplicatesDialog = true)}
+    />
   </div>
   <div class="col">
     <RibbonButton
@@ -374,6 +384,10 @@
 
 {#if libraryView}
   <LibraryView onClose={() => (libraryView = false)} />
+{/if}
+
+{#if duplicatesDialog}
+  <DuplicatesDialog onClose={() => (duplicatesDialog = false)} />
 {/if}
 
 <style>

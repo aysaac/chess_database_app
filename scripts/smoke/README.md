@@ -32,6 +32,7 @@ Each driver's header comment says what it covers in full.
 | `engine.js` | Analysis, lines, blunder check. Needs `scripts/fetch-stockfish.sh`. |
 | `threat.js` | ENG-07 with Stockfish, in an editor window: "Show threat" after 3.Qh5 shows 4.Qxf7# (#1) in the engine pane and a dashed arrow h5-f7 while the main analysis keeps deepening, follows the board (3...g6: ...gxh5), the notes in check, after mate and with no reply, off and on, a double click and on/off/on/off while the threat engine starts (ending off with none left in the backend, also after a move), gone when the engine stops, and remembered after a reload (the start replying before the threat engine is up). Shots in dark and light. |
 | `search.js` | Filters, header search, tabs, name lists, compaction, recent databases. |
+| `duplicates.js` | DB-08 on `testdata/pgn/duplicates.pgn` plus a file imported twice: Find duplicates… in the ribbon, exact then fuzzy copies with known counts, Show in game list (each kept game first) and that filter made again after a reload, deleting the copies, Escape, restoring them, the report going stale after a compaction, the dialog in light mode. With `__BIG__` it times a search over the 1M games, then imports them again and times finding, showing, deleting and restoring a million copies. |
 | `tree.js` | Position index, opening tree, position search, opening names, reference database. |
 | `setup.js` | Position editor. |
 | `goto.js` | QOL-10: Ctrl+V with a FEN, the "Go to position" dialog. |

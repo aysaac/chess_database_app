@@ -158,6 +158,98 @@ pub fn mainline_window(blob: &[u8], skip: usize, take: usize, out: &mut Vec<u8>)
     })
 }
 
+/// A game's main line and a count of what else its blob holds, read
+/// without building the game tree: duplicate detection (DB-08) compares
+/// copies of a game by their moves and keeps the best annotated.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlobDigest {
+    /// The set-up position's FEN, if the game doesn't start from the
+    /// standard position.
+    pub setup: Option<String>,
+    /// The main line's move bytes (decode them with [`move_at`]).
+    pub mainline: Vec<u8>,
+    /// Variations at any depth.
+    pub variations: u32,
+    /// Comments before or after a move (or at the start).
+    pub comments: u32,
+    /// Symbols such as `!` or `+-` ([`Nag`]s).
+    pub nags: u32,
+    /// Coloured squares and arrows.
+    pub shapes: u32,
+    /// Commands such as `[%clk]` and `[%eval]`, which programs write.
+    pub commands: u32,
+    /// Tags beyond those the index record keeps (`TimeControl`, `UTCDate`…).
+    pub extra_tags: u32,
+}
+
+/// Reads a blob into a [`BlobDigest`].
+pub fn digest(blob: &[u8]) -> Result<BlobDigest, DbError> {
+    let mut r = ByteReader::new(blob);
+    let version = r.u8()?;
+    if version != BLOB_VERSION {
+        return Err(DbError::Corrupt(format!("unknown blob version {version}")));
+    }
+    let mut d = BlobDigest::default();
+    if r.u8()? & FLAG_SETUP != 0 {
+        d.setup = Some(r.str()?);
+    }
+    for _ in 0..3 {
+        skip_str(&mut r)?;
+    }
+    let extra = r.varint()?;
+    d.extra_tags = u32::try_from(extra).unwrap_or(u32::MAX);
+    for _ in 0..extra * 2 {
+        skip_str(&mut r)?;
+    }
+    let mut depth = 0u32;
+    loop {
+        match r.u8()? {
+            END_GAME if depth == 0 => break,
+            END_GAME => return Err(DbError::Corrupt("unterminated variation".into())),
+            BEGIN_VAR => {
+                depth += 1;
+                d.variations += 1;
+            }
+            END_VAR => {
+                depth = depth.checked_sub(1).ok_or_else(|| DbError::Corrupt("unbalanced variation".into()))?
+            }
+            b if depth == 0 => d.mainline.push(b),
+            _ => {}
+        }
+    }
+    for _ in 0..r.varint()? {
+        r.varint()?;
+        match r.u8()? {
+            ANN_COMMENT_AFTER | ANN_COMMENT_BEFORE => {
+                skip_str(&mut r)?;
+                d.comments += 1;
+            }
+            ANN_NAGS => {
+                let n = r.varint()? as usize;
+                r.bytes(n)?;
+                d.nags += n as u32;
+            }
+            ANN_SHAPES => {
+                let n = r.varint()? as usize;
+                r.bytes(n.checked_mul(3).ok_or_else(|| DbError::Corrupt("too many shapes".into()))?)?;
+                d.shapes += n as u32;
+            }
+            ANN_COMMAND => {
+                skip_str(&mut r)?;
+                skip_str(&mut r)?;
+                d.commands += 1;
+            }
+            ANN_TIME | ANN_EVAL => {
+                r.u8()?;
+                r.varint()?;
+                d.commands += 1;
+            }
+            other => return Err(DbError::Corrupt(format!("unknown annotation kind {other}"))),
+        }
+    }
+    Ok(d)
+}
+
 /// The Date, Round and ECO strings of a blob, read without decoding the
 /// moves (copying games between databases needs them for the record).
 pub fn date_round_eco(blob: &[u8]) -> Result<(String, String, String), DbError> {
@@ -574,6 +666,31 @@ mod tests {
         assert_eq!(window(1, 0), Vec::<u8>::new());
         assert_eq!(window(0, 0), Vec::<u8>::new());
         assert!(mainline_window(&[9, 0], 0, 1, &mut Vec::new()).is_err(), "a bad blob");
+    }
+
+    #[test]
+    fn digest_counts_what_a_game_holds() {
+        let pgn = r#"[TimeControl "180+2"]
+[UTCDate "2024.01.02"]
+
+{Intro} 1. e4 $1 {[%clk 0:03:00] best} e5 (1... c5 {Sicilian} 2. Nf3 (2. Nc3 Nc6 $2) 2... d6)
+({French} 1... e6) 2. Nf3 {[%cal Gf3e5,Rd1h5] [%eval 0.3]} Nc6 {[%foo bar]} *"#;
+        let game = read_pgn_str(pgn).remove(0);
+        let blob = encode_game(&game);
+        let d = digest(&blob).unwrap();
+        assert_eq!(d.mainline, mainline(&blob).unwrap().1);
+        assert_eq!(d.mainline.len(), 4);
+        assert_eq!(d.setup, None);
+        assert_eq!((d.variations, d.comments, d.nags, d.shapes), (3, 4, 2, 2));
+        assert_eq!(d.commands, 3, "clk, eval and an unknown command");
+        assert_eq!(d.extra_tags, 2);
+
+        let plain = digest(&encode_game(&read_pgn_str("1. d4 d5 *").remove(0))).unwrap();
+        assert_eq!(plain, BlobDigest { mainline: plain.mainline.clone(), ..BlobDigest::default() });
+        let fen = "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1";
+        let setup = read_pgn_str(&format!("[FEN \"{fen}\"]\n\n1. Kd2 *")).remove(0);
+        assert_eq!(digest(&encode_game(&setup)).unwrap().setup.as_deref(), Some(fen));
+        assert!(digest(&blob[..blob.len() - 3]).is_err(), "a truncated blob");
     }
 
     #[test]
