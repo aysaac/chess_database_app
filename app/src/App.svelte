@@ -21,6 +21,7 @@
   import { onboarding } from "./lib/stores/onboarding.svelte";
   import { panels } from "./lib/stores/panels.svelte";
   import { prefs } from "./lib/stores/prefs.svelte";
+  import { beforeClose } from "./lib/windowClose";
 
   // The board is the largest square that fits the middle of the dock
   // (UI-04) above the nav bar, whatever the sides around it take. Keep these
@@ -86,9 +87,9 @@
       watchDpr();
     };
     watchDpr();
-    const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
-      if (!(await game.confirmDiscard(game.tabs))) event.preventDefault();
-    });
+    // Closing the window asks about unsaved games first; it then saves the
+    // preferences (windowClose.ts, set up for every window in main.ts).
+    const stopCheck = beforeClose(() => game.confirmDiscard(game.tabs));
     // The preferences are loaded before any window mounts (main.ts), and
     // the panel layout (UI-04) follows from them (panels.svelte.ts). Open
     // whatever database the library window spawned this editor window for
@@ -107,7 +108,7 @@
     return () => {
       resize.disconnect();
       dprQuery?.removeEventListener("change", onDprChange);
-      unlisten.then((f) => f());
+      stopCheck();
     };
   });
 

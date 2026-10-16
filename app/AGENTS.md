@@ -112,6 +112,14 @@ running app, see [`scripts/smoke/README.md`](../scripts/smoke/README.md).
   the rest of a WebKit table, give it `width: 100%; max-width: 0`: a
   fixed width on another column doesn't stop that one taking it.
 
+### App windows (DB-07)
+- **A closing window's page sends nothing from `blur`, `pagehide`,
+  `visibilitychange`, `beforeunload` or `unload`:** the window is gone
+  before the call reaches Rust. Work that must finish before a window
+  closes goes in `windowClose.ts` (one close handler per window, set up in
+  `main.ts`; a shell adds its checks with `beforeClose`). Tauri waits for
+  that handler, so keep what it awaits short and bounded.
+
 ### WebKit and the clipboard
 - **WebKit only writes the clipboard during a user gesture**, and the
   gesture ends at the first `await`. It also **fires no `paste` event where

@@ -265,6 +265,12 @@ impl AppState {
         self.add_shared(Arc::new(Mutex::new(db)), path, usage)
     }
 
+    /// The database at `path` (canonical) if this process has it open: in
+    /// the list, as the reference, or held by a job after it was closed.
+    pub fn open_db_at(&self, path: &Path) -> Option<SharedDb> {
+        self.find_db(path).and_then(|h| self.db(h).ok()).or_else(|| self.revive_db(path))
+    }
+
     /// A database closed at `path` (canonical) that a job still holds.
     pub fn revive_db(&self, path: &Path) -> Option<SharedDb> {
         let mut released = self.released.lock().expect("released lock");

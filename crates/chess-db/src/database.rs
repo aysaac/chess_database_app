@@ -323,10 +323,19 @@ fn committed_count(idx: &File) -> Result<(u32, u64), DbError> {
     Ok((count, expected_len))
 }
 
-/// The total size of the files in `dir`.
+/// The total size of the files in `dir`, less a compaction's `.new` files:
+/// counting them made a database read about twice its size while it was
+/// compacted. After a crash in a compaction's swap (until the next open
+/// finishes it), that counts the old files of those not renamed yet.
 fn dir_size(dir: &Path) -> u64 {
     std::fs::read_dir(dir)
-        .map(|rd| rd.filter_map(|e| e.ok()?.metadata().ok()).map(|m| m.len()).sum())
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| !e.file_name().to_string_lossy().ends_with(NEW_SUFFIX))
+                .filter_map(|e| e.metadata().ok())
+                .map(|m| m.len())
+                .sum()
+        })
         .unwrap_or(0)
 }
 
@@ -466,8 +475,16 @@ impl Database {
     /// in the index header and takes no lock, so it stays quick however
     /// big the database is (opening one of a million games takes about
     /// half a second) and works while another process has it open. It
-    /// fails where `open` would on a folder that isn't a database, a newer
-    /// format or a truncated index.
+    /// checks only `db.meta` and the index: it fails on a folder that isn't
+    /// a database, a format this version can't read, and an index with a
+    /// bad header or fewer records than its count. It doesn't look at
+    /// `games.blob` or the name files, so `open` can still fail where it
+    /// succeeds.
+    ///
+    /// It opens `games.idx` for a moment. Don't call it for a database this
+    /// process has open: a compaction renames its new files over the old
+    /// ones, which Windows can refuse while another handle has one open;
+    /// ask the open [`Database`] instead.
     pub fn summary(path: &Path) -> Result<DbSummary, DbError> {
         read_meta(path)?;
         // After a crash during a compaction's swap, the next open finishes
@@ -1266,9 +1283,12 @@ mod tests {
         }
         let path = db.path().to_path_buf();
         drop(db);
+        let size = Database::summary(&path).unwrap().size_bytes;
         // Crash before the commit: stray .new files are deleted.
         std::fs::write(path.join("games.idx.new"), b"partial").unwrap();
-        assert_eq!(Database::summary(&path).unwrap().games, 2, "the old index stands");
+        let summary = Database::summary(&path).unwrap();
+        assert_eq!(summary.games, 2, "the old index stands");
+        assert_eq!(summary.size_bytes, size, "a compaction's new files aren't counted");
         let db = Database::open(&path).unwrap();
         assert_eq!(db.count(), 2);
         assert!(!path.join("games.idx.new").exists());
