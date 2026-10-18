@@ -3,11 +3,15 @@
 // Cross-table button, the round-robin grid (points, performance,
 // Sonneborn-Berger, a forfeit, an unfinished game), the rounds view,
 // opening a game from a result, the game header's Cross-table button with
-// that game highlighted, a Swiss with byes and a tie on every tie-break, an
-// event with two editions (a double round robin), Show games, and light
-// mode. With testdata/large/twic1600.pgn it tries real TWIC events (a round
-// robin, a 597-player Swiss, a knock-out), and with the 1M Lichess games
-// (__BIG__) an event too big for a table and an online arena, timed.
+// that game highlighted and its Show games bringing the list's Games tab
+// forward, a Swiss with byes and a tie on every tie-break (both rows show
+// the places they share), a knock-out with a third-place match, an event
+// with two editions (a double round robin) and Show games listing the one
+// shown, and light mode. With testdata/large/twic1600.pgn it tries real
+// TWIC events (a round robin, a 597-player Swiss, a knock-out with level
+// matches), and with the 1M Lichess games (__BIG__) an event too big for a
+// table, one too big for its results (standings only) and an online arena,
+// timed.
 //
 // The main window is the library (DB-07): there the driver only opens an
 // editor window, which runs the same script and does the checks.
@@ -66,6 +70,7 @@
   const cell = (r, c) => $$("td.g", bodyRows()[r])[c];
   const symbols = (td) => $$("button.res .sym", td).map(text).join(" ");
   const view = (label) => $$(".cross .views button").find((b) => text(b) === label);
+  const showGames = () => $$("[role='dialog'] button").find((b) => text(b) === "Show games");
   const closeDialog = async () => {
     key($(".cross button.res") ?? $(".cross"), "Escape");
     await until(() => !dialog(), "the dialog closed");
@@ -98,15 +103,15 @@
     await log("start");
     await db.createAt(OUT + "/crosstable.chessdb");
     await db.importFrom(ROOT + "/testdata/pgn/crosstable.pgn");
-    await until(() => db.info?.games === 39, "39 games imported");
+    await until(() => db.info?.games === 47, "47 games imported");
 
     // ---- The Events list: a Cross-table button for events only.
     listTab("player").click();
     await until(() => $(".names"), "the Players list");
     expect(!barButton("Cross-table"), "no Cross-table button in the Players list");
     await eventsTab();
-    await until(() => nameRows().length === 3, "three events");
-    expect(nameRows().map(nameOf).join(" | ") === "Spring Round Robin | Autumn Open | Club Championship",
+    await until(() => nameRows().length === 4, "four events");
+    expect(nameRows().map(nameOf).join(" | ") === "Spring Round Robin | Autumn Open | Club Championship | Summer Cup",
       "the events by games, got " + nameRows().map(nameOf).join(" | "));
 
     // ---- A round robin: the grid.
@@ -167,8 +172,16 @@
     expect(current.length === 2, "the game highlighted in both players' rows, got " + current.length);
     expect(document.activeElement === current[0], "the focus on the game on screen");
     await shot("03-from-the-game");
-    await closeDialog();
-    expect(game.view.source.game === opened, "closing leaves the game on screen");
+    // Show games from here: the list pane is on its Events tab, and brings
+    // its Games tab forward with the event's games.
+    expect(listTab("event").getAttribute("aria-selected") === "true", "the Events tab showing");
+    showGames().click();
+    await until(() => !dialog() && db.info?.filter?.count === 15, "the list limited to the event's 15 games");
+    await until(() => listTab("games").getAttribute("aria-selected") === "true", "the Games tab brought forward");
+    expect(db.info.filter.description === "Event: Spring Round Robin", "the filter, got " + db.info.filter.description);
+    expect(game.view.source.game === opened, "Show games leaves the game on screen");
+    await db.clearFilter();
+    await eventsTab();
 
     // A new game has no source in the database: no button.
     await game.newGame(null, "tab");
@@ -187,7 +200,7 @@
     expect(stats(bodyRows()[0]).slice(-2).join(" ") === "4 4.5" && stats(bodyRows()[1]).slice(-2).join(" ") === "3.5 4.5",
       "Buchholz cut 1 splits Heath and Gale");
     const pos = (r) => text($("td.pos", bodyRows()[r]));
-    expect(pos(4) === "5=" && pos(5) === "6=" && pos(3) === "4", "the shared places marked, got " + [pos(3), pos(4), pos(5)]);
+    expect(pos(4) === "5–6" && pos(5) === "5–6" && pos(3) === "4", "the shared places on both rows, got " + [pos(3), pos(4), pos(5)]);
     expect($("td.pos", bodyRows()[4]).title === "Shares places 5–6: level on points and every tie-break", "the shared places' tooltip");
     const kestrel = $$("td.rounds", bodyRows()[4]).map(text);
     expect(kestrel.join(" | ") === "bye1 | 20 | 30", "Kestrel's bye and losses, got " + kestrel.join(" | "));
@@ -195,6 +208,18 @@
     expect(moss[1] === "bye½", "a half-point bye, got " + moss[1]);
     expect(text($(".cross .notes")) === "3 byes count for points, not for the performance.", "the note on byes");
     await shot("04-swiss");
+    await closeDialog();
+
+    // ---- A knock-out: the third-place match is in the final's round.
+    await openCrossTable("Summer Cup");
+    expect(summary() === "Knock-out · 4 players · 2 rounds · 8 games · Utrecht · 2024.07.13 – 2024.07.14",
+      "the summary, got " + summary());
+    expect(names().join(" | ") === "Thorn, Tess | Umber, Uma | Vale, Victor | Willow, Wes",
+      "the champion, the final's loser, then third and fourth, got " + names().join(" | "));
+    expect(column("pos").join(" ") === "1 2 3 4", "four places, none shared, got " + column("pos").join(" "));
+    expect(column("pts").join(" ") === "3 2 2 1", "the points, got " + column("pts").join(" "));
+    expect($$(".cross thead th").map(text).at(-1) === "Perf", "no tie-breaks in a knock-out");
+    await shot("04b-knock-out");
     await closeDialog();
 
     // ---- Two editions: 2024 first, then the 2023 double round robin.
@@ -217,10 +242,12 @@
     await shot("06-light");
     appearance.theme = "system";
 
-    // ---- Show games: the list limited to the event.
-    $$("[role='dialog'] button").find((b) => text(b) === "Show games").click();
-    await until(() => !dialog() && db.info?.filter?.count === 12, "the list limited to the event's 12 games");
+    // ---- Show games: the list limited to the edition shown (2023), not the
+    // event's 12 games.
+    showGames().click();
+    await until(() => !dialog() && db.info?.filter?.count === 6, "the list limited to the edition's 6 games");
     expect(listTab("games").getAttribute("aria-selected") === "true", "the game list showing");
+    expect(db.info.filter.description === "Event: Club Championship (2023)", "the filter, got " + db.info.filter.description);
     await db.clearFilter();
 
     // ---- Real events from TWIC, when the file is there.
@@ -247,6 +274,9 @@
       expect(kheads.at(-1) === "Perf", "no tie-break columns for a knock-out, got " + kheads.at(-1));
       const through = $("td.pos", bodyRows()[0]).title;
       expect(/^Shares places 1–\d+:/.test(through) && column("pts")[0] === "2", "the winners of round 1 first, got " + through);
+      // Round 1's tie-breaks aren't in this issue: its level matches are noted.
+      const knotes = text($(".cross .notes"));
+      expect(/^\d+ matches ended level on points/.test(knotes), "the note on level matches, got " + knotes);
       await shot("09-twic-knock-out");
       await closeDialog();
     } else {
@@ -265,6 +295,15 @@
         "the too-big message, got " + message);
       await log(`1M games, Rated Blitz game (too big): ${ms.toFixed(0)} ms`);
       await shot("10-too-big");
+      await closeDialog();
+      // 1,130 players without rounds, one with 138 games: the standings only.
+      ms = await openCrossTable("Rated UltraBullet game");
+      const only = text($(".cross .standings-only"));
+      expect(/^Standings only: [\d,]+ players with up to [\d,]+ games each are too many/.test(only),
+        "the standings-only message, got " + only);
+      expect(!$(".cross td.g") && !$(".cross button.res") && bodyRows().length > 1000, "no result columns, every player");
+      await log(`1M games, Rated UltraBullet game (standings only): ${ms.toFixed(0)} ms`);
+      await shot("10b-standings-only");
       await closeDialog();
       ms = await openCrossTable("Rated Blitz tournament https://lichess.org/tournament/WYkYnRWN");
       expect(summary().startsWith("No rounds · "), "an arena has no rounds, got " + summary());

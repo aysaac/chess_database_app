@@ -2,7 +2,8 @@
   // Tournament cross-table (DB-16): the standings of one event's edition,
   // as a grid of results by opponent (round robins) or a row of rounds
   // (Swiss, knock-out). Clicking a result opens that game. Opened from the
-  // Events list (NameList) and from the game on screen (GameHeader).
+  // Events list (NameList) and from the game on screen (GameHeader). A table
+  // whose results would be too big to lay out comes as standings only.
   import { onMount, tick } from "svelte";
   import type { CrossTableDto } from "../bindings/CrossTableDto";
   import type { CrossResultDto } from "../bindings/CrossResultDto";
@@ -11,7 +12,9 @@
     formatPoints,
     formatTieBreak,
     gridCells,
+    MAX_CELLS,
     rankLabel,
+    resultCells,
     resultSymbol,
     resultTitle,
     slotCells,
@@ -22,6 +25,7 @@
   import { db } from "../stores/db.svelte";
   import { game } from "../stores/game.svelte";
   import { notices } from "../stores/notify.svelte";
+  import { panels } from "../stores/panels.svelte";
   import Modal from "./Modal.svelte";
 
   let {
@@ -29,7 +33,6 @@
     event = null,
     gameId = null,
     onClose,
-    onShowGames,
   }: {
     handle: number;
     /** An event's name id (the Events list), or… */
@@ -37,8 +40,6 @@
     /** …a game whose event to show; its results are highlighted. */
     gameId?: number | null;
     onClose: () => void;
-    /** After Show games has limited the list to the event. */
-    onShowGames?: () => void;
   } = $props();
 
   let data = $state<CrossTableDto | null>(null);
@@ -49,9 +50,23 @@
   let seq = 0;
 
   const rows = $derived(data?.rows ?? []);
-  const grid = $derived(view === "grid" && !!data?.grid);
-  const cells = $derived(grid ? gridCells(rows) : []);
   const columns = $derived(data ? slotColumns(data.slots, data.unslotted) : []);
+  // Results game by game, unless Rust sent the standings only; checked here
+  // too, so a table too big to lay out is never drawn.
+  const perGame = $derived(
+    !!data?.perGame && resultCells(rows, columns.length, data.grid) <= MAX_CELLS,
+  );
+  const grid = $derived(perGame && view === "grid" && !!data?.grid);
+  const cells = $derived(grid ? gridCells(rows) : []);
+  const shownColumns = $derived(perGame && !grid ? columns : []);
+  const standingsOnly = $derived(
+    !data || data.tooBig || perGame
+      ? null
+      : (data.standingsOnly ??
+          "Standings only: the results are too many to show one by one. Show games lists the games in the game list."),
+  );
+  // The place column fits its longest label ("5–6", "33–64").
+  const placeWidth = $derived(Math.max(2, ...rows.map((r) => rankLabel(r).length)) + 1);
   const canShowGames = $derived(!!data && db.info?.handle === handle);
 
   const summary = $derived.by(() => {
@@ -84,6 +99,16 @@
     if (data.byes) out.push(`${n(data.byes, "bye", "byes", "", counts)} for points, not for the performance.`);
     if (data.skipped) {
       out.push(`${n(data.skipped, "game", "games", " without both players' names", ["is", "are"])} left out.`);
+    }
+    if (data.duplicates) {
+      const each = data.duplicates === 1 ? "it counts" : "each counts";
+      out.push(`${n(data.duplicates, "game", "games", "", ["is", "are"])} in the database twice: ${each} once.`);
+    }
+    if (data.levelMatches) {
+      const one = data.levelMatches === 1;
+      out.push(
+        `${n(data.levelMatches, "match", "matches", "", ["ended", "ended"])} level on points (an armageddon draw, or tie-breaks missing from the database): ${one ? "its" : "their"} players share their places.`,
+      );
     }
     return out;
   });
@@ -124,17 +149,23 @@
     await game.open(h, r.game);
   }
 
+  // The games of the edition on screen, in the game list, brought forward
+  // (its panel too, when another tab or the status bar hides it: UI-04).
   async function showGames() {
     const id = data?.eventId;
-    const after = onShowGames;
+    const edition = data?.edition;
     onClose();
-    if (id === undefined) return;
-    await db.showNameGames("event", id);
-    after?.();
+    if (id === undefined || edition === undefined) return;
+    await db.showEditionGames(id, edition);
+    panels.show("games");
+    const group = panels.groupOf("games");
+    if (group?.collapsed) panels.restore(group.id);
   }
 
   function sharedTitle(rank: number, rankTo: number): string | undefined {
-    return rank === rankTo ? undefined : `Shares places ${rank}–${rankTo}: level on points and every tie-break`;
+    if (rank === rankTo) return undefined;
+    const why = data?.pairing === "knockOut" ? "went as far in the knock-out" : "level on points and every tie-break";
+    return `Shares places ${rank}–${rankTo}: ${why}`;
   }
 </script>
 
@@ -171,7 +202,7 @@
             </select>
           </label>
         {/if}
-        {#if data.grid && !data.tooBig}
+        {#if perGame && data.grid && !data.tooBig}
           <div class="views" role="group" aria-label="Layout">
             <button aria-pressed={view === "grid"} onclick={() => (view = "grid")}>Grid</button>
             <button aria-pressed={view === "rounds"} onclick={() => (view = "rounds")}
@@ -184,8 +215,11 @@
       {#if data.tooBig}
         <p class="message">{data.tooBig}</p>
       {:else}
+        {#if standingsOnly}
+          <p class="message standings-only">{standingsOnly}</p>
+        {/if}
         <div class="scroll" class:loading bind:this={scroller}>
-          <table aria-label="Standings">
+          <table aria-label="Standings" style="--place: {placeWidth}ch">
             <thead>
               <tr>
                 <th class="pos num" title="Place">#</th>
@@ -196,7 +230,7 @@
                     <th class="g" title={rows[j].name}>{j + 1}</th>
                   {/each}
                 {:else}
-                  {#each columns as slot (slot)}
+                  {#each shownColumns as slot (slot)}
                     <th class="g" title={slot === 0 ? "Games without a round" : undefined}
                       >{slotHeading(slot, data.byRound)}</th
                     >
@@ -218,9 +252,7 @@
               {#each rows as row, i (i)}
                 <tr>
                   <td class="pos num" title={sharedTitle(row.rank, row.rankTo)}
-                    >{i + 1}{#if row.rank !== row.rankTo}<span class="tie" aria-label="shared place {rankLabel(row)}"
-                        >=</span
-                      >{/if}</td
+                    >{row.rank}{#if row.rank !== row.rankTo}<span class="tie">–{row.rankTo}</span>{/if}</td
                   >
                   <td class="name" title={row.name}>{row.name}</td>
                   <td class="num soft">{row.elo ?? ""}</td>
@@ -231,7 +263,7 @@
                       </td>
                     {/each}
                   {:else}
-                    {#each slotCells(row, columns) as cell, c (c)}
+                    {#each slotCells(row, shownColumns) as cell, c (c)}
                       <td class="g rounds">
                         {#each cell as r (r.game)}{@render result(r, true)}{/each}
                       </td>
@@ -377,19 +409,20 @@
     border-bottom: 1px solid var(--rule);
   }
 
-  /* The place and the name stay in view while the table scrolls sideways. */
+  /* The place and the name stay in view while the table scrolls sideways;
+     the place column is as wide as its longest label (--place). */
   .pos {
     position: sticky;
     left: 0;
     z-index: 1;
-    width: 40px;
-    min-width: 40px;
+    width: calc(var(--place, 3ch) + 16px);
+    min-width: calc(var(--place, 3ch) + 16px);
     color: var(--ink-soft);
   }
 
   .name {
     position: sticky;
-    left: 40px;
+    left: calc(var(--place, 3ch) + 16px);
     z-index: 1;
     max-width: 16em;
     overflow: hidden;
@@ -413,7 +446,6 @@
   }
 
   .tie {
-    margin-left: 1px;
     color: var(--brass);
   }
 

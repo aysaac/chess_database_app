@@ -74,6 +74,11 @@ class DbStore {
   columns = $state<Record<string, number>>({});
   /** Description of the saved filter being made again after opening (QOL-07). */
   restoring = $state<string | null>(null);
+  /**
+   * Bumped when Show games outside the list pane (a cross-table's, DB-16)
+   * has limited the list: the pane brings its Games tab forward.
+   */
+  gamesShown = $state(0);
 
   /** Rows in the list: the filtered games when a filter is active. */
   get listTotal(): number {
@@ -240,6 +245,24 @@ class DbStore {
       this.info = await api.showNameGames(info.handle, kind, id);
       this.filterVersion++;
       this.listVersion++;
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  /**
+   * Limits the list to the games of one edition of event `event` (a
+   * cross-table's Show games, DB-16), and has the list pane show them.
+   */
+  async showEditionGames(event: number, edition: number) {
+    const info = this.info;
+    if (!info) return;
+    this.quickText = "";
+    try {
+      this.info = await api.showEditionGames(info.handle, event, edition);
+      this.filterVersion++;
+      this.listVersion++;
+      this.gamesShown++;
     } catch (e) {
       notices.error(e);
     }

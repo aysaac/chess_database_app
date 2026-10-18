@@ -7,7 +7,9 @@ import {
   formatPoints,
   formatTieBreak,
   gridCells,
+  MAX_CELLS,
   rankLabel,
+  resultCells,
   resultSymbol,
   resultTitle,
   slotCells,
@@ -112,4 +114,21 @@ test("tooltips name the round, the colour, the opponent and the result", () => {
     "Black against A (2700) · lost by forfeit. Opens the game.",
   );
   assert.equal(resultTitle(result({ opponent: null, outcome: "draw" }), rows, true), "Round 1 · Bye · drew. Opens the game.");
+});
+
+test("the cells the results take, as Rust counts them (R1-1 of the DB-16 review)", () => {
+  const rows = [
+    row("A", null, [result({ game: 1 }), result({ game: 2, slot: 2 })]),
+    row("B", null, [result({ game: 1, opponent: 0 })]),
+    row("C", null, [result({ game: 2, opponent: 0, slot: 2 })]),
+  ];
+  // Three rows of two rounds, or of three in the grid, and ten columns of
+  // standings; four results.
+  assert.equal(resultCells(rows, 2, false), 3 * (2 + 10) + 4);
+  assert.equal(resultCells(rows, 2, true), 3 * (3 + 10) + 4);
+  assert.equal(resultCells(rows, 5, true), 3 * (5 + 10) + 4);
+  // The review's event: one player's 6,000 games against 1,500 opponents.
+  const hub = Array.from({ length: 1501 }, () => ({ results: [] }));
+  assert.ok(resultCells(hub, 6000, false) > MAX_CELLS);
+  assert.ok(resultCells(Array.from({ length: 600 }, () => ({ results: [] })), 11, false) <= MAX_CELLS);
 });

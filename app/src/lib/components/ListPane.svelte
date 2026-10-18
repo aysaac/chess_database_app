@@ -13,6 +13,13 @@
     { id: "annotator", label: "Annotators" },
   ];
   let tab = $state<"games" | NameKindDto>("games");
+  // Show games from elsewhere (a cross-table, DB-16) brings the Games tab forward.
+  let gamesShown = db.gamesShown;
+  $effect(() => {
+    if (db.gamesShown === gamesShown) return;
+    gamesShown = db.gamesShown;
+    tab = "games";
+  });
 
   function onTabKey(e: KeyboardEvent) {
     const i = tabs.findIndex((t) => t.id === tab);

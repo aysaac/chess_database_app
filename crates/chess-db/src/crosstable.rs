@@ -12,27 +12,45 @@
 //! - **Who played.** A player named "bye" (any case or brackets) is no
 //!   opponent: the game is a bye for the other side. Games without two
 //!   named players, or with a player against himself, are left out
-//!   (`skipped`). Deleted games are ignored.
+//!   (`skipped`). Deleted games are ignored. A game with a round that is in
+//!   the database twice (an index record the same in all but where the game
+//!   is stored: an event imported twice) counts once (`duplicates`).
 //! - **Results.** 1-0, 0-1 and ½-½ count; unfinished games (`*`) are shown
 //!   but count for nothing. A decisive game without a move (and not from a
 //!   set-up position) is a forfeit: it counts for the points and the
 //!   tie-breaks but not for the performance or the average opponent rating,
 //!   as in FIDE rating rules.
-//! - **Pairing.** Two players: a match. Every player meeting one opponent
-//!   per round, with mini-matches of several games: knock-out. At least half
-//!   of all pairs met: round robin, as many cycles as games per pair. Else
-//!   Swiss when the games have rounds, or no rounds (online arenas).
+//! - **Pairing.** Two players: a match. A knock-out has the shape of one:
+//!   every player meets one opponent per round and each pair one round
+//!   only, at least a quarter of the meetings are mini-matches of several
+//!   games, and whoever loses a match plays no later round (but in a
+//!   third-place match in the last round, between two losers of one round,
+//!   or a loser and a player whose match was level on points). Round
+//!   robin: at least [`ROUND_ROBIN_PAIRS`] percent of all pairs met, or half
+//!   of them over as many rounds as there are players less one (some games
+//!   missing); as many cycles as rounds a pair met in (an armageddon after a
+//!   draw shares its round). Else Swiss when the games have rounds, or no
+//!   rounds (online arenas).
 //! - **Ranking.** Points, then the tie-breaks: Sonneborn-Berger and wins in a
 //!   round robin; Buchholz cut 1 and Buchholz in a Swiss or without rounds;
 //!   none in a match. Byes and forfeits count for Buchholz as an opponent
 //!   with the player's own final score (FIDE's dummy opponent, without its
 //!   special cases); rounds missing from the database count for nothing.
 //!   Players level on all of them share a rank. A knock-out ranks by the
-//!   last round played, then whether the player won that round's match, so
+//!   round of the first match lost (never lost: the round reached), then
+//!   whether the player won their last match (the third-place match), so
 //!   players knocked out in the same round share places (points order them
-//!   within).
+//!   within). A match level on points (an armageddon draw, or tie-breaks
+//!   missing) goes to the player who played on; when neither did, its
+//!   players share their places and `level_matches` counts it.
+//! - **Size.** Editions over [`MAX_PLAYERS`] players or [`MAX_GAMES`] games
+//!   get no table. Tables that would have more than [`MAX_CELLS`] cells
+//!   with their results get the standings only (`per_game` false, no
+//!   results).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ops::Bound;
 use std::sync::Mutex;
 
 use crate::database::NameKind;
@@ -44,8 +62,25 @@ use crate::{Database, DbError, GameId};
 pub const MAX_PLAYERS: u32 = 2000;
 /// Most games an edition gets a table for.
 pub const MAX_GAMES: u32 = 20_000;
+/// Most cells a table with results may have: its rows times its columns
+/// (those of results, the grid's or the rounds layout's: rounds, or each
+/// player's games in an event without rounds, whichever is more, plus
+/// [`STANDINGS_COLUMNS`]), plus the results in them. A bigger table gets
+/// the standings only. What a table costs a webview grows with its cells,
+/// not its games: one player's 6,000 online games against 1,500 opponents
+/// make 1,501 rows of 6,000 columns, 9 million cells, which froze a whole
+/// machine. In `tauri dev` on a headless display a cell or a result takes
+/// 40–50 µs to lay out and paint, so a table up to this size about a second.
+pub const MAX_CELLS: u64 = 20_000;
+/// The columns a table has besides the results: place, name, Elo, points,
+/// games, score, average opponent Elo, performance and two tie-breaks.
+pub const STANDINGS_COLUMNS: u64 = 10;
 /// Most players a round robin has; more are paired some other way.
 pub const MAX_ROUND_ROBIN: usize = 64;
+/// Percent of all pairs of players that must have met for a round robin
+/// (fewer will do when the rounds were as many as the players less one).
+/// A Swiss of r rounds meets r / (players − 1) of them.
+pub const ROUND_ROBIN_PAIRS: usize = 85;
 /// Days without a game that separate two editions of an event.
 pub const EDITION_GAP_DAYS: u32 = 180;
 
@@ -204,6 +239,16 @@ pub struct Standings {
     pub byes: u32,
     /// Games left out: without two named players, or a player against himself.
     pub skipped: u32,
+    /// Games left out because the same game is in the edition already.
+    pub duplicates: u32,
+    /// Knock-out matches level on points that the games don't settle (see
+    /// the module docs): their players share their places.
+    pub level_matches: u32,
+    /// Cells the table takes with its results (see [`MAX_CELLS`]).
+    pub cells: u64,
+    /// Whether the players' `results` are there; false when `cells` is over
+    /// [`MAX_CELLS`], and the table is the standings only.
+    pub per_game: bool,
 }
 
 /// One edition of an event, tabulated.
@@ -231,38 +276,7 @@ const CHUNK: u32 = 64 * 1024;
 /// The cross-table of event `event` (a name id of [`NameKind::Event`]),
 /// for the edition `pick` chooses.
 pub fn cross_table(db: &Mutex<Database>, event: u32, pick: EditionPick) -> Result<CrossTable, DbError> {
-    if event == 0 {
-        return Err(DbError::Invalid("the game has no event, so there is no cross-table".into()));
-    }
-    let count = db.lock().expect("db lock").count();
-    let mut games: Vec<(GameId, IndexRecord)> = Vec::new();
-    let mut start = 0;
-    while start < count {
-        let records = db.lock().expect("db lock").records(start, CHUNK)?;
-        games.extend(
-            records
-                .into_iter()
-                .zip(start..)
-                .filter_map(|(r, id)| (r.event == event && !r.is_deleted()).then_some((id, r))),
-        );
-        start = start.saturating_add(CHUNK);
-    }
-    if games.is_empty() {
-        return Err(DbError::Invalid("this event has no games".into()));
-    }
-
-    let groups = editions_of(&games);
-    let editions: Vec<Edition> = groups
-        .iter()
-        .map(|g| {
-            let dates = g.iter().map(|&i| games[i].1.date).filter(|d| d >> 9 != 0);
-            Edition {
-                first: dates.clone().min().unwrap_or(0),
-                last: dates.max().unwrap_or(0),
-                games: g.len() as u32,
-            }
-        })
-        .collect();
+    let Scan { games, groups, editions } = scan(db, event)?;
     let latest = editions.iter().rposition(|e| e.first != 0).unwrap_or(0);
     let edition = match pick {
         EditionPick::Latest => latest,
@@ -303,6 +317,57 @@ pub fn cross_table(db: &Mutex<Database>, event: u32, pick: EditionPick) -> Resul
         )
     });
     Ok(CrossTable { event, editions, edition, players, games: chosen.len() as u32, site, standings })
+}
+
+/// Every edition of event `event` with its games' ids, ascending (what
+/// Show games lists for the edition on screen).
+pub fn edition_games(db: &Mutex<Database>, event: u32) -> Result<Vec<(Edition, Vec<GameId>)>, DbError> {
+    let Scan { games, groups, editions } = scan(db, event)?;
+    Ok(editions.into_iter().zip(groups).map(|(e, g)| (e, g.iter().map(|&i| games[i].0).collect())).collect())
+}
+
+/// An event's games, split into editions.
+struct Scan {
+    /// Not deleted, by id.
+    games: Vec<(GameId, IndexRecord)>,
+    /// Each edition's games, as indexes into `games`.
+    groups: Vec<Vec<usize>>,
+    editions: Vec<Edition>,
+}
+
+fn scan(db: &Mutex<Database>, event: u32) -> Result<Scan, DbError> {
+    if event == 0 {
+        return Err(DbError::Invalid("the game has no event, so there is no cross-table".into()));
+    }
+    let count = db.lock().expect("db lock").count();
+    let mut games: Vec<(GameId, IndexRecord)> = Vec::new();
+    let mut start = 0;
+    while start < count {
+        let records = db.lock().expect("db lock").records(start, CHUNK)?;
+        games.extend(
+            records
+                .into_iter()
+                .zip(start..)
+                .filter_map(|(r, id)| (r.event == event && !r.is_deleted()).then_some((id, r))),
+        );
+        start = start.saturating_add(CHUNK);
+    }
+    if games.is_empty() {
+        return Err(DbError::Invalid("this event has no games".into()));
+    }
+    let groups = editions_of(&games);
+    let editions = groups
+        .iter()
+        .map(|g| {
+            let dates = g.iter().map(|&i| games[i].1.date).filter(|d| d >> 9 != 0);
+            Edition {
+                first: dates.clone().min().unwrap_or(0),
+                last: dates.max().unwrap_or(0),
+                games: g.len() as u32,
+            }
+        })
+        .collect();
+    Ok(Scan { games, groups, editions })
 }
 
 /// An approximate day number (months of 31 days) for gaps between dates,
@@ -440,8 +505,9 @@ fn standings<'a>(
     let mut order: Vec<u32> = Vec::new(); // players in order of appearance
     let (mut used, mut unfinished, mut forfeits, mut byes, mut skipped) = (0, 0, 0, 0, 0);
     let mut has_rounds = false;
-    // Games between two players: (lower id, higher id, round).
-    let mut pair_games: Vec<(u32, u32, u16)> = Vec::new();
+    let mut pair_games: Vec<PairGame> = Vec::new();
+    let mut seen = HashSet::new();
+    let mut duplicates = 0;
 
     for &(id, r) in games {
         let (w, b) = (who(r.white), who(r.black));
@@ -456,6 +522,12 @@ fn standings<'a>(
                 continue;
             }
         };
+        // The same game again (an event imported twice). Not without a
+        // round: online games between two players can look alike.
+        if r.round != 0 && !seen.insert(same_game(&r)) {
+            duplicates += 1;
+            continue;
+        }
         used += 1;
         has_rounds |= r.round != 0;
         let decisive = r.result == 1 || r.result == 2;
@@ -470,7 +542,9 @@ fn standings<'a>(
         if bye {
             byes += 1;
         } else {
-            pair_games.push((r.white.min(r.black), r.white.max(r.black), r.round));
+            let (a, b) = (r.white.min(r.black), r.white.max(r.black));
+            let a_half = outcome(r.result, a == r.white).half_points();
+            pair_games.push(PairGame { a, b, round: r.round, a_half });
         }
         for (player, white, opponent) in sides {
             let list = raw.entry(player).or_insert_with(|| {
@@ -573,22 +647,13 @@ fn standings<'a>(
         })
         .collect();
 
-    // A knock-out's stage: the last round played, and whether the player won
-    // that round's match (more points in it than the opponent).
-    let stage = |p: u32| -> Vec<u32> {
-        let played = || raw[&p].iter().filter(|g| g.opponent.is_some());
-        let last = played().map(|g| g.round).max().unwrap_or(0);
-        let (own, theirs) = played()
-            .filter(|g| g.round == last)
-            .filter_map(|g| g.outcome.half_points())
-            .fold((0, 0), |(own, theirs), h| (own + h, theirs + 2 - h));
-        vec![u32::from(last), u32::from(own > theirs)]
-    };
+    let (stages, level_matches) =
+        if pairing == Pairing::KnockOut { knock_out_stages(&raw) } else { (HashMap::new(), 0) };
     // Rank: points, then the tie-breaks (a knock-out: its stage); level
     // players by points, Elo, then name.
     let key = |s: &Standing| -> Vec<u32> {
         if pairing == Pairing::KnockOut {
-            return stage(s.player);
+            return stages.get(&s.player).map_or_else(Vec::new, |k| k.to_vec());
         }
         std::iter::once(s.half_points * 2).chain(tie_breaks.iter().map(|&t| s.tie_break(t))).collect()
     };
@@ -638,6 +703,21 @@ fn standings<'a>(
             .collect();
     }
 
+    // What the table takes on screen: a row per player, a column per slot
+    // (or per player in the grid, which has room for up to MAX_ROUND_ROBIN)
+    // and the standings, and the results in them. Too many, and the table
+    // is the standings.
+    let columns = slots.len() + usize::from(unslotted);
+    let grid = if n <= MAX_ROUND_ROBIN { n } else { 0 };
+    let results: usize = players.iter().map(|p| p.results.len()).sum();
+    let cells = (n as u64) * (columns.max(grid) as u64 + STANDINGS_COLUMNS) + results as u64;
+    let per_game = cells <= MAX_CELLS;
+    if !per_game {
+        for p in &mut players {
+            p.results = Vec::new();
+        }
+    }
+
     Standings {
         pairing,
         tie_breaks,
@@ -650,42 +730,191 @@ fn standings<'a>(
         forfeits,
         byes,
         skipped,
+        duplicates,
+        level_matches,
+        cells,
+        per_game,
     }
 }
 
-/// How `n` players were paired, from the games between two of them
-/// (`(lower id, higher id, round)`); see the module docs.
-fn detect_pairing(n: usize, has_rounds: bool, pair_games: &[(u32, u32, u16)]) -> Pairing {
+/// What makes two index records the same game: everything but where the
+/// game is stored (see the module docs).
+fn same_game(r: &IndexRecord) -> IndexRecord {
+    IndexRecord { blob_offset: 0, ..*r }
+}
+
+/// A knock-out's rank keys and its unsettled level matches: for each
+/// player, the stage reached (twice the round of the first match lost;
+/// never lost: twice the last round, plus 1 when that match was won) and
+/// whether the last match was won (the third-place match). See the module
+/// docs.
+fn knock_out_stages(raw: &HashMap<u32, Vec<Raw>>) -> (HashMap<u32, [u32; 2]>, u32) {
+    // Each player's matches: round → (opponent, own half points, the opponent's).
+    let mut matches: HashMap<u32, BTreeMap<u16, (u32, u32, u32)>> = HashMap::new();
+    for (&p, list) in raw {
+        let m = matches.entry(p).or_default();
+        for g in list.iter().filter(|g| g.round != 0) {
+            let Some(o) = g.opponent else { continue };
+            let (own, theirs) = g.outcome.half_points().map_or((0, 0), |h| (h, 2 - h));
+            let e = m.entry(g.round).or_insert((o, 0, 0));
+            e.1 += own;
+            e.2 += theirs;
+        }
+    }
+    // Won (Greater), lost (Less) or level on points.
+    let mut result: HashMap<(u32, u16), Ordering> = HashMap::new();
+    for (&p, m) in &matches {
+        for (&r, &(_, own, theirs)) in m {
+            result.insert((p, r), own.cmp(&theirs));
+        }
+    }
+    let next_opponent =
+        |p: u32, r: u16| matches[&p].range((Bound::Excluded(r), Bound::Unbounded)).next().map(|(_, m)| m.0);
+    // A level match goes to whoever played on; when both did (the semi-finals
+    // before a third-place match), to the one whose next opponent won that
+    // round as well, or whose opponent's next opponent lost it.
+    let mut settled = Vec::new();
+    let mut level = 0;
+    for (&p, m) in &matches {
+        for (&r, &(o, _, _)) in m {
+            if result[&(p, r)] != Ordering::Equal || p > o {
+                continue;
+            }
+            let won = match (next_opponent(p, r), next_opponent(o, r)) {
+                (Some(_), None) => Some(true),
+                (None, Some(_)) => Some(false),
+                (Some(x), Some(y)) => match (result.get(&(x, r)), result.get(&(y, r))) {
+                    (Some(Ordering::Greater), _) | (_, Some(Ordering::Less)) => Some(true),
+                    (Some(Ordering::Less), _) | (_, Some(Ordering::Greater)) => Some(false),
+                    _ => None,
+                },
+                (None, None) => None,
+            };
+            match won {
+                Some(won) => {
+                    let (mine, theirs) = if won {
+                        (Ordering::Greater, Ordering::Less)
+                    } else {
+                        (Ordering::Less, Ordering::Greater)
+                    };
+                    settled.push(((p, r), mine));
+                    settled.push(((o, r), theirs));
+                }
+                None => level += 1,
+            }
+        }
+    }
+    result.extend(settled);
+    let stages = matches
+        .iter()
+        .map(|(&p, m)| {
+            let first_lost = m.keys().find(|&&r| result[&(p, r)] == Ordering::Less);
+            let last = m.keys().next_back().map(|&r| (r, result[&(p, r)] == Ordering::Greater));
+            let stage = match (first_lost, last) {
+                (Some(&r), _) => 2 * u32::from(r),
+                (None, Some((r, won))) => 2 * u32::from(r) + u32::from(won),
+                (None, None) => 0,
+            };
+            (p, [stage, u32::from(last.is_some_and(|(_, won)| won))])
+        })
+        .collect();
+    (stages, level)
+}
+
+/// A game between two players, for telling how they were paired.
+#[derive(Debug, Clone, Copy)]
+struct PairGame {
+    /// The lower player id, and the higher.
+    a: u32,
+    b: u32,
+    round: u16,
+    /// `a`'s half points; `None` while unfinished.
+    a_half: Option<u32>,
+}
+
+/// How `n` players were paired, from the games between two of them; see
+/// the module docs.
+fn detect_pairing(n: usize, has_rounds: bool, games: &[PairGame]) -> Pairing {
     if n <= 2 {
         return Pairing::Match;
     }
-    if has_rounds && is_knock_out(pair_games) {
+    if has_rounds && is_knock_out(games) {
         return Pairing::KnockOut;
     }
-    let pairs: HashSet<(u32, u32)> = pair_games.iter().map(|&(a, b, _)| (a, b)).collect();
+    let pairs: HashSet<(u32, u32)> = games.iter().map(|g| (g.a, g.b)).collect();
     let all_pairs = n * (n - 1) / 2;
-    if n <= MAX_ROUND_ROBIN && !pairs.is_empty() && pairs.len() * 2 >= all_pairs {
-        let cycles = rounded_mean(pair_games.len() as u64, pairs.len() as u64).max(1);
+    let rounds = games.iter().filter(|g| g.round != 0).map(|g| g.round).collect::<HashSet<_>>().len();
+    let round_robin = n <= MAX_ROUND_ROBIN
+        && !pairs.is_empty()
+        && (pairs.len() * 100 >= all_pairs * ROUND_ROBIN_PAIRS
+            || (pairs.len() * 2 >= all_pairs && rounds + 1 >= n));
+    if round_robin {
+        // A pair's games in one round are one meeting (a mini-match, or an
+        // armageddon after a draw); games without a round one each.
+        let meetings =
+            games.iter().filter(|g| g.round != 0).map(|g| (g.a, g.b, g.round)).collect::<HashSet<_>>().len()
+                + games.iter().filter(|g| g.round == 0).count();
+        let cycles = rounded_mean(meetings as u64, pairs.len() as u64).max(1);
         return Pairing::RoundRobin { cycles: cycles.min(u64::from(u16::MAX)) as u16 };
     }
     if has_rounds { Pairing::Swiss } else { Pairing::Unrounded }
 }
 
-/// Every player meets one opponent per round, and at least a quarter of
-/// those meetings are mini-matches of several games.
-fn is_knock_out(pair_games: &[(u32, u32, u16)]) -> bool {
-    let mut opponents: HashMap<(u32, u16), HashSet<u32>> = HashMap::new();
-    let mut meetings: HashMap<(u32, u32, u16), u32> = HashMap::new();
-    for &(a, b, round) in pair_games.iter().filter(|g| g.2 != 0) {
-        opponents.entry((a, round)).or_default().insert(b);
-        opponents.entry((b, round)).or_default().insert(a);
-        *meetings.entry((a, b, round)).or_default() += 1;
+/// Whether games with rounds have a knock-out's shape (see the module docs).
+fn is_knock_out(games: &[PairGame]) -> bool {
+    // Each meeting: (a, b, round) → (a's half points, b's, games).
+    let mut meetings: HashMap<(u32, u32, u16), (u32, u32, u32)> = HashMap::new();
+    for g in games.iter().filter(|g| g.round != 0) {
+        let m = meetings.entry((g.a, g.b, g.round)).or_default();
+        if let Some(h) = g.a_half {
+            m.0 += h;
+            m.1 += 2 - h;
+        }
+        m.2 += 1;
     }
-    let several = meetings.values().filter(|&&g| g >= 2).count();
-    !meetings.is_empty()
-        && opponents.values().all(|o| o.len() == 1)
-        && several > 0
-        && several * 4 >= meetings.len()
+    // One opponent per round, and one round per pair.
+    let mut opponents: HashMap<(u32, u16), u32> = HashMap::new();
+    let mut pairs: HashSet<(u32, u32)> = HashSet::new();
+    for &(a, b, round) in meetings.keys() {
+        if !pairs.insert((a, b))
+            || opponents.insert((a, round), b).is_some()
+            || opponents.insert((b, round), a).is_some()
+        {
+            return false;
+        }
+    }
+    let several = meetings.values().filter(|m| m.2 >= 2).count();
+    if several == 0 || several * 4 < meetings.len() {
+        return false;
+    }
+    // Nobody plays on after losing a match, but in a third-place match in
+    // the last round, between two losers of one round (or a loser and a
+    // player whose match then was level on points: lost on tie-breaks
+    // missing from the database).
+    let last = meetings.keys().map(|k| k.2).max();
+    let mut lost: HashMap<u32, u16> = HashMap::new();
+    let mut level: HashSet<(u32, u16)> = HashSet::new();
+    for (&(a, b, round), &(pa, pb, _)) in &meetings {
+        let loser = match pa.cmp(&pb) {
+            Ordering::Less => a,
+            Ordering::Greater => b,
+            Ordering::Equal => {
+                level.extend([(a, round), (b, round)]);
+                continue;
+            }
+        };
+        let first = lost.entry(loser).or_insert(round);
+        *first = (*first).min(round);
+    }
+    meetings.keys().all(|&(a, b, round)| {
+        let out = |p: u32| lost.get(&p).copied().filter(|&r| r < round);
+        match (out(a), out(b)) {
+            (None, None) => true,
+            (Some(ra), Some(rb)) => Some(round) == last && ra == rb,
+            (Some(r), None) => Some(round) == last && level.contains(&(b, r)),
+            (None, Some(r)) => Some(round) == last && level.contains(&(a, r)),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -808,6 +1037,9 @@ mod tests {
         );
         assert!(s.by_round && !s.unslotted);
         assert_eq!(s.slots, [1, 2, 3]);
+        // Four rows of four columns (the grid has more than the three rounds)
+        // and the standings, and 12 results.
+        assert_eq!((s.cells, s.per_game, s.duplicates, s.level_matches), (4 * (4 + 10) + 12, true, 0, 0));
     }
 
     #[test]
@@ -1032,9 +1264,296 @@ mod tests {
         let hastings = table(&db, "Hastings");
         assert_eq!(hastings.editions.len(), 1);
         assert_eq!(hastings.games, 2);
+
+        // Show games (R1-5 of the review): each edition's games.
+        let games = edition_games(&db, memorial).unwrap();
+        let ids: Vec<Vec<GameId>> = games.iter().map(|(_, ids)| ids.clone()).collect();
+        assert_eq!(ids, [vec![0, 1], vec![2, 3], vec![4]]);
+        let spans: Vec<(u32, u32)> = games.iter().map(|(e, _)| (e.first, e.last)).collect();
+        assert_eq!(spans[0], (pack_date("2019.06.01"), pack_date("2019.06.02")));
     }
 
-    /// `testdata/pgn/crosstable.pgn`: three small tournaments made for these
+    /// Berger tables: the pairs of each round of a round robin of `n`
+    /// players (`n` even), by index.
+    fn berger(n: usize) -> Vec<Vec<(usize, usize)>> {
+        let mut ps: Vec<usize> = (0..n).collect();
+        let mut rounds = Vec::new();
+        for _ in 0..n - 1 {
+            rounds.push((0..n / 2).map(|i| (ps[i], ps[n - 1 - i])).collect());
+            let last = ps.pop().unwrap();
+            ps.insert(1, last);
+        }
+        rounds
+    }
+
+    /// R1-1 of the review: one player's online games under one event name,
+    /// without rounds, make a column per game of theirs for every opponent.
+    /// The table can't take more than MAX_CELLS cells: past them it has the
+    /// standings only, and no results at all.
+    #[test]
+    fn results_never_take_more_than_max_cells() {
+        // The review's machine-freezing event: 1,500 opponents, 4 games each.
+        let hub = |opponents: usize, per: usize| {
+            let mut all = String::new();
+            for o in 0..opponents {
+                for j in 0..per {
+                    let opp = format!("opp{o:04}");
+                    let (w, b) = if j % 2 == 0 { ("Hero", opp.as_str()) } else { (opp.as_str(), "Hero") };
+                    let res = ["1-0", "0-1", "1/2-1/2"][(o + j) % 3];
+                    all += &pgn("Rated Blitz game", "2024.03.01", "-", w, b, res);
+                }
+            }
+            all
+        };
+        let (_d, db) = db_of(&hub(1500, 4));
+        let t = table(&db, "Rated Blitz game");
+        assert_eq!((t.players, t.games), (1501, 6000));
+        let s = t.standings.expect("within MAX_PLAYERS and MAX_GAMES: standings");
+        assert_eq!(s.pairing, Pairing::Unrounded);
+        // 1,501 rows of 6,000 columns and the standings, plus 12,000 results.
+        assert_eq!(s.cells, 1501 * (6000 + 10) + 12_000);
+        assert!(!s.per_game);
+        assert!(s.players.iter().all(|p| p.results.is_empty()), "no results to draw");
+        let hero = &s.players[0];
+        assert_eq!((hero.games, hero.wins + hero.draws + hero.losses), (6000, 6000));
+        assert_eq!(s.slots.len(), 6000, "the columns are still known, for the summary");
+
+        // Over and under the bound: rows × (columns + 10) + results.
+        let (_d, db) = db_of(&hub(100, 2));
+        let s = table(&db, "Rated Blitz game").standings.unwrap();
+        assert_eq!((s.cells, s.per_game), (101 * (200 + 10) + 400, false));
+        let (_d, db) = db_of(&hub(60, 2));
+        let s = table(&db, "Rated Blitz game").standings.unwrap();
+        assert_eq!((s.cells, s.per_game), (61 * (120 + 10) + 240, true));
+        assert_eq!(s.players[0].results.len(), 120);
+        assert!(s.cells <= MAX_CELLS);
+    }
+
+    /// Places of a knock-out's players: (name, rank, rank_to).
+    fn places(db: &Mutex<Database>, s: &Standings) -> Vec<(String, u32, u32)> {
+        s.players.iter().map(|p| (name(db, p.player), p.rank, p.rank_to)).collect()
+    }
+
+    fn place_list(rows: &[(&str, u32, u32)]) -> Vec<(String, u32, u32)> {
+        rows.iter().map(|&(n, a, b)| (n.to_owned(), a, b)).collect()
+    }
+
+    /// R1-2 of the review: a third-place match in the final's round. Its
+    /// winner ranks third, not level with the champion.
+    #[test]
+    fn knock_out_third_place_match() {
+        let semis = [
+            ("1.1", "A", "D", "1-0"),
+            ("1.2", "D", "A", "1/2-1/2"),
+            ("1.1", "B", "C", "1/2-1/2"),
+            ("1.2", "C", "B", "0-1"),
+        ];
+        let cup = |event: &str, round: &str, rest: &[(&str, &str, &str, &str)]| {
+            let mut all = String::new();
+            for &(r, w, b, res) in semis.iter().chain(rest) {
+                let r = if r.starts_with('3') { r.replacen('3', round, 1) } else { r.to_owned() };
+                all += &pgn(event, "2023.08.01", &r, w, b, res);
+            }
+            all
+        };
+        // The final (A - B) and the third-place match (C - D) both in round
+        // 2, as in the FIDE World Cup; then the third-place match in a round
+        // of its own after the final.
+        let rest = [
+            ("2.1", "A", "B", "1-0"),
+            ("2.2", "B", "A", "1/2-1/2"),
+            ("3.1", "C", "D", "1-0"),
+            ("3.2", "D", "C", "1/2-1/2"),
+        ];
+        let (_d, db) = db_of(&(cup("Same round", "2", &rest) + &cup("Own round", "3", &rest)));
+        for event in ["Same round", "Own round"] {
+            let s = table(&db, event).standings.unwrap();
+            assert_eq!(s.pairing, Pairing::KnockOut, "{event}");
+            assert_eq!(places(&db, &s), place_list(&[("A", 1, 1), ("B", 2, 2), ("C", 3, 3), ("D", 4, 4)]));
+            assert_eq!(s.level_matches, 0);
+        }
+    }
+
+    /// R1-2 of the review: a final level on points (Black's armageddon draw)
+    /// can't be settled from the games: its players share 1–2, and the table
+    /// says so. A level match whose winner played on is settled.
+    #[test]
+    fn knock_out_level_matches() {
+        let mut all = String::new();
+        for (r, w, b, res) in [
+            ("1.1", "A", "D", "1-0"),
+            ("1.2", "D", "A", "1/2-1/2"),
+            ("1.1", "B", "C", "1/2-1/2"),
+            ("1.2", "C", "B", "0-1"),
+            ("2.1", "A", "B", "1-0"),
+            ("2.2", "B", "A", "1-0"),
+            ("2.3", "A", "B", "1/2-1/2"),
+        ] {
+            all += &pgn("Armageddon final", "2023.08.01", r, w, b, res);
+        }
+        // Semi-finals level on points (tie-breaks not in the database): F and
+        // G played on. Then a third-place match after level semi-finals: the
+        // final's players are the ones who went through.
+        for (r, w, b, res) in [
+            ("1.1", "E", "H", "1/2-1/2"),
+            ("1.2", "H", "E", "1/2-1/2"),
+            ("1.1", "F", "G", "1-0"),
+            ("1.2", "G", "F", "1-0"),
+            ("2.1", "E", "G", "1-0"),
+            ("2.2", "G", "E", "0-1"),
+        ] {
+            all += &pgn("Missing tie-breaks", "2023.09.01", r, w, b, res);
+        }
+        for (r, w, b, res) in [
+            ("1.1", "P", "S", "1-0"),
+            ("1.2", "S", "P", "0-1"),
+            ("1.1", "Q", "R", "1/2-1/2"),
+            ("1.2", "R", "Q", "1/2-1/2"),
+            ("2.1", "P", "R", "1/2-1/2"),
+            ("2.2", "R", "P", "0-1"),
+            ("2.1", "Q", "S", "1-0"),
+            ("2.2", "S", "Q", "1/2-1/2"),
+        ] {
+            all += &pgn("Level semi-final", "2023.10.01", r, w, b, res);
+        }
+        let (_d, db) = db_of(&all);
+        let s = table(&db, "Armageddon final").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::KnockOut);
+        assert_eq!(places(&db, &s), place_list(&[("A", 1, 2), ("B", 1, 2), ("C", 3, 4), ("D", 3, 4)]));
+        assert_eq!(s.level_matches, 1);
+
+        // E went through against H, G against F (whoever played round 2).
+        let s = table(&db, "Missing tie-breaks").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::KnockOut);
+        assert_eq!(places(&db, &s), place_list(&[("E", 1, 1), ("G", 2, 2), ("F", 3, 4), ("H", 3, 4)]));
+        assert_eq!(s.level_matches, 0);
+
+        // Q - R was level, and both played round 2: R met P, who won their
+        // semi-final, so R went through to the final and Q played for third.
+        let s = table(&db, "Level semi-final").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::KnockOut);
+        assert_eq!(places(&db, &s), place_list(&[("P", 1, 1), ("R", 2, 2), ("Q", 3, 3), ("S", 4, 4)]));
+        assert_eq!(s.level_matches, 0);
+    }
+
+    /// R1-3 of the review: events with mini-matches in a round that aren't
+    /// knock-outs. Losers play on and pairs meet again, so they're round
+    /// robins or a Swiss, ranked by points.
+    #[test]
+    fn mini_matches_without_a_knock_out() {
+        let p = ["P1", "P2", "P3", "P4", "P5", "P6"];
+        let rounds = berger(6);
+        let reversed: Vec<Vec<(usize, usize)>> =
+            rounds.iter().map(|r| r.iter().map(|&(a, b)| (b, a)).collect()).collect();
+        // Norway Chess: a double round robin with an armageddon game in the
+        // same round after each draw.
+        let mut all = String::new();
+        let mut k = 0;
+        for (ri, pairs) in rounds.iter().chain(&reversed).enumerate() {
+            for (bi, &(a, b)) in pairs.iter().enumerate() {
+                k += 1;
+                let round = format!("{}.{}", ri + 1, bi + 1);
+                let res = ["1/2-1/2", "1-0", "1/2-1/2", "0-1"][k % 4];
+                all += &pgn("Norway", "2025.05.27", &round, p[a], p[b], res);
+                if res == "1/2-1/2" {
+                    all += &pgn(
+                        "Norway",
+                        "2025.05.27",
+                        &round,
+                        p[a],
+                        p[b],
+                        if k % 3 != 0 { "1-0" } else { "0-1" },
+                    );
+                }
+            }
+        }
+        // A round robin of two-game mini-matches, both games in one round.
+        for (ri, pairs) in rounds.iter().enumerate() {
+            for (bi, &(a, b)) in pairs.iter().enumerate() {
+                let round = format!("{}.{}", ri + 1, bi + 1);
+                all += &pgn("Mini-matches", "2024.02.10", &round, p[a], p[b], "1-0");
+                all += &pgn("Mini-matches", "2024.02.10", &round, p[b], p[a], "1/2-1/2");
+            }
+        }
+        let (_d, db) = db_of(&all);
+        let s = table(&db, "Norway").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::RoundRobin { cycles: 2 }, "two cycles, the armageddons in them");
+        assert_eq!(s.tie_breaks, &[TieBreak::SonnebornBerger, TieBreak::Wins]);
+        assert!(s.players.windows(2).all(|w| w[0].half_points >= w[1].half_points), "by points");
+        assert_eq!(by_name(&db, &s, "P1").half_points, 15);
+        assert_eq!(by_name(&db, &s, "P2").half_points, 13);
+        assert!(by_name(&db, &s, "P1").rank < by_name(&db, &s, "P2").rank);
+        let s = table(&db, "Mini-matches").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::RoundRobin { cycles: 1 });
+        assert_eq!(ranking(&db, &s)[0], ("P1".to_owned(), "7½".to_owned()));
+    }
+
+    /// R1-3 of the review: a Swiss imported twice stays a Swiss, with every
+    /// game counted once.
+    #[test]
+    fn duplicate_games_count_once() {
+        let p: Vec<String> = (1..=12).map(|i| format!("S{i}")).collect();
+        let mut once = String::new();
+        for (ri, pairs) in berger(12).iter().take(5).enumerate() {
+            for (bi, &(a, b)) in pairs.iter().enumerate() {
+                let res = ["1-0", "0-1", "1/2-1/2"][(ri + bi) % 3];
+                once +=
+                    &pgn("Weekend Swiss", "2024.03.02", &format!("{}.{}", ri + 1, bi + 1), &p[a], &p[b], res);
+            }
+        }
+        let (_d, single) = db_of(&once);
+        let (_d2, twice) = db_of(&(once.clone() + &once));
+        let one = table(&single, "Weekend Swiss").standings.unwrap();
+        let two = table(&twice, "Weekend Swiss").standings.unwrap();
+        assert_eq!((one.pairing, two.pairing), (Pairing::Swiss, Pairing::Swiss));
+        assert_eq!((one.games, one.duplicates, two.games, two.duplicates), (30, 0, 30, 30));
+        assert_eq!(ranking(&single, &one), ranking(&twice, &two), "the same standings");
+        // The games kept are the first copies.
+        assert!(two.players.iter().flat_map(|p| &p.results).all(|r| r.game < 30));
+    }
+
+    /// R1-4 of the review: a Swiss with many rounds (14 players, 7 rounds:
+    /// 49 of 91 pairs met) isn't a round robin; a round robin with games
+    /// missing still is.
+    #[test]
+    fn round_robins_and_long_swiss_events() {
+        let p: Vec<String> = (1..=14).map(|i| format!("C{i:02}")).collect();
+        let mut all = String::new();
+        for (ri, pairs) in berger(14).iter().enumerate() {
+            for (bi, &(a, b)) in pairs.iter().enumerate() {
+                let round = format!("{}.{}", ri + 1, bi + 1);
+                let res = ["1-0", "1/2-1/2", "0-1"][(ri * 7 + bi) % 3];
+                if ri < 7 {
+                    all += &pgn("Club Swiss", "2024.05.04", &round, &p[a], &p[b], res);
+                }
+                // Every round, but only three boards of seven: 39 of 91 pairs.
+                if bi < 3 {
+                    all += &pgn("Some boards", "2024.06.04", &round, &p[a], &p[b], res);
+                }
+                // The last round missing: 84 of 91 pairs.
+                if ri < 12 {
+                    all += &pgn("Last round missing", "2024.07.04", &round, &p[a], &p[b], res);
+                }
+                // Two rounds missing: 77 of 91 pairs, 11 rounds of 13.
+                if ri < 11 {
+                    all += &pgn("Two rounds missing", "2024.08.04", &round, &p[a], &p[b], res);
+                }
+            }
+        }
+        let (_d, db) = db_of(&all);
+        let s = table(&db, "Club Swiss").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::Swiss);
+        assert_eq!(s.tie_breaks, &[TieBreak::BuchholzCut1, TieBreak::Buchholz]);
+        assert_eq!(
+            table(&db, "Last round missing").standings.unwrap().pairing,
+            Pairing::RoundRobin { cycles: 1 }
+        );
+        assert_eq!(table(&db, "Two rounds missing").standings.unwrap().pairing, Pairing::Swiss);
+        // 39 of 91 pairs is under half: a Swiss, rounds or not.
+        assert_eq!(table(&db, "Some boards").standings.unwrap().pairing, Pairing::Swiss);
+    }
+
+    /// `testdata/pgn/crosstable.pgn`: four small tournaments made for these
     /// numbers (the smoke driver `crosstable.js` reads it too).
     #[test]
     fn fixture_tournaments() {
@@ -1042,7 +1561,7 @@ mod tests {
         let db = Mutex::new(Database::create(&dir.path().join("Fixture")).unwrap());
         let pgn =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/pgn/crosstable.pgn");
-        assert_eq!(crate::import_pgn(&db, &pgn, &crate::NoProgress).unwrap().imported, 39);
+        assert_eq!(crate::import_pgn(&db, &pgn, &crate::NoProgress).unwrap().imported, 47);
         let pts = |rows: &[(&str, &str)]| -> Vec<(String, String)> {
             rows.iter().map(|&(n, p)| (n.to_owned(), p.to_owned())).collect()
         };
@@ -1101,6 +1620,24 @@ mod tests {
         let s = cross_table(&db, event, EditionPick::Index(0)).unwrap().standings.unwrap();
         assert_eq!(s.pairing, Pairing::RoundRobin { cycles: 2 });
         assert_eq!(ranking(&db, &s), pts(&[("Oak, Olga", "3"), ("Pine, Paul", "2"), ("Rowan, Rita", "1")]));
+
+        // A knock-out whose third-place match (Vale - Willow) is played in the
+        // final's round: Vale is third, behind the final's loser on 2 too.
+        let s = table(&db, "Summer Cup").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::KnockOut);
+        assert_eq!(
+            places(&db, &s),
+            place_list(&[
+                ("Thorn, Tess", 1, 1),
+                ("Umber, Uma", 2, 2),
+                ("Vale, Victor", 3, 3),
+                ("Willow, Wes", 4, 4)
+            ])
+        );
+        assert_eq!(
+            ranking(&db, &s),
+            pts(&[("Thorn, Tess", "3"), ("Umber, Uma", "2"), ("Vale, Victor", "2"), ("Willow, Wes", "1")])
+        );
     }
 
     #[test]
