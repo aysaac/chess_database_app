@@ -11,8 +11,11 @@
 // threat follows the board (3...g6: Black threatens ...gxh5; back a move:
 // Qxf7# again), says why there's none in check, after mate and when the
 // opponent would have no move, and goes when switched off or when the
-// engine stops. The setting is remembered: after a reload, starting the
-// engine brings the threat back. Screenshots in dark and light mode.
+// engine stops. A double click while the threat engine starts (on, then
+// off before it's up), and on/off/on/off, end off with no threat engine
+// left in the backend, also after a move. The setting is remembered: after
+// a reload, starting the engine brings the threat back. Screenshots in dark
+// and light mode.
 (async () => {
   const OUT = "__OUT__";
 
@@ -150,6 +153,32 @@
       expect(analysis.status.running, "the analysis still runs");
       await until(async () => (await savedPref()) === false, "Show threat saved as off");
       await shot("t05-off");
+
+      // A double click while the threat engine starts: on, then off before
+      // it's up. It ends off in the backend too, with no threat engine
+      // searching after a move.
+      const settled = async (what) => {
+        await wait(3000);
+        const st = await api.analysisStatus();
+        await log(`${what}: showThreat=${analysis.showThreat} status.threat=${analysis.status.threat} backend=${st.threat}`);
+        expect(!analysis.showThreat && toggle().getAttribute("aria-pressed") === "false", what + ": the button off");
+        expect(st.running && !st.threat, what + ": no threat engine in the backend");
+        expect(!analysis.status.threat && analysis.status.running, what + ": the page's status agrees");
+        expect(!threatRow() && threatArrows().length === 0, what + ": no threat row or arrow");
+      };
+      toggle().click();
+      await wait(60);
+      toggle().click();
+      await settled("double click");
+      await game.play("g7", "g6");
+      await settled("double click, after a move");
+      await game.step("back");
+      for (const pause of [40, 40, 40]) {
+        toggle().click();
+        await wait(pause);
+      }
+      toggle().click();
+      await settled("on, off, on, off");
 
       // On again, then the engine stops: the threat goes with it.
       toggle().click();

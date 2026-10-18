@@ -87,7 +87,10 @@
     <p class="threat">
       <span class="label">Threat</span>
       {#if threat?.error}
-        <span class="note">The threat search stopped. Turn "Show threat" off and on to retry.</span>
+        <span class="note"
+          >{threat.startFailed ? "The threat engine couldn't start." : "The threat search stopped."} Turn
+          "Show threat" off and on to retry.</span
+        >
       {:else if threat?.unavailable === "inCheck"}
         <span class="note">None while {mover} is in check: passing isn't legal.</span>
       {:else if threat?.unavailable === "gameOver"}

@@ -6,6 +6,13 @@ import type { EvalDto } from "../bindings/EvalDto";
 import type { PvLineDto } from "../bindings/PvLineDto";
 import type { ThreatDto } from "../bindings/ThreatDto";
 import { formatEval } from "../format";
+import {
+  isCurrentThreat,
+  isNewFailure,
+  oneAtATime,
+  threatErrorNotice,
+  visibleThreat,
+} from "../threatView";
 import { game } from "./game.svelte";
 import { jobs } from "./jobs.svelte";
 import { notices } from "./notify.svelte";
@@ -28,6 +35,8 @@ class AnalysisStore {
   starting = $state(false);
   #latest = $state<AnalysisDto | null>(null);
   #threat = $state<ThreatDto | null>(null);
+  /** The newest `threat` event's number: older ones are stale (ENG-07). */
+  #threatSeq = 0;
 
   constructor() {
     onAnalysis((update) => {
@@ -41,13 +50,12 @@ class AnalysisStore {
       this.#latest = update;
     });
     onThreat((threat) => {
-      if (threat.error && this.showThreat) {
-        notices.show(
-          `The threat search stopped: ${threat.error}. Turn "Show threat" off and on to retry.`,
-          "error",
-        );
-      }
+      if (!isCurrentThreat(threat, this.#threatSeq)) return;
+      const news = isNewFailure(this.#threat, threat);
+      this.#threatSeq = threat.seq;
       this.#threat = threat;
+      // Every window gets the event: only the one whose game it is says so.
+      if (news && this.threat?.error) notices.show(threatErrorNotice(threat), "error");
     });
   }
 
@@ -70,27 +78,39 @@ class AnalysisStore {
   /**
    * The threat in the position on the board while the engine runs with
    * "Show threat" on: the opponent's line, why there's none, or the threat
-   * engine's failure; null until its search has said anything.
+   * engine's failure in this game; null until its search has said anything.
    */
   get threat(): ThreatDto | null {
-    const t = this.#threat;
-    const view = game.view;
-    if (!t || !view || !this.showThreat || !(this.status.running || this.starting)) return null;
-    if (t.error) return t;
-    return t.session === view.session && t.fen === view.fen ? t : null;
+    return visibleThreat(
+      this.#threat,
+      game.view,
+      this.showThreat && (this.status.running || this.starting),
+    );
   }
 
   /** Turns "Show threat" on or off, for the running analysis too. */
   async setShowThreat(on: boolean) {
     prefs.set("showThreat", on);
     this.#threat = null;
+    await this.#sendShowThreat();
+  }
+
+  /**
+   * Sends "Show threat" to the running analysis, one call at a time, each
+   * with the setting as it is when its turn comes: turning it on waits for
+   * the threat engine to start, and a click meanwhile (a double click) is
+   * sent after that, so the engine ends up as the button says.
+   */
+  #sendShowThreat = oneAtATime(async () => {
     if (!this.status.running) return;
     try {
-      this.status = await api.setAnalysisThreat(on);
+      const status = await api.setAnalysisThreat(this.showThreat);
+      // Unless the engine was stopped meanwhile.
+      if (this.status.running) this.status = status;
     } catch (e) {
       notices.error(e);
     }
-  }
+  });
 
   get lines(): number {
     return this.status.running ? this.status.multipv : prefs.get("analysisLines", 3);
@@ -171,12 +191,12 @@ class AnalysisStore {
     }
     this.starting = true;
     this.#threat = null;
+    // A threat engine that can't start is reported by the start itself, so
+    // "Show threat" is only sent again if it changed while the engine started.
+    const showThreat = this.showThreat;
     try {
-      this.status = await api.startAnalysis(session, engine, this.lines, this.showThreat);
-      // "Show threat" may have changed while the engine started.
-      if (this.status.running && this.status.threat !== this.showThreat) {
-        this.status = await api.setAnalysisThreat(this.showThreat);
-      }
+      this.status = await api.startAnalysis(session, engine, this.lines, showThreat);
+      if (this.status.running && this.showThreat !== showThreat) await this.#sendShowThreat();
     } catch (e) {
       notices.error(e);
     } finally {
