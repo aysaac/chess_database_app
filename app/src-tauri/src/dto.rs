@@ -1290,8 +1290,18 @@ pub struct CrossTableDto {
     pub byes: u32,
     /// Games left out: without two named players.
     pub skipped: u32,
-    /// Whether the grid view fits (few enough players).
+    /// Games left out because the same game is there already (an event
+    /// imported twice).
+    pub duplicates: u32,
+    /// Knock-out matches level on points that the games don't settle.
+    pub level_matches: u32,
+    /// Whether the grid view fits (few enough players, and `perGame`).
     pub grid: bool,
+    /// Whether `rows` have their `results`: false when they would make the
+    /// table too big to show, and it's the standings only.
+    pub per_game: bool,
+    /// Why the table is the standings only, else `None`.
+    pub standings_only: Option<String>,
 }
 
 /// Result of checking a FEN: the normalized FEN, or `error` in plain words.

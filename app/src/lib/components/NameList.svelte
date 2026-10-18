@@ -145,7 +145,7 @@
 </section>
 
 {#if crossTable !== null && db.info}
-  <CrossTableDialog handle={db.info.handle} event={crossTable} onClose={() => (crossTable = null)} {onShowGames} />
+  <CrossTableDialog handle={db.info.handle} event={crossTable} onClose={() => (crossTable = null)} />
 {/if}
 
 {#if renaming}

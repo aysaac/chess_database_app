@@ -49,6 +49,24 @@ unslotted: boolean, tieBreaks: Array<TieBreakDto>, rows: Array<CrossRowDto>, unf
  */
 skipped: number, 
 /**
- * Whether the grid view fits (few enough players).
+ * Games left out because the same game is there already (an event
+ * imported twice).
  */
-grid: boolean, };
+duplicates: number, 
+/**
+ * Knock-out matches level on points that the games don't settle.
+ */
+levelMatches: number, 
+/**
+ * Whether the grid view fits (few enough players, and `perGame`).
+ */
+grid: boolean, 
+/**
+ * Whether `rows` have their `results`: false when they would make the
+ * table too big to show, and it's the standings only.
+ */
+perGame: boolean, 
+/**
+ * Why the table is the standings only, else `None`.
+ */
+standingsOnly: string | null, };

@@ -87,6 +87,9 @@ export const api = {
   /** A tournament cross-table (DB-16): of event `event`, or of `game`'s event. */
   crossTable: (handle: number, event: number | null, game: number | null, edition: number | null = null) =>
     invoke<CrossTableDto>("cross_table", { handle, event, game, edition }),
+  /** Limits the list to one edition of an event (DB-16's Show games). */
+  showEditionGames: (handle: number, event: number, edition: number) =>
+    invoke<DbInfoDto>("show_edition_games", { handle, event, edition }),
   updateIndex: (handle: number) => invoke<number | null>("update_index", { handle }),
   openingTree: (handle: number, session: number) => invoke<TreeDto>("opening_tree", { handle, session }),
   searchPosition: (handle: number, session: number) =>

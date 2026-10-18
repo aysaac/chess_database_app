@@ -29,7 +29,7 @@ pub const FLAG_COMMENTS: u32 = 1 << 2;
 pub const FLAG_SETUP: u32 = 1 << 3;
 pub const FLAG_ANNOTATIONS: u32 = 1 << 4;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct IndexRecord {
     pub blob_offset: u64,
     pub blob_len: u32,

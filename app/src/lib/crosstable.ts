@@ -58,6 +58,25 @@ export function resultTitle(r: CrossResultDto, rows: CrossRowDto[], byRound: boo
   return `${parts.join(" · ")}. Opens the game.`;
 }
 
+/**
+ * Most cells a table with results may have: `MAX_CELLS` in crates/chess-db's
+ * crosstable.rs, which sends the standings only past it. The dialog checks
+ * again, so a table that is too big to lay out never reaches the page.
+ */
+export const MAX_CELLS = 20_000;
+/** Columns besides the results, as crosstable.rs counts them (`STANDINGS_COLUMNS`). */
+const STANDINGS_COLUMNS = 10;
+
+/**
+ * Cells a table takes with its results, as crosstable.rs counts them: a row
+ * per player times the columns of the wider layout (the rounds' `columns`,
+ * or one per player in the grid) and the standings, plus the results.
+ */
+export function resultCells(rows: Pick<CrossRowDto, "results">[], columns: number, grid: boolean): number {
+  const results = rows.reduce((sum, row) => sum + row.results.length, 0);
+  return rows.length * (Math.max(columns, grid ? rows.length : 0) + STANDINGS_COLUMNS) + results;
+}
+
 /** The grid: `cells[i][j]` holds row i's games against row j, in the order played. */
 export function gridCells(rows: CrossRowDto[]): CrossResultDto[][][] {
   return rows.map((row) => {

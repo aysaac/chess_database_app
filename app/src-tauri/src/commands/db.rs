@@ -422,16 +422,16 @@ pub async fn search_games(
     quick: bool,
 ) -> AppResult<Option<u64>> {
     let db = state.db(handle)?;
-    let mut steps = Vec::new();
+    let mut before = None;
     let base = within
         .then(|| {
             state.filters.lock().expect("filters lock").get(&handle).map(|f| {
-                steps = f.steps.clone();
+                before = Some(f.steps.clone());
                 (f.ids.clone(), f.description.clone())
             })
         })
         .flatten();
-    steps.push(FilterStep::Header { query: query.clone(), quick });
+    let steps = search_steps(before, FilterStep::Header { query: query.clone(), quick });
     let query: HeaderQuery = query.into();
     if query == HeaderQuery::default() && base.is_none() {
         state.clear_filter(handle);
@@ -453,6 +453,21 @@ pub async fn search_games(
             n => format!("Found {} games", thousands(n)),
         })
     })))
+}
+
+/// The steps of the filter a search makes: the search, after those of the
+/// filter it searched within. Within a filter that isn't saved (no steps:
+/// a cross-table edition's games, DB-16), none: a filter made again from
+/// the search alone would be another one.
+fn search_steps(within: Option<Vec<FilterStep>>, search: FilterStep) -> Vec<FilterStep> {
+    match within {
+        Some(steps) if steps.is_empty() => Vec::new(),
+        Some(mut steps) => {
+            steps.push(search);
+            steps
+        }
+        None => vec![search],
+    }
 }
 
 /// Compacts the database (DB-06) in a background job: deleted games and
@@ -645,5 +660,22 @@ mod tests {
         assert_eq!(super::thousands(1000), "1,000");
         assert_eq!(super::thousands(1_000_000), "1,000,000");
         assert_eq!(super::thousands(12_345_678), "12,345,678");
+    }
+
+    /// A search within a filter that isn't saved (a cross-table edition's
+    /// games, DB-16) isn't saved either; within a saved one it adds a step.
+    #[test]
+    fn a_search_within_an_unsaved_filter_is_not_saved() {
+        use super::search_steps;
+        use crate::dto::{HeaderQueryDto, NameKindDto};
+        use crate::settings::FilterStep;
+        let search = FilterStep::Header {
+            query: HeaderQueryDto { white: "Oak".into(), ..Default::default() },
+            quick: false,
+        };
+        let event = FilterStep::Name { table: NameKindDto::Event, name: "Club Championship".into() };
+        assert_eq!(search_steps(None, search.clone()), std::slice::from_ref(&search));
+        assert_eq!(search_steps(Some(vec![event.clone()]), search.clone()), [event, search.clone()]);
+        assert_eq!(search_steps(Some(Vec::new()), search), []);
     }
 }

@@ -245,4 +245,10 @@ TWIC 1600 events in 40 ms together. In the app (`tauri dev`, Oct 2026), from
 the click to the table on screen: a 10-player round robin 50 ms, the
 597-player Titled Tuesday Swiss 260–470 ms; on the 1M Lichess games, the
 "Rated Blitz game" month (428,886 games, too big for a table) 253 ms and a
-1,446-game arena 278 ms.
+1,446-game arena 278 ms. What the table costs the webview grows with its
+cells, 40–50 µs each on the smoke harness's headless display (two frames
+after the click): a 600-player 11-round Swiss (19,200 cells) 0.9–1.1 s, a
+2,000-player 7-round one (48,000) 2.1–2.8 s. So `MAX_CELLS` is 20,000 and
+bigger tables get the standings only: 2,000 players 0.6–0.7 s, "Rated
+UltraBullet game" (1,130 players without rounds, one with 138 games: 3.3 s
+as a full table) 0.4 s.
