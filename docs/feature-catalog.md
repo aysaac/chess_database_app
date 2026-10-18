@@ -209,7 +209,7 @@ Two sides of one program:
 | ENG-04 | Multiple simultaneous engines (kibitzers) | CB+FR | P2 | ENG-01 | |
 | ENG-05 | Paste engine line into notation as variation (with eval comment) | CB+FR | P1 | ENG-02, GAME-04 | |
 | ENG-06 | Hover preview of PV positions (mini board) | CB | P2 | ENG-02 | |
-| ENG-07 | Threat display (null-move "what does opponent threaten") | CB+FR | P2 | ENG-01 | Done: "Show threat" in the engine pane (remembered): the opponent's best line after a pass, with its eval, and a dashed arrow on the board; a note instead in check, after mate, or when the opponent would have no move. A second engine process, capped (see stack.md) |
+| ENG-07 | Threat display (null-move "what does opponent threaten") | CB+FR | P2 | ENG-01 | Done: "Show threat" in the engine pane (remembered): the opponent's best line after a pass, with its eval, and a dashed arrow on the board; a note instead in check, after mate, or when the opponent would have no move. A threat engine that fails or can't start says so in the pane until "Show threat" is turned off and on. A second engine process, capped (see stack.md) |
 | ENG-08 | Tablebases: local Syzygy probing, online lookup, tablebase panel with DTZ/WDL per move | CB+FR | P2 | CORE-01, NET-07 | |
 | ENG-09 | Bundled engine (Stockfish), auto-download/update | FR | P1 | ENG-01 | Fritz ships its own engine. We ship Stockfish (GPL, run as separate process) |
 | ENG-10 | Assisted analysis: color target squares by eval while dragging a piece | CB | P3 | ENG-02 | Distinctive CB feature |

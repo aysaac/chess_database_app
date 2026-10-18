@@ -650,6 +650,11 @@ pub enum NoThreatDto {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ThreatDto {
+    /// Numbers the events in the order their content was decided, across
+    /// threat searches: a page keeps the newest, so an update that was on
+    /// its way when the board moved can't replace what came after it.
+    #[ts(type = "number")]
+    pub seq: u64,
     pub session: u32,
     /// The position on the board (before the pass).
     pub fen: String,
@@ -659,8 +664,11 @@ pub struct ThreatDto {
     /// From the opponent's first move; the eval is from White's point of view.
     pub line: Option<PvLineDto>,
     pub unavailable: Option<NoThreatDto>,
-    /// The threat engine failed; the threat search has stopped.
+    /// The threat engine failed; the threat search has stopped. It says
+    /// nothing more until "Show threat" is turned off and on.
     pub error: Option<String>,
+    /// The `error` is from starting the threat engine.
+    pub start_failed: bool,
 }
 
 /// A UCI option as the engine declares it.

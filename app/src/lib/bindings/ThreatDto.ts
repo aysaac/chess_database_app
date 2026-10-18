@@ -7,7 +7,13 @@ import type { PvLineDto } from "./PvLineDto";
  * opponent's best line had the side to move passed. Until the first line
  * comes, `line`, `unavailable` and `error` are all `None`.
  */
-export type ThreatDto = { session: number, 
+export type ThreatDto = { 
+/**
+ * Numbers the events in the order their content was decided, across
+ * threat searches: a page keeps the newest, so an update that was on
+ * its way when the board moved can't replace what came after it.
+ */
+seq: number, session: number, 
 /**
  * The position on the board (before the pass).
  */
@@ -21,6 +27,11 @@ finished: boolean,
  */
 line: PvLineDto | null, unavailable: NoThreatDto | null, 
 /**
- * The threat engine failed; the threat search has stopped.
+ * The threat engine failed; the threat search has stopped. It says
+ * nothing more until "Show threat" is turned off and on.
  */
-error: string | null, };
+error: string | null, 
+/**
+ * The `error` is from starting the threat engine.
+ */
+startFailed: boolean, };

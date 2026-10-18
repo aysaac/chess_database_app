@@ -3,6 +3,13 @@
 //! Options: `MultiPV`, `Hash` (ignored), `UCI_ShowWDL`, `Delay` (ms between
 //! depths; searches without limits run until `stop`), `CrashOnGo` (exit
 //! without answering).
+//!
+//! Starts can be scripted, for tests of what runs a second engine (the
+//! app's threat search, ENG-07): with a file `starts.txt` next to the
+//! binary (tests copy it into a folder of their own), the n-th start does
+//! what the n-th word there says: `ok`, `refuse` (exit with status 3 before
+//! the handshake, like an engine that allows one instance) or `slow:<ms>`
+//! (wait that long first). The count is kept in `count.txt` next to it.
 
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
@@ -183,7 +190,32 @@ fn go(state: &State, args: &str, input: &Receiver<String>) -> Option<String> {
     pending
 }
 
+/// Follows `starts.txt` next to the binary, if there is one (see the top).
+fn scripted_start() {
+    let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.to_path_buf())) else {
+        return;
+    };
+    let Ok(script) = std::fs::read_to_string(dir.join("starts.txt")) else { return };
+    let count = dir.join("count.txt");
+    let n =
+        std::fs::read_to_string(&count).ok().and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(0) + 1;
+    let _ = std::fs::write(&count, n.to_string());
+    match script.split_whitespace().nth(n - 1) {
+        Some("refuse") => {
+            eprintln!("start {n} refused");
+            std::process::exit(3);
+        }
+        Some(word) => {
+            if let Some(ms) = word.strip_prefix("slow:").and_then(|ms| ms.parse().ok()) {
+                std::thread::sleep(Duration::from_millis(ms));
+            }
+        }
+        None => {}
+    }
+}
+
 fn main() {
+    scripted_start();
     let (tx, input) = channel();
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines() {
