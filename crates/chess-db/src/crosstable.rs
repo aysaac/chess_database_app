@@ -12,9 +12,11 @@
 //! - **Who played.** A player named "bye" (any case or brackets) is no
 //!   opponent: the game is a bye for the other side. Games without two
 //!   named players, or with a player against himself, are left out
-//!   (`skipped`). Deleted games are ignored. A game with a round that is in
-//!   the database twice (an index record the same in all but where the game
-//!   is stored: an event imported twice) counts once (`duplicates`).
+//!   (`skipped`). Deleted games are ignored. A game with a round and a board
+//!   or game number ("3.2") that is in the database twice (an index record
+//!   the same in all but where the game is stored: an event imported twice)
+//!   counts once (`duplicates`). Without that number, two games of a match
+//!   can be alike in every index field (the same quick draw).
 //! - **Results.** 1-0, 0-1 and ½-½ count; unfinished games (`*`) are shown
 //!   but count for nothing. A decisive game without a move (and not from a
 //!   set-up position) is a forfeit: it counts for the points and the
@@ -41,8 +43,10 @@
 //!   whether the player won their last match (the third-place match), so
 //!   players knocked out in the same round share places (points order them
 //!   within). A match level on points (an armageddon draw, or tie-breaks
-//!   missing) goes to the player who played on; when neither did, its
-//!   players share their places and `level_matches` counts it.
+//!   missing) goes to the player who played on (when both did, before a
+//!   third-place match, by who their next opponents were). One the games
+//!   don't settle (`level_matches`) puts its players between that round's
+//!   winners and losers, sharing places, whatever they played after it.
 //! - **Size.** Editions over [`MAX_PLAYERS`] players or [`MAX_GAMES`] games
 //!   get no table. Tables that would have more than [`MAX_CELLS`] cells
 //!   with their results get the standings only (`per_game` false, no
@@ -79,7 +83,10 @@ pub const STANDINGS_COLUMNS: u64 = 10;
 pub const MAX_ROUND_ROBIN: usize = 64;
 /// Percent of all pairs of players that must have met for a round robin
 /// (fewer will do when the rounds were as many as the players less one).
-/// A Swiss of r rounds meets r / (players − 1) of them.
+/// A Swiss of r rounds meets r / (players − 1) of them. So a round robin
+/// part way through (6 of 9 rounds: 67%) reads as a Swiss: its pairings
+/// look like a Swiss's, and pairing by score doesn't tell them apart either,
+/// as Swiss events in the database often have only their top boards.
 pub const ROUND_ROBIN_PAIRS: usize = 85;
 /// Days without a game that separate two editions of an event.
 pub const EDITION_GAP_DAYS: u32 = 180;
@@ -523,8 +530,9 @@ fn standings<'a>(
             }
         };
         // The same game again (an event imported twice). Not without a
-        // round: online games between two players can look alike.
-        if r.round != 0 && !seen.insert(same_game(&r)) {
+        // board or game number: online games between two players, or the
+        // games of a match recorded as Round "1", can look alike.
+        if r.round != 0 && r.subround != 0 && !seen.insert(same_game(&r)) {
             duplicates += 1;
             continue;
         }
@@ -744,10 +752,11 @@ fn same_game(r: &IndexRecord) -> IndexRecord {
 }
 
 /// A knock-out's rank keys and its unsettled level matches: for each
-/// player, the stage reached (twice the round of the first match lost;
-/// never lost: twice the last round, plus 1 when that match was won) and
-/// whether the last match was won (the third-place match). See the module
-/// docs.
+/// player, the stage reached and whether a match after the one lost was
+/// won (the third-place match). The stage of round r: 3r for losing its
+/// match, 3r + 1 for a level one the games don't settle (what the player
+/// played after it doesn't count: they don't say who went through), 3r + 2
+/// for winning it as the last match. See the module docs.
 fn knock_out_stages(raw: &HashMap<u32, Vec<Raw>>) -> (HashMap<u32, [u32; 2]>, u32) {
     // Each player's matches: round → (opponent, own half points, the opponent's).
     let mut matches: HashMap<u32, BTreeMap<u16, (u32, u32, u32)>> = HashMap::new();
@@ -808,14 +817,18 @@ fn knock_out_stages(raw: &HashMap<u32, Vec<Raw>>) -> (HashMap<u32, [u32; 2]>, u3
     let stages = matches
         .iter()
         .map(|(&p, m)| {
-            let first_lost = m.keys().find(|&&r| result[&(p, r)] == Ordering::Less);
-            let last = m.keys().next_back().map(|&r| (r, result[&(p, r)] == Ordering::Greater));
-            let stage = match (first_lost, last) {
-                (Some(&r), _) => 2 * u32::from(r),
-                (None, Some((r, won))) => 2 * u32::from(r) + u32::from(won),
-                (None, None) => 0,
+            // The first match not won: lost, or level and unsettled.
+            let out = m.keys().find(|&&r| result[&(p, r)] != Ordering::Greater);
+            let key = match out {
+                Some(&r) if result[&(p, r)] == Ordering::Less => {
+                    let last = m.keys().next_back().filter(|&&last| last > r);
+                    let third = last.is_some_and(|&last| result[&(p, last)] == Ordering::Greater);
+                    [3 * u32::from(r), u32::from(third)]
+                }
+                Some(&r) => [3 * u32::from(r) + 1, 0],
+                None => [m.keys().next_back().map_or(0, |&r| 3 * u32::from(r) + 2), 0],
             };
-            (p, [stage, u32::from(last.is_some_and(|(_, won)| won))])
+            (p, key)
         })
         .collect();
     (stages, level)
@@ -1434,6 +1447,110 @@ mod tests {
         assert_eq!(s.pairing, Pairing::KnockOut);
         assert_eq!(places(&db, &s), place_list(&[("P", 1, 1), ("R", 2, 2), ("Q", 3, 3), ("S", 4, 4)]));
         assert_eq!(s.level_matches, 0);
+    }
+
+    /// R2-1 of the review: a level match the games don't settle ranks its
+    /// players between that round's winners and losers, and nothing they
+    /// played after it counts. Settled ones don't change.
+    #[test]
+    fn unsettled_level_matches_rank_between_winners_and_losers() {
+        let mut all = String::new();
+        // Both semi-finals level, then the final and the third-place match:
+        // the games don't say which match was the final.
+        for (r, w, b, res) in [
+            ("1.1", "A", "D", "1-0"),
+            ("1.2", "D", "A", "1-0"),
+            ("1.1", "B", "C", "1/2-1/2"),
+            ("1.2", "C", "B", "1/2-1/2"),
+            ("2.1", "A", "B", "1-0"),
+            ("2.2", "B", "A", "1/2-1/2"),
+            ("2.1", "C", "D", "1-0"),
+            ("2.2", "D", "C", "1/2-1/2"),
+        ] {
+            all += &pgn("Semi-finals level", "2023.08.01", r, w, b, res);
+        }
+        // A weekly issue ending mid-round: two matches won, two level (their
+        // tie-breaks still to come).
+        for (r, w, b, res) in [
+            ("1.1", "A", "B", "1-0"),
+            ("1.2", "B", "A", "1/2-1/2"),
+            ("1.1", "C", "D", "1/2-1/2"),
+            ("1.2", "D", "C", "0-1"),
+            ("1.1", "E", "F", "1-0"),
+            ("1.2", "F", "E", "1-0"),
+            ("1.1", "G", "H", "1/2-1/2"),
+            ("1.2", "H", "G", "1/2-1/2"),
+        ] {
+            all += &pgn("Mid-round", "2023.09.01", r, w, b, res);
+        }
+        // A quarter-final level, its winner known from who played on.
+        for (r, w, b, res) in [
+            ("1.1", "A", "B", "1-0"),
+            ("1.2", "B", "A", "1/2-1/2"),
+            ("1.1", "C", "D", "1-0"),
+            ("1.2", "D", "C", "1/2-1/2"),
+            ("1.1", "E", "H", "1-0"),
+            ("1.2", "H", "E", "1-0"),
+            ("1.1", "F", "G", "1-0"),
+            ("1.2", "G", "F", "1/2-1/2"),
+            ("2.1", "A", "C", "1-0"),
+            ("2.2", "C", "A", "1/2-1/2"),
+            ("2.1", "E", "F", "1-0"),
+            ("2.2", "F", "E", "1/2-1/2"),
+            ("3.1", "A", "E", "1-0"),
+            ("3.2", "E", "A", "1/2-1/2"),
+        ] {
+            all += &pgn("Quarter-final level", "2023.10.01", r, w, b, res);
+        }
+        let (_d, db) = db_of(&all);
+        let s = table(&db, "Semi-finals level").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::KnockOut);
+        assert_eq!(s.level_matches, 2);
+        assert!(s.players.iter().all(|p| (p.rank, p.rank_to) == (1, 4)), "{:?}", places(&db, &s));
+
+        let s = table(&db, "Mid-round").standings.unwrap();
+        assert_eq!(s.level_matches, 2);
+        let ranks: Vec<(u32, u32)> = s.players.iter().map(|p| (p.rank, p.rank_to)).collect();
+        assert_eq!(ranks, [(1, 2), (1, 2), (3, 6), (3, 6), (3, 6), (3, 6), (7, 8), (7, 8)]);
+        let group = |from: usize, to: usize| {
+            let mut names: Vec<String> = s.players[from..to].iter().map(|p| name(&db, p.player)).collect();
+            names.sort();
+            names.join(" ")
+        };
+        assert_eq!((group(0, 2), group(2, 6), group(6, 8)), ("A C".into(), "E F G H".into(), "B D".into()));
+
+        let s = table(&db, "Quarter-final level").standings.unwrap();
+        assert_eq!(s.level_matches, 0);
+        let ranks: Vec<(String, u32, u32)> = places(&db, &s);
+        assert_eq!(ranks[..3], place_list(&[("A", 1, 1), ("E", 2, 2), ("C", 3, 4)])[..]);
+        assert_eq!(by_name(&db, &s, "H").rank, 5, "out in the quarter-finals: 5–8");
+        assert_eq!(by_name(&db, &s, "H").rank_to, 8);
+    }
+
+    /// R2-4 of the review: the games of a match recorded without game
+    /// numbers (Round "1" for all) can be alike in every index field; they
+    /// are two games, not one in the database twice.
+    #[test]
+    fn games_without_a_game_number_are_never_duplicates() {
+        let e = "No game numbers";
+        let d = "2024.04.04";
+        let rep = "1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. O-O Nxe4 5. Re1 Nd6 6. Nxe5 Be7 7. Bf1 Nxe5";
+        let all = [
+            game(e, d, "1", ("A", 0), ("B", 0), "1/2-1/2", rep),
+            game(e, d, "1", ("B", 0), ("A", 0), "1-0", "1. d4 d5 2. c4 e6"),
+            game(e, d, "1", ("A", 0), ("B", 0), "1/2-1/2", rep),
+            game(e, d, "1", ("B", 0), ("A", 0), "1/2-1/2", "1. c4 e5"),
+            game(e, d, "1", ("C", 0), ("D", 0), "1-0", "1. e4 e5"),
+            game(e, d, "1", ("D", 0), ("C", 0), "1/2-1/2", "1. e4 e5"),
+            game(e, d, "2", ("B", 0), ("C", 0), "1-0", "1. e4 e5"),
+            game(e, d, "2", ("C", 0), ("B", 0), "1/2-1/2", "1. e4 e5"),
+        ]
+        .concat();
+        let (_d, db) = db_of(&all);
+        let s = table(&db, e).standings.unwrap();
+        assert_eq!((s.games, s.duplicates), (8, 0));
+        let a = by_name(&db, &s, "A");
+        assert_eq!((a.games, a.half_points), (4, 3), "four games, 1½ points");
     }
 
     /// R1-3 of the review: events with mini-matches in a round that aren't

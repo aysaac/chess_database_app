@@ -357,15 +357,17 @@ impl AppState {
     }
 
     /// Limits the list of `handle` to `filter`, and remembers it for the next
-    /// time the database is opened (QOL-07).
+    /// time the database is opened (QOL-07). A filter without steps can't be
+    /// made again (a cross-table edition's games, DB-16): it's for this
+    /// session, and the saved filter is forgotten.
     pub fn set_filter(&self, handle: u32, filter: ActiveFilter) {
-        let saved = filter.saved();
+        let saved = (!filter.steps.is_empty()).then(|| filter.saved());
         {
             let mut filters = self.filters.lock().expect("filters lock");
             filters.insert(handle, filter);
             self.filter_generation.fetch_add(1, Ordering::Relaxed);
         }
-        self.remember_filter(handle, Some(saved));
+        self.remember_filter(handle, saved);
     }
 
     /// Shows all games of `handle` again, next time too.
@@ -550,6 +552,25 @@ mod tests {
         state.set_filter(other, ActiveFilter::new(vec![], "y".into(), vec![step("y")]));
         assert!(state.db_view(other).is_err());
         assert_eq!(Settings::load(&config).database_views.len(), 1);
+    }
+
+    /// R2-3 of the DB-16 review: a filter for this session only saves no
+    /// filter, so reopening shows all games without a "Restoring" message.
+    #[test]
+    fn a_filter_without_steps_is_not_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let state = AppState::default();
+        state.init_dirs(config.clone(), dir.path().join("data"));
+        let handle = state.add_db(Database::create(&dir.path().join("A")).unwrap(), DbUse::List);
+        let path = state.list_path(handle).unwrap();
+        state.set_filter(handle, ActiveFilter::new(vec![1], "“x”".into(), vec![step("x")]));
+        assert!(state.db_view(handle).unwrap().filter.is_some());
+        state.set_filter(handle, ActiveFilter::new(vec![2], "Event: X (2020)".into(), Vec::new()));
+        assert_eq!(state.filters.lock().unwrap()[&handle].description, "Event: X (2020)", "it's the list's");
+        assert_eq!(state.db_view(handle).unwrap().filter, None, "and nothing is saved");
+        assert_eq!(Settings::load(&config).db_view(&path).unwrap().filter, None);
+        assert_eq!(crate::dto::DbViewDto::from(&state.db_view(handle).unwrap()).filter, None);
     }
 
     #[test]

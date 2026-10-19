@@ -8,10 +8,10 @@
 // the places they share), a knock-out with a third-place match, an event
 // with two editions (a double round robin) and Show games listing the one
 // shown, and light mode. With testdata/large/twic1600.pgn it tries real
-// TWIC events (a round robin, a 597-player Swiss, a knock-out with level
-// matches), and with the 1M Lichess games (__BIG__) an event too big for a
-// table, one too big for its results (standings only) and an online arena,
-// timed.
+// TWIC events (a round robin, a 597-player Swiss, a knock-out whose level
+// matches rank between its winners and losers), and with the 1M Lichess
+// games (__BIG__) an event too big for a table, one too big for its results
+// (standings only) and an online arena, timed.
 //
 // The main window is the library (DB-07): there the driver only opens an
 // editor window, which runs the same script and does the checks.
@@ -248,6 +248,9 @@
     await until(() => !dialog() && db.info?.filter?.count === 6, "the list limited to the edition's 6 games");
     expect(listTab("games").getAttribute("aria-selected") === "true", "the game list showing");
     expect(db.info.filter.description === "Event: Club Championship (2023)", "the filter, got " + db.info.filter.description);
+    // For this session only: nothing to restore on reopening.
+    const saved = (await api.dbView(db.info.handle)).filter;
+    expect(saved === null, "no saved filter for an edition, got " + saved);
     await db.clearFilter();
 
     // ---- Real events from TWIC, when the file is there.
@@ -277,6 +280,9 @@
       // Round 1's tie-breaks aren't in this issue: its level matches are noted.
       const knotes = text($(".cross .notes"));
       expect(/^\d+ matches ended level on points/.test(knotes), "the note on level matches, got " + knotes);
+      // Their players between round 1's winners and its losers.
+      const groups = [...new Set(column("pos"))].join(" ");
+      expect(groups === "1–32 33–54 55–86", "winners, level matches, losers, got " + groups);
       await shot("09-twic-knock-out");
       await closeDialog();
     } else {
