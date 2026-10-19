@@ -10,30 +10,37 @@
 //!   ratings, pages or start times differ.)
 //! - **Fuzzy copies** (optional) have the same players, allowing for how
 //!   names are written ("Carlsen, Magnus", "Carlsen, M.", "Magnus Carlsen",
-//!   "Magnus Carlsen (NOR)"; a name with digits, such as an engine's
-//!   "Stockfish 16 64-bit", must be written the same); dates, results,
-//!   rounds (with the board or game after the dot: "5.1" and "5.3" are two
-//!   games), players' ratings, Site URLs (one per online game) and game ids
-//!   that agree where both copies have them; and the same main line, or one
-//!   that is the start of the other (a source that stopped early). That one
-//!   has at least 10 moves, both dates have the year, and it lacks only the
-//!   last move or shares the event, the round or the full date with the
-//!   other: a short draw that follows another game's opening is a game of
-//!   its own. Copies shorter than 10 moves also need the same full date.
-//!   Event and Site names may differ, and one copy may lack the ratings.
+//!   "Magnus Carlsen (NOR)", "Cervantes Landeiro, T." and "Thalia Cervantes
+//!   Landeiro": the surname's last word and the first initial; a name with
+//!   digits, such as an engine's "Stockfish 16 64-bit", must have the same
+//!   words); dates, results, rounds (with the board or game after the dot:
+//!   "5.1" and "5.3" are two games), players' ratings, Site URLs (one per
+//!   online game) and game ids that agree where both copies have them; and
+//!   the same main line, or one that is the start of the other (a source
+//!   that stopped early, with 10 moves at least and the year in both
+//!   dates). Unless the game has 20 moves or more and its moves all agree
+//!   (one copy may lack the last move), the copies also share the event,
+//!   the round or the full date: players repeat a known draw, or follow
+//!   another game's opening, in another event the same year. Copies shorter
+//!   than 10 moves need the same full date. Event and Site names may
+//!   differ, and one copy may lack the ratings.
 //! - **Games of one move or none** (a forfeit, a placeholder for a missing
 //!   game, an odds game recorded by its first move) say nothing by their
-//!   moves. They are never fuzzy copies, and exact copies only between two
-//!   known players (not "NN", "BYE"…) with the round, or a page or id of
-//!   their own (an online game): a team's forfeits ("NN – NN 0-1") or a
-//!   day's odds games look alike but are different games.
+//!   moves. They are exact copies only between two known players (not
+//!   "NN", "BYE"…) with the round, or a page or id of their own (an online
+//!   game): a team's forfeits ("NN – NN 0-1") or a day's odds games look
+//!   alike but are different games. As fuzzy copies they're only a record
+//!   of a game without its moves, without annotations, next to the one game
+//!   with moves that has the same known players, event, full date, round
+//!   with its board, and result.
 //!
 //! Each group keeps one copy: the one with the longest main line; then the
-//! most variations, comments, symbols and arrows; then the most complete
-//! headers; then the most clock and eval commands; then the first in the
-//! database. The others are the ones to delete, and none of them has
-//! anything the kept game lacks: a copy with annotations of its own (a
-//! different comment, a shorter copy that is annotated) is no copy. Every
+//! most variations, comments, symbols and arrows; then the most clock and
+//! eval commands; then the most complete headers; then the first in the
+//! database. The others are the ones to delete, and none of them has moves
+//! or annotations the kept game lacks: a copy with annotations or commands
+//! of its own (a different comment, a broadcast's clock times, a shorter
+//! copy that is annotated) is no copy. Every
 //! one of them is a copy of the kept game itself: fuzzy matches don't chain,
 //! and a game that could be a copy of two different games (the start of
 //! both, or without the headers that tell them apart), or of many games of
@@ -65,6 +72,9 @@ const MIN_PREFIX_PLIES: usize = 20;
 /// Without more in common, a copy that stops early lacks at most this
 /// many plies (the last move): a source that left it out.
 const NEAR_PLIES: usize = 2;
+/// Games whose moves all agree need nothing more in common than the players
+/// and agreeing headers from this many plies (20 moves) on.
+const LONG_PLIES: usize = 40;
 /// Games shorter than this (one move or none) say nothing by their moves.
 const FEW_PLIES: usize = 3;
 /// A fuzzy copy is left alone when more games of its players than this
@@ -181,10 +191,12 @@ fn is_placeholder(plain: &str) -> bool {
 }
 
 /// "Last, First" is PGN's form; without a comma the last word is taken as
-/// the surname ("Magnus Carlsen"). Case, accents, punctuation and brackets
-/// don't count. A name with digits isn't a person's (an engine and its
-/// version, a username): it must be written the same, so all of it is the
-/// key.
+/// the surname ("Magnus Carlsen"). The key is the surname's last word, so a
+/// surname of several words matches either way ("Cervantes Landeiro, T.",
+/// "Thalia Cervantes Landeiro"; "Vachier-Lagrave"). Case, accents,
+/// punctuation and brackets don't count. A name with digits isn't a
+/// person's (an engine and its version, a username): its words must be the
+/// same, in any order ("Szewczyk,M2", "M2 Szewczyk").
 fn player_key(name: &str) -> PlayerKey {
     let plain = plain_name(name);
     if is_placeholder(&plain) {
@@ -192,7 +204,13 @@ fn player_key(name: &str) -> PlayerKey {
     }
     let letters = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
     if plain.chars().any(|c| c.is_ascii_digit()) {
-        return PlayerKey { surname: hash_of(("whole", letters(&plain))).max(1), initial: None };
+        let mut words: Vec<String> = plain
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .map(letters)
+            .filter(|w| !w.is_empty())
+            .collect();
+        words.sort_unstable();
+        return PlayerKey { surname: hash_of(("whole", words)).max(1), initial: None };
     }
     let (surname, given) = match plain.split_once(',') {
         Some((last, first)) => (last, first),
@@ -201,11 +219,9 @@ fn player_key(name: &str) -> PlayerKey {
             None => (plain.as_str(), ""),
         },
     };
-    let surname = letters(surname);
-    if surname.is_empty() {
-        return PlayerKey::default();
-    }
-    PlayerKey { surname: hash_of(&surname).max(1), initial: given.chars().find(|c| c.is_alphanumeric()) }
+    let last = surname.split(|c: char| c.is_whitespace() || c == '-').map(letters).rfind(|w| !w.is_empty());
+    let Some(last) = last else { return PlayerKey::default() };
+    PlayerKey { surname: hash_of(&last).max(1), initial: given.chars().find(|c| c.is_alphanumeric()) }
 }
 
 /// What the comparisons need of the name tables, read once.
@@ -287,9 +303,9 @@ struct Quality {
     plies: u32,
     /// Variations, comments, symbols and arrows.
     notes: u32,
-    headers: u32,
     /// Clock, eval and other commands.
     commands: u32,
+    headers: u32,
     first: Reverse<GameId>,
 }
 
@@ -333,6 +349,25 @@ fn moves_ok(plies: usize, r: &IndexRecord, names: &Names, ids: Option<bool>) -> 
             && (r.round != 0 || names.is_url(r.site) || ids.unwrap_or(true)))
 }
 
+/// The headers that tell a game without its moves (one at most) to be a
+/// record of the game with them, if they're all known (see the module
+/// docs): the players, event, full date, round with its board and result.
+fn record_key(t: &Tags, names: &Names) -> Option<u64> {
+    let known = names.known(t.white)
+        && names.known(t.black)
+        && t.event != 0
+        && full_date(t.date)
+        && t.round != 0
+        && t.subround != 0
+        && t.result != 0;
+    known.then(|| hash_of((t.white, t.black, t.event, t.date, t.round, t.subround, t.result)))
+}
+
+/// A record of a game without its moves: one move at most.
+fn bare(plies: usize) -> bool {
+    plies <= 1
+}
+
 /// A game whose moves were read. Only hashes of the moves are kept: a
 /// million of these take about 80 MB.
 struct Candidate {
@@ -343,8 +378,9 @@ struct Candidate {
     /// Its [`GAME_ID_TAGS`](crate::blob::GAME_ID_TAGS), hashed together
     /// (0 for none).
     game_ids: u64,
-    /// Its annotations ([`BlobDigest::notes_hash`]; 0 for none).
-    notes_hash: u64,
+    /// Its annotations and commands ([`BlobDigest::annotations_hash`]; 0
+    /// for none).
+    annotations: u64,
     quality: Quality,
 }
 
@@ -358,7 +394,7 @@ impl Candidate {
             start,
             line,
             game_ids: if d.game_ids.is_empty() { 0 } else { hash_of(&d.game_ids) },
-            notes_hash: d.notes_hash,
+            annotations: d.annotations_hash,
             quality: Quality {
                 plies: d.mainline.len() as u32,
                 notes: d.notes(),
@@ -391,6 +427,11 @@ fn dates_agree(a: u32, b: u32) -> bool {
     agree(a >> 9, b >> 9) && agree((a >> 5) & 0xf, (b >> 5) & 0xf) && agree(a & 0x1f, b & 0x1f)
 }
 
+/// Two values (rounds, ratings) agree where both are known (not 0).
+fn known_same(x: u16, y: u16) -> bool {
+    x == y || x == 0 || y == 0
+}
+
 /// Game ids agree where both games have the same tag.
 fn ids_agree(a: &[(u8, u64)], b: &[(u8, u64)]) -> bool {
     a.iter().all(|&(tag, value)| b.iter().all(|&(t, v)| t != tag || v == value))
@@ -404,21 +445,21 @@ fn fuzzy_match(a: &Line, b: &Line, names: &Names) -> bool {
         (Some(p), Some(q)) => p == q,
         _ => true,
     };
-    let known_same = |x: u16, y: u16| x == y || x == 0 || y == 0;
     let year = |d: u32| d >> 9 != 0;
     let (short, long) = if a.moves.len() <= b.moves.len() { (a.moves, b.moves) } else { (b.moves, a.moves) };
-    // Something more than the players and the year that they share.
+    // Something more than the players and the year that they share: a long
+    // game whose moves all agree (one may lack the last move), or the event,
+    // the round or the full date.
     let more = (ta.event != 0 && ta.event == tb.event)
         || (ta.round != 0 && ta.round == tb.round)
         || (full_date(ta.date) && ta.date == tb.date);
-    let stops_early = short.len() >= MIN_PREFIX_PLIES
-        && year(ta.date)
-        && year(tb.date)
-        && (long.len() - short.len() <= NEAR_PLIES || more);
+    let enough = more || (short.len() >= LONG_PLIES && long.len() - short.len() <= NEAR_PLIES);
+    let stops_early = short.len() >= MIN_PREFIX_PLIES && year(ta.date) && year(tb.date);
     a.c.start == b.c.start
         && !short.is_empty()
         && long.starts_with(short)
         && (short.len() == long.len() || stops_early)
+        && enough
         && initials(ta.white, tb.white)
         && initials(ta.black, tb.black)
         && dates_agree(ta.date, tb.date)
@@ -432,10 +473,10 @@ fn fuzzy_match(a: &Line, b: &Line, names: &Names) -> bool {
         && ids_agree(a.ids, b.ids)
 }
 
-/// Whether deleting `copy` for `kept` loses nothing: it has no annotations,
-/// or the same moves annotated the same.
+/// Whether deleting `copy` for `kept` loses nothing: it has no annotations
+/// or commands, or the same moves annotated the same.
 fn removable(copy: &Line, kept: &Line) -> bool {
-    copy.c.notes_hash == 0 || (copy.moves == kept.moves && copy.c.notes_hash == kept.c.notes_hash)
+    copy.c.annotations == 0 || (copy.moves == kept.moves && copy.c.annotations == kept.c.annotations)
 }
 
 /// Reports one part of the whole job's progress, in thousandths.
@@ -461,12 +502,17 @@ fn compacted() -> DbError {
 }
 
 /// Sorts exact copies (`run`, the same exact key, best first) into classes
-/// by their annotations: the best copy's, with the copies without any; then
+/// by their annotations and commands: the best copy's, with the copies without any; then
 /// each other annotation, best first. Pushes each class's range of `order`.
-fn split_by_notes(run: &mut [usize], at: usize, copies: &[Candidate], classes: &mut Vec<(usize, usize)>) {
-    let lead = copies[run[0]].notes_hash;
+fn split_by_annotations(
+    run: &mut [usize],
+    at: usize,
+    copies: &[Candidate],
+    classes: &mut Vec<(usize, usize)>,
+) {
+    let lead = copies[run[0]].annotations;
     let class = |i: usize| {
-        let h = copies[i].notes_hash;
+        let h = copies[i].annotations;
         if h == 0 || h == lead { 0 } else { h }
     };
     // Stable: each class keeps its best copy first.
@@ -499,6 +545,8 @@ pub fn find_duplicates(
     let mut exact: Vec<(u64, GameId)> = Vec::new();
     // (players, site, game)
     let mut fuzzy: Vec<(u64, u32, GameId)> = Vec::new();
+    // (record key, has moves, game): records of a game without its moves.
+    let mut bare_records: Vec<(u64, bool, GameId)> = Vec::new();
     let mut games = 0u32;
     let mut start = 0;
     while start < count {
@@ -516,11 +564,18 @@ pub fn find_duplicates(
                 continue;
             }
             exact.push((hash_of(Tags::of(r)), id));
+            let plies = usize::from(r.plies);
             if options.fuzzy
-                && usize::from(r.plies) >= FEW_PLIES
+                && plies >= FEW_PLIES
                 && let Some(key) = names.players_key(r.white, r.black)
             {
                 fuzzy.push((key, r.site, id));
+            }
+            if options.fuzzy
+                && (bare(plies) || plies >= FEW_PLIES)
+                && let Some(key) = record_key(&Tags::of(r), &names)
+            {
+                bare_records.push((key, plies >= FEW_PLIES, id));
             }
         }
         start = start.saturating_add(CHUNK);
@@ -545,6 +600,13 @@ pub fn find_duplicates(
         }
     }
     drop(fuzzy);
+    bare_records.sort_unstable();
+    for run in bare_records.chunk_by(|a, b| a.0 == b.0) {
+        if run.iter().any(|r| r.1) && run.iter().any(|r| !r.1) {
+            candidates.extend(run.iter().map(|&(_, _, id)| id));
+        }
+    }
+    drop(bare_records);
     candidates.sort_unstable();
     candidates.dedup();
 
@@ -579,7 +641,7 @@ pub fn find_duplicates(
     while at < order.len() {
         let key = copies[order[at]].exact_key();
         let len = order[at..].iter().take_while(|&&i| copies[i].exact_key() == key).count();
-        split_by_notes(&mut order[at..at + len], at, &copies, &mut bounds);
+        split_by_annotations(&mut order[at..at + len], at, &copies, &mut bounds);
         at += len;
     }
     let classes: Vec<&[usize]> = bounds.iter().map(|&(from, to)| &order[from..to]).collect();
@@ -658,6 +720,7 @@ pub fn find_duplicates(
         for bucket in &open {
             merged.extend(cluster(bucket, &classes, &line, &names, &mut tick)?);
         }
+        attach_bare_records(&mut merged, &classes, &copies, &names);
     } else {
         merged.extend((0..classes.len()).map(|ci| vec![ci]));
     }
@@ -680,6 +743,56 @@ pub fn find_duplicates(
     groups.sort_unstable_by_key(|g| g.keep.min(g.remove[0]));
     progress.report(1000, 1000);
     Ok(Duplicates { groups, games, compared, generation })
+}
+
+/// Records of a game without its moves (one at most), without annotations,
+/// join the group that the game with moves leads, if it's the only game
+/// with their [`record_key`] and the ratings agree where both have them.
+/// The game is kept; a game that is itself another's copy takes none.
+fn attach_bare_records(
+    merged: &mut Vec<Vec<usize>>,
+    classes: &[&[usize]],
+    copies: &[Candidate],
+    names: &Names,
+) {
+    // Each class's group, and whether it leads it.
+    let mut place = vec![(usize::MAX, false); classes.len()];
+    for (g, group) in merged.iter().enumerate() {
+        for (k, &ci) in group.iter().enumerate() {
+            place[ci] = (g, k == 0);
+        }
+    }
+    // Games with moves and bare records, by record key.
+    let mut by_key: HashMap<u64, (Vec<usize>, Vec<usize>)> = HashMap::new();
+    for (ci, class) in classes.iter().enumerate() {
+        let c = &copies[class[0]];
+        let plies = c.quality.plies as usize;
+        let Some(key) = record_key(&c.tags, names) else { continue };
+        if plies >= FEW_PLIES {
+            by_key.entry(key).or_default().0.push(ci);
+        } else if bare(plies) && c.annotations == 0 {
+            by_key.entry(key).or_default().1.push(ci);
+        }
+    }
+    for (games, bare) in by_key.into_values() {
+        let [game] = games[..] else { continue };
+        let (g, leads) = place[game];
+        if !leads {
+            continue;
+        }
+        let kept = &copies[classes[game][0]].tags;
+        for ci in bare {
+            let t = &copies[classes[ci][0]].tags;
+            let (own, _) = place[ci];
+            // A bare record is never fuzzy-matched: alone in its group.
+            let alone = own != g && merged[own].len() == 1;
+            if alone && known_same(kept.white_elo, t.white_elo) && known_same(kept.black_elo, t.black_elo) {
+                merged[g].push(ci);
+                merged[own].clear();
+            }
+        }
+    }
+    merged.retain(|group| !group.is_empty());
 }
 
 /// What a class became while clustering.
@@ -853,6 +966,21 @@ mod tests {
             assert_eq!(key(unknown), PlayerKey::default(), "{unknown:?}");
         }
         assert_ne!(key("Nunn, John").surname, 0, "a real name that starts with nn");
+
+        // R2-4: a surname of several words, either way round.
+        let thalia = key("Cervantes Landeiro, Thalia");
+        assert_eq!(thalia.initial, Some('t'));
+        for same in ["Thalia Cervantes Landeiro", "Landeiro, T.", "CERVANTES LANDEIRO, Thalia (ESP)"] {
+            assert_eq!(key(same), thalia, "{same}");
+        }
+        assert_eq!(key("Van Kemenade, Rudolf"), key("Rudolf Van Kemenade"));
+        assert_eq!(key("Martinez Alcantara, Jose Carlos"), key("Jose Carlos Martinez Alcantara"));
+        assert_eq!(key("Mihevc-Mohr, Narcisa"), key("Narcisa Mihevc Mohr"));
+        assert_ne!(
+            key("Cervantes Landeiro, Thalia"),
+            key("Cervantes Landeiro, Ana"),
+            "the initial still counts"
+        );
     }
 
     /// R1-11: names with digits (engines, usernames) aren't a person's
@@ -868,6 +996,9 @@ mod tests {
             assert_ne!(key(other).surname, stockfish.surname, "{other}");
         }
         assert_ne!(key("Stockfish 16 64-bit").surname, key("Bit, Stockfish").surname);
+        // R2-4: the same words in another order.
+        assert_eq!(key("Szewczyk,M2"), key("M2 Szewczyk"));
+        assert_ne!(key("Szewczyk,M2").surname, key("Szewczyk,M3").surname);
 
         let moves = "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Be3 e5 7. Nb3 Be6 8. f3 Be7 \
                      9. Qd2 O-O 10. O-O-O Nbd7 11. g4 b5";
@@ -943,6 +1074,42 @@ mod tests {
         for fuzzy in [false, true] {
             assert_eq!(find(&db, fuzzy).groups, [group(0, &[2, 3], true), group(1, &[4], true)], "{fuzzy}");
         }
+    }
+
+    /// R2-1: a copy with clock times or evals the other lacks (a broadcast's,
+    /// or the app's own blunder check) is kept over a copy with more headers;
+    /// copies with commands of their own both stay.
+    #[test]
+    fn a_copy_with_clocks_or_evals_is_never_deleted_for_one_without() {
+        let commented = |eval: &str| {
+            let words = LONG.split_whitespace().map(|w| {
+                if w.ends_with('.') { w.to_owned() } else { format!("{w} {{[%clk 1:30:00] [%eval {eval}]}}") }
+            });
+            words.collect::<Vec<_>>().join(" ")
+        };
+        let twic = pgn(
+            "Carlsen,M",
+            "Caruana,F",
+            "2024.01.20",
+            "1/2-1/2",
+            "[WhiteElo \"2830\"]\n[BlackElo \"2804\"]\n[WhiteFideId \"1503014\"]\n[EventDate \"2024.01.13\"]",
+            LONG,
+        );
+        let broadcast = |eval: &str| {
+            pgn("Carlsen, Magnus", "Caruana, Fabiano", "2024.01.20", "1/2-1/2", "", &commented(eval))
+                .replace("Open", "Tata Steel Masters 2024")
+        };
+        let (_d, db) = db_of(&[twic.clone(), broadcast("0.3")]);
+        assert_eq!(find(&db, true).groups, [group(1, &[0], false)], "the copy with the clocks is kept");
+        let (_d, db) = db_of(&[broadcast("0.3"), broadcast("0.2")]);
+        for fuzzy in [false, true] {
+            assert_eq!(find(&db, fuzzy).groups, [], "evals of their own, fuzzy: {fuzzy}");
+        }
+        let plain = pgn("Carlsen, Magnus", "Caruana, Fabiano", "2024.01.20", "1/2-1/2", "", LONG);
+        let analysed =
+            pgn("Carlsen, Magnus", "Caruana, Fabiano", "2024.01.20", "1/2-1/2", "", &commented("0.3"));
+        let (_d, db) = db_of(&[plain, analysed]);
+        assert_eq!(find(&db, false).groups, [group(1, &[0], true)], "exact copies: the analysed one is kept");
     }
 
     #[test]
@@ -1275,6 +1442,94 @@ mod tests {
         let last_move_less = FULL.trim_end_matches(" Bf6");
         let (_d, db) = db_of(&[game("AUT-chT", FULL), game("Austria", last_move_less)]);
         assert_eq!(find(&db, true).groups, [group(0, &[1], false)]);
+    }
+
+    /// R2-2: the same short draw (22 plies) by the same players in two
+    /// events of one year is two games, unless they share the event, the
+    /// round or the day; from 20 moves on, moves that all agree are enough.
+    #[test]
+    fn the_same_short_draw_in_two_events() {
+        let draw = "1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. O-O Nxe4 5. Re1 Nd6 6. Nxe5 Be7 7. Bf1 Nxe5 \
+                    8. Rxe5 O-O 9. d4 Bf6 10. Re1 Re8 11. Rxe8+ Nxe8";
+        let bundesliga = |round: &str, moves: &str| {
+            pgn("Meier, Georg", "Naiditsch, Arkadij", "2019.??.??", "1/2-1/2", "", moves)
+                .replace("Open", "Bundesliga 1819")
+                .replace("Round \"3\"", &format!("Round \"{round}\""))
+        };
+        let dortmund = |moves: &str| {
+            pgn("Meier, Georg", "Naiditsch, Arkadij", "2019.07.02", "1/2-1/2", "[WhiteElo \"2628\"]", moves)
+                .replace("Open", "Dortmund Sparkassen")
+                .replace("Round \"3\"", "Round \"5\"")
+        };
+        let (_d, db) = db_of(&[bundesliga("?", draw), dortmund(draw)]);
+        assert_eq!(find(&db, true).groups, []);
+        // The same round: one game from two sources.
+        let (_d, db) = db_of(&[bundesliga("5", draw), dortmund(draw)]);
+        assert_eq!(find(&db, true).groups, [group(1, &[0], false)]);
+        // A long game: its moves are enough, or all but the last.
+        let (_d, db) = db_of(&[bundesliga("?", FULL), dortmund(FULL)]);
+        assert_eq!(find(&db, true).groups, [group(1, &[0], false)]);
+        let (_d, db) = db_of(&[bundesliga("?", FULL.trim_end_matches(" Bf6")), dortmund(FULL)]);
+        assert_eq!(find(&db, true).groups, [group(1, &[0], false)]);
+        // A copy of 24 plies lacking the last one isn't, without more.
+        let (_d, db) = db_of(&[bundesliga("?", LONG.trim_end_matches(" Re8")), dortmund(LONG)]);
+        assert_eq!(find(&db, true).groups, []);
+    }
+
+    /// R2-3: Mega Database's records of a game without its moves next to the
+    /// game with them (Kivisto–Kosmo, FIN-chT 0910, round 9 board 1): fuzzy
+    /// copies. A record with a comment, of another board, without the board,
+    /// of placeholders, with another rating, or next to two games, stays.
+    #[test]
+    fn a_record_of_a_game_without_its_moves() {
+        let game = |white: &str, round: &str, moves: &str| {
+            pgn(white, "Kosmo, Tero", "2010.03.14", "1-0", "", moves)
+                .replace("Open", "FIN-chT 0910")
+                .replace("Round \"3\"", &format!("Round \"{round}\""))
+        };
+        let kivisto = |round: &str, moves: &str| game("Kivisto, Ilmari", round, moves);
+        let (_d, db) = db_of(&[kivisto("9.1", FULL), kivisto("9.1", "")]);
+        assert_eq!(find(&db, false).groups, [], "not an exact copy");
+        assert_eq!(find(&db, true).groups, [group(0, &[1], false)]);
+        let (_d, db) = db_of(&[kivisto("9.1", "1. e4"), kivisto("9.1", ""), kivisto("9.1", FULL)]);
+        assert_eq!(find(&db, true).groups, [group(2, &[0, 1], false)], "the game is kept");
+
+        let rated =
+            |game: String, elo: &str| game.replace("[Result", &format!("[WhiteElo \"{elo}\"]\n[Result"));
+        for (what, games) in [
+            ("a comment", [kivisto("9.1", FULL), kivisto("9.1", "{kampflos}")]),
+            ("another board", [kivisto("9.1", FULL), kivisto("9.2", "")]),
+            ("no board", [kivisto("9", FULL), kivisto("9", "")]),
+            ("placeholders", [game("NN", "9.1", FULL), game("NN", "9.1", "")]),
+            ("another rating", [rated(kivisto("9.1", FULL), "2400"), rated(kivisto("9.1", ""), "2300")]),
+            (
+                "no day",
+                [
+                    kivisto("9.1", FULL).replace("2010.03.14", "2010.03.??"),
+                    kivisto("9.1", "").replace("2010.03.14", "2010.03.??"),
+                ],
+            ),
+        ] {
+            let (_d, db) = db_of(&games);
+            assert_eq!(find(&db, true).groups, [], "{what}");
+        }
+        let other = kivisto("9.1", &LONG.replace("Re8", "h6"));
+        let (_d, db) = db_of(&[kivisto("9.1", FULL), other, kivisto("9.1", "")]);
+        assert_eq!(find(&db, true).groups, [], "next to two games");
+    }
+
+    /// R2-4: TWIC's multi-word surnames, written either way round, and a
+    /// name with digits whose words come in another order.
+    #[test]
+    fn surnames_of_several_words_and_reordered_names() {
+        let game = |white: &str, black: &str| pgn(white, black, "2023.04.12", "1-0", "", LONG);
+        let (_d, db) = db_of(&[
+            game("Cervantes Landeiro, Thalia", "Van Kemenade, Rudolf"),
+            game("Thalia Cervantes Landeiro", "Rudolf Van Kemenade").replace("Open", "Open (other source)"),
+            game("Szewczyk,M2", "Martinez Alcantara, Jose Carlos"),
+            game("M2 Szewczyk", "Jose Carlos Martinez Alcantara").replace("Open", "Open (other source)"),
+        ]);
+        assert_eq!(find(&db, true).groups, [group(0, &[1], false), group(2, &[3], false)]);
     }
 
     #[test]

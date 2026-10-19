@@ -50,8 +50,9 @@
   <p class="intro">
     Copies of the same game in <strong>{db.info?.name ?? "the database"}</strong>, as importing a
     file twice or merging two sources leaves. Each group keeps its best copy (the longest, then the
-    one with the most variations, comments and symbols, then the most complete headers); the others
-    can be marked as deleted. A copy with annotations of its own is never one of them.
+    one with the most variations, comments and symbols, then clock times and evals, then the most
+    complete headers); the others can be marked as deleted. A copy with annotations, clock times or
+    evals of its own is never one of them.
   </p>
   <fieldset disabled={!!working}>
     <legend>What counts as a copy</legend>
