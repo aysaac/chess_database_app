@@ -11,17 +11,19 @@
 //! - **Fuzzy copies** (optional) have the same players, allowing for how
 //!   names are written ("Carlsen, Magnus", "Carlsen, M.", "Magnus Carlsen",
 //!   "Magnus Carlsen (NOR)", "Cervantes Landeiro, T." and "Thalia Cervantes
-//!   Landeiro": the surname's last word and the first initial; a name with
-//!   digits, such as an engine's "Stockfish 16 64-bit", must have the same
-//!   words); dates, results, rounds (with the board or game after the dot:
+//!   Landeiro": the surname's last word and the first initial, one surname's
+//!   words ending the other's, so "Garcia Martinez" and "Perez Martinez" are
+//!   two people; a name with digits, such as an engine's "Stockfish 16
+//!   64-bit", must have the same words); dates, results, rounds (with the board or game after the dot:
 //!   "5.1" and "5.3" are two games), players' ratings, Site URLs (one per
 //!   online game) and game ids that agree where both copies have them; and
 //!   the same main line, or one that is the start of the other (a source
 //!   that stopped early, with 10 moves at least and the year in both
 //!   dates). Unless the game has 20 moves or more and its moves all agree
 //!   (one copy may lack the last move), the copies also share the event,
-//!   the round or the full date: players repeat a known draw, or follow
-//!   another game's opening, in another event the same year. Copies shorter
+//!   the full date, or the round in the same month: players repeat a known
+//!   draw, or follow another game's opening, in another event the same
+//!   year, and a round number across two events is chance. Copies shorter
 //!   than 10 moves need the same full date. Event and Site names may
 //!   differ, and one copy may lack the ratings.
 //! - **Games of one move or none** (a forfeit, a placeholder for a missing
@@ -32,7 +34,7 @@
 //!   alike but are different games. As fuzzy copies they're only a record
 //!   of a game without its moves, without annotations, next to the one game
 //!   with moves that has the same known players, event, full date, round
-//!   with its board, and result.
+//!   with its board, and result, and starts where it does with its move.
 //!
 //! Each group keeps one copy: the one with the longest main line; then the
 //! most variations, comments, symbols and arrows; then the most clock and
@@ -40,7 +42,10 @@
 //! database. The others are the ones to delete, and none of them has moves
 //! or annotations the kept game lacks: a copy with annotations or commands
 //! of its own (a different comment, a broadcast's clock times, a shorter
-//! copy that is annotated) is no copy. Every
+//! copy that is annotated) is no copy. Nor is a copy with a rating, round
+//! or board, ECO, date, event or site the kept game lacks: those fields of
+//! the index record are what searches, sorts and the Reference tab use
+//! (other tags may be lost; merging headers isn't done yet). Every
 //! one of them is a copy of the kept game itself: fuzzy matches don't chain,
 //! and a game that could be a copy of two different games (the start of
 //! both, or without the headers that tell them apart), or of many games of
@@ -190,17 +195,50 @@ fn is_placeholder(plain: &str) -> bool {
     words.first().is_none_or(|first| PLACEHOLDERS.contains(&first.as_str())) || words.iter().any(nn)
 }
 
+/// A player's name as fuzzy matching sees it: its [`PlayerKey`], and the
+/// words its surname is to end with (hashed): the surname's words for
+/// "Last, First", every word of a name without a comma (its surname is
+/// some of the last ones), none for a name with digits (the key is all of
+/// it).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PlayerName {
+    key: PlayerKey,
+    comma: bool,
+    words: Box<[u64]>,
+}
+
+impl PlayerName {
+    /// Whether the surnames can be one (their last words are, by the key):
+    /// one surname's words end the other's ("Landeiro" and "Cervantes
+    /// Landeiro"; "Thalia Cervantes Landeiro"), not two surnames that only
+    /// share their last word ("Garcia Martinez", "Perez Martinez").
+    fn same_surname(&self, other: &PlayerName) -> bool {
+        match (self.comma, other.comma) {
+            (false, false) => true,
+            (true, false) => other.words.ends_with(&self.words),
+            (false, true) => self.words.ends_with(&other.words),
+            (true, true) => self.words.ends_with(&other.words) || other.words.ends_with(&self.words),
+        }
+    }
+}
+
+#[cfg(test)]
+fn player_key(name: &str) -> PlayerKey {
+    player_name(name).key
+}
+
 /// "Last, First" is PGN's form; without a comma the last word is taken as
 /// the surname ("Magnus Carlsen"). The key is the surname's last word, so a
 /// surname of several words matches either way ("Cervantes Landeiro, T.",
-/// "Thalia Cervantes Landeiro"; "Vachier-Lagrave"). Case, accents,
-/// punctuation and brackets don't count. A name with digits isn't a
-/// person's (an engine and its version, a username): its words must be the
-/// same, in any order ("Szewczyk,M2", "M2 Szewczyk").
-fn player_key(name: &str) -> PlayerKey {
+/// "Thalia Cervantes Landeiro"; "Vachier-Lagrave"), as long as one ends the
+/// other ([`PlayerName::same_surname`]). Case, accents, punctuation and
+/// brackets don't count. A name with digits isn't a person's (an engine and
+/// its version, a username): its words must be the same, in any order
+/// ("Szewczyk,M2", "M2 Szewczyk").
+fn player_name(name: &str) -> PlayerName {
     let plain = plain_name(name);
     if is_placeholder(&plain) {
-        return PlayerKey::default();
+        return PlayerName::default();
     }
     let letters = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
     if plain.chars().any(|c| c.is_ascii_digit()) {
@@ -210,7 +248,8 @@ fn player_key(name: &str) -> PlayerKey {
             .filter(|w| !w.is_empty())
             .collect();
         words.sort_unstable();
-        return PlayerKey { surname: hash_of(("whole", words)).max(1), initial: None };
+        let key = PlayerKey { surname: hash_of(("whole", words)).max(1), initial: None };
+        return PlayerName { key, comma: false, words: Box::default() };
     }
     let (surname, given) = match plain.split_once(',') {
         Some((last, first)) => (last, first),
@@ -219,14 +258,20 @@ fn player_key(name: &str) -> PlayerKey {
             None => (plain.as_str(), ""),
         },
     };
-    let last = surname.split(|c: char| c.is_whitespace() || c == '-').map(letters).rfind(|w| !w.is_empty());
-    let Some(last) = last else { return PlayerKey::default() };
-    PlayerKey { surname: hash_of(&last).max(1), initial: given.chars().find(|c| c.is_alphanumeric()) }
+    let words_of = |s: &str| -> Vec<String> {
+        s.split(|c: char| c.is_whitespace() || c == '-').map(letters).filter(|w| !w.is_empty()).collect()
+    };
+    let comma = plain.contains(',');
+    let words = words_of(if comma { surname } else { &plain });
+    let Some(last) = words_of(surname).pop() else { return PlayerName::default() };
+    let key =
+        PlayerKey { surname: hash_of(&last).max(1), initial: given.chars().find(|c| c.is_alphanumeric()) };
+    PlayerName { key, comma, words: words.iter().map(hash_of).collect() }
 }
 
 /// What the comparisons need of the name tables, read once.
 struct Names {
-    players: Vec<PlayerKey>,
+    players: Vec<PlayerName>,
     /// Sites that are a URL (an online game's own page).
     url_sites: Vec<bool>,
 }
@@ -236,14 +281,22 @@ impl Names {
         let players = db.names(NameKind::Player);
         let sites = db.names(NameKind::Site);
         Names {
-            players: (0..players.len() as u32).map(|id| player_key(players.get(id))).collect(),
+            players: (0..players.len() as u32).map(|id| player_name(players.get(id))).collect(),
             url_sites: (0..sites.len() as u32).map(|id| sites.get(id).contains("://")).collect(),
         }
     }
 
     /// Names added since [`read`](Self::read) count as unknown.
     fn player(&self, id: u32) -> PlayerKey {
-        self.players.get(id as usize).copied().unwrap_or_default()
+        self.players.get(id as usize).map(|p| p.key).unwrap_or_default()
+    }
+
+    /// Whether two players' surnames can be one ([`PlayerName::same_surname`]).
+    fn same_surname(&self, a: u32, b: u32) -> bool {
+        match (self.players.get(a as usize), self.players.get(b as usize)) {
+            (Some(a), Some(b)) => a.same_surname(b),
+            _ => false,
+        }
     }
 
     /// A player with a name, not a placeholder.
@@ -381,6 +434,10 @@ struct Candidate {
     /// Its annotations and commands ([`BlobDigest::annotations_hash`]; 0
     /// for none).
     annotations: u64,
+    /// Its ECO code, packed (0 for none): not one of the exact copies' tags.
+    eco: u16,
+    /// Its main line's first move, if any.
+    first_move: Option<u8>,
     quality: Quality,
 }
 
@@ -395,6 +452,8 @@ impl Candidate {
             line,
             game_ids: if d.game_ids.is_empty() { 0 } else { hash_of(&d.game_ids) },
             annotations: d.annotations_hash,
+            eco: rec.eco,
+            first_move: d.mainline.first().copied(),
             quality: Quality {
                 plies: d.mainline.len() as u32,
                 notes: d.notes(),
@@ -449,10 +508,16 @@ fn fuzzy_match(a: &Line, b: &Line, names: &Names) -> bool {
     let (short, long) = if a.moves.len() <= b.moves.len() { (a.moves, b.moves) } else { (b.moves, a.moves) };
     // Something more than the players and the year that they share: a long
     // game whose moves all agree (one may lack the last move), or the event,
-    // the round or the full date.
+    // the full date, or the round in the same month (across two events of a
+    // year, a round number is chance).
+    let month = |d: u32| d >> 5;
     let more = (ta.event != 0 && ta.event == tb.event)
-        || (ta.round != 0 && ta.round == tb.round)
-        || (full_date(ta.date) && ta.date == tb.date);
+        || (full_date(ta.date) && ta.date == tb.date)
+        || (ta.round != 0
+            && ta.round == tb.round
+            && (ta.date >> 5) & 0xf != 0
+            && year(ta.date)
+            && month(ta.date) == month(tb.date));
     let enough = more || (short.len() >= LONG_PLIES && long.len() - short.len() <= NEAR_PLIES);
     let stops_early = short.len() >= MIN_PREFIX_PLIES && year(ta.date) && year(tb.date);
     a.c.start == b.c.start
@@ -462,6 +527,8 @@ fn fuzzy_match(a: &Line, b: &Line, names: &Names) -> bool {
         && enough
         && initials(ta.white, tb.white)
         && initials(ta.black, tb.black)
+        && names.same_surname(ta.white, tb.white)
+        && names.same_surname(ta.black, tb.black)
         && dates_agree(ta.date, tb.date)
         && (short.len() >= SHORT_PLIES || (full_date(ta.date) && ta.date == tb.date))
         && (ta.result == tb.result || ta.result == 0 || tb.result == 0)
@@ -473,10 +540,31 @@ fn fuzzy_match(a: &Line, b: &Line, names: &Names) -> bool {
         && ids_agree(a.ids, b.ids)
 }
 
+/// Whether `kept` has every field of the index record `copy` has: deleting
+/// `copy` mustn't take a game's ratings, round or board, ECO, date, event
+/// or site from it (they're what searches, sorts and the Reference tab
+/// use). Other tags may be lost; merging headers isn't done yet.
+fn covers(kept: &Candidate, copy: &Candidate) -> bool {
+    let (k, c) = (&kept.tags, &copy.tags);
+    let has = |k: u32, c: u32| k != 0 || c == 0;
+    has(k.white_elo.into(), c.white_elo.into())
+        && has(k.black_elo.into(), c.black_elo.into())
+        && has(k.round.into(), c.round.into())
+        && has(k.subround.into(), c.subround.into())
+        && has(kept.eco.into(), copy.eco.into())
+        && has(k.date >> 9, c.date >> 9)
+        && has((k.date >> 5) & 0xf, (c.date >> 5) & 0xf)
+        && has(k.date & 0x1f, c.date & 0x1f)
+        && has(k.event, c.event)
+        && has(k.site, c.site)
+}
+
 /// Whether deleting `copy` for `kept` loses nothing: it has no annotations
-/// or commands, or the same moves annotated the same.
+/// or commands, or the same moves annotated the same, and `kept` has every
+/// field of its index record ([`covers`]).
 fn removable(copy: &Line, kept: &Line) -> bool {
-    copy.c.annotations == 0 || (copy.moves == kept.moves && copy.c.annotations == kept.c.annotations)
+    (copy.c.annotations == 0 || (copy.moves == kept.moves && copy.c.annotations == kept.c.annotations))
+        && covers(kept.c, copy.c)
 }
 
 /// Reports one part of the whole job's progress, in thousandths.
@@ -502,18 +590,22 @@ fn compacted() -> DbError {
 }
 
 /// Sorts exact copies (`run`, the same exact key, best first) into classes
-/// by their annotations and commands: the best copy's, with the copies without any; then
-/// each other annotation, best first. Pushes each class's range of `order`.
+/// by their annotations and commands: the best copy's, with the copies
+/// without any; then each other annotation, best first. A copy with an ECO
+/// code the best copy lacks goes apart too (the only field of the index
+/// record exact copies may differ in, [`covers`]). Pushes each class's
+/// range of `order`.
 fn split_by_annotations(
     run: &mut [usize],
     at: usize,
     copies: &[Candidate],
     classes: &mut Vec<(usize, usize)>,
 ) {
-    let lead = copies[run[0]].annotations;
+    let lead = &copies[run[0]];
     let class = |i: usize| {
         let h = copies[i].annotations;
-        if h == 0 || h == lead { 0 } else { h }
+        let annotations = if h == 0 || h == lead.annotations { 0 } else { h };
+        (annotations, if covers(lead, &copies[i]) { 0 } else { copies[i].eco })
     };
     // Stable: each class keeps its best copy first.
     run.sort_by_key(|&i| class(i));
@@ -747,8 +839,10 @@ pub fn find_duplicates(
 
 /// Records of a game without its moves (one at most), without annotations,
 /// join the group that the game with moves leads, if it's the only game
-/// with their [`record_key`] and the ratings agree where both have them.
-/// The game is kept; a game that is itself another's copy takes none.
+/// with their [`record_key`], starts where they do and with their move, has
+/// the same ratings where both have them and every field of their index
+/// records ([`covers`]). The game is kept; a
+/// game that is itself another's copy takes none.
 fn attach_bare_records(
     merged: &mut Vec<Vec<usize>>,
     classes: &[&[usize]],
@@ -780,13 +874,18 @@ fn attach_bare_records(
         if !leads {
             continue;
         }
-        let kept = &copies[classes[game][0]].tags;
+        let kept = &copies[classes[game][0]];
         for ci in bare {
-            let t = &copies[classes[ci][0]].tags;
+            let record = &copies[classes[ci][0]];
             let (own, _) = place[ci];
             // A bare record is never fuzzy-matched: alone in its group.
             let alone = own != g && merged[own].len() == 1;
-            if alone && known_same(kept.white_elo, t.white_elo) && known_same(kept.black_elo, t.black_elo) {
+            let same_start =
+                record.start == kept.start && record.first_move.is_none_or(|m| kept.first_move == Some(m));
+            let t = &record.tags;
+            let ratings =
+                known_same(kept.tags.white_elo, t.white_elo) && known_same(kept.tags.black_elo, t.black_elo);
+            if alone && same_start && ratings && classes[ci].iter().all(|&i| covers(kept, &copies[i])) {
                 merged[g].push(ci);
                 merged[own].clear();
             }
@@ -1099,7 +1198,13 @@ mod tests {
             pgn("Carlsen, Magnus", "Caruana, Fabiano", "2024.01.20", "1/2-1/2", "", &commented(eval))
                 .replace("Open", "Tata Steel Masters 2024")
         };
+        // R3-1: the broadcast lacks the ratings: neither copy has all the
+        // other has, so both stay.
         let (_d, db) = db_of(&[twic.clone(), broadcast("0.3")]);
+        assert_eq!(find(&db, true).groups, [], "the clocks on one, the ratings on the other");
+        let rated =
+            |game: String| game.replace("[Result", "[WhiteElo \"2830\"]\n[BlackElo \"2804\"]\n[Result");
+        let (_d, db) = db_of(&[twic.clone(), rated(broadcast("0.3"))]);
         assert_eq!(find(&db, true).groups, [group(1, &[0], false)], "the copy with the clocks is kept");
         let (_d, db) = db_of(&[broadcast("0.3"), broadcast("0.2")]);
         for fuzzy in [false, true] {
@@ -1117,8 +1222,9 @@ mod tests {
         let games = [
             // 0: the full game.
             pgn("Carlsen, Magnus", "Caruana, Fabiano", "2024.03.01", "1/2-1/2", "", LONG),
-            // 1: the same game from another source, stopped early.
-            pgn("Carlsen, M.", "Caruana, F.", "2024.??.??", "1/2-1/2", "", CUT)
+            // 1: the same game from another source, stopped early (the round
+            // in the same month).
+            pgn("Carlsen, M.", "Caruana, F.", "2024.03.??", "1/2-1/2", "", CUT)
                 .replace("[Event \"Open\"]", "[Event \"Prague Masters\"]"),
             // 2: the same game, names First Last, no round or site.
             pgn("Magnus Carlsen", "Fabiano Caruana", "2024.03.01", "*", "", LONG)
@@ -1159,7 +1265,7 @@ mod tests {
         let (_d, db) = db_of(&some(&[0, 4, 5, 6]));
         assert_eq!(find(&db, true).groups, []);
         // Without its round, 2 could be a copy of 0 or of 4, and 1 (no day)
-        // of 0 or of 5: no telling, so they stay.
+        // of 0 or of 5 (round 3 too): no telling, so they stay.
         let (_d, db) = db_of(&games);
         assert_eq!(find(&db, true).groups, []);
     }
@@ -1444,6 +1550,36 @@ mod tests {
         assert_eq!(find(&db, true).groups, [group(0, &[1], false)]);
     }
 
+    /// R3-1: a copy whose ratings, round with board, ECO or date the kept
+    /// game lacks isn't deleted for it: those fields are what searches,
+    /// sorts and the Reference tab use. Both stay.
+    #[test]
+    fn a_copy_with_fields_the_kept_game_lacks_stays() {
+        let with = |game: String, tags: &str| game.replace("[Result", &format!("{tags}\n[Result"));
+        let game = |round: &str, moves: &str| {
+            pgn("Carlsen, Magnus", "Caruana, Fabiano", "2024.01.20", "1/2-1/2", "", moves)
+                .replace("Round \"3\"", &format!("Round \"{round}\""))
+        };
+        // The longer copy is kept: the shorter one's board would go with it.
+        let (_d, db) = db_of(&[game("7", FULL), game("7.3", FULL.trim_end_matches(" Bf6"))]);
+        assert_eq!(find(&db, true).groups, []);
+        let (_d, db) = db_of(&[game("7.3", FULL), game("7", FULL.trim_end_matches(" Bf6"))]);
+        assert_eq!(find(&db, true).groups, [group(0, &[1], false)], "the kept game has the board");
+        // The annotated copy is kept: the plain one's ratings or ECO would go.
+        let annotated = game("7.3", &FULL.replace("Nb8", "Nb8 {The Breyer.}"));
+        for tags in ["[WhiteElo \"2830\"]", "[ECO \"C95\"]"] {
+            let (_d, db) = db_of(&[annotated.clone(), with(game("7.3", FULL), tags)]);
+            assert_eq!(find(&db, true).groups, [], "{tags}");
+            let (_d, db) = db_of(&[with(annotated.clone(), tags), with(game("7.3", FULL), tags)]);
+            assert_eq!(find(&db, false).groups, [group(0, &[1], true)], "both have it: {tags}");
+        }
+        // Exact copies differ only in ECO: the copy with it stays, the plain
+        // one goes.
+        let (_d, db) =
+            db_of(&[annotated.clone(), with(game("7.3", FULL), "[ECO \"C95\"]"), game("7.3", FULL)]);
+        assert_eq!(find(&db, false).groups, [group(0, &[2], true)]);
+    }
+
     /// R2-2: the same short draw (22 plies) by the same players in two
     /// events of one year is two games, unless they share the event, the
     /// round or the day; from 20 moves on, moves that all agree are enough.
@@ -1463,9 +1599,12 @@ mod tests {
         };
         let (_d, db) = db_of(&[bundesliga("?", draw), dortmund(draw)]);
         assert_eq!(find(&db, true).groups, []);
-        // The same round: one game from two sources.
-        let (_d, db) = db_of(&[bundesliga("5", draw), dortmund(draw)]);
+        // R3-2: the same round in the same month: one game from two sources;
+        // in two events of a year, a round number is chance.
+        let (_d, db) = db_of(&[bundesliga("5", draw).replace("2019.??.??", "2019.07.??"), dortmund(draw)]);
         assert_eq!(find(&db, true).groups, [group(1, &[0], false)]);
+        let (_d, db) = db_of(&[bundesliga("5", draw), dortmund(draw)]);
+        assert_eq!(find(&db, true).groups, [], "the same round, the year only");
         // A long game: its moves are enough, or all but the last.
         let (_d, db) = db_of(&[bundesliga("?", FULL), dortmund(FULL)]);
         assert_eq!(find(&db, true).groups, [group(1, &[0], false)]);
@@ -1513,6 +1652,15 @@ mod tests {
             let (_d, db) = db_of(&games);
             assert_eq!(find(&db, true).groups, [], "{what}");
         }
+        // R3-3: a record of another first move, or of another start.
+        let (_d, db) = db_of(&[kivisto("9.1", FULL), kivisto("9.1", "1. d4")]);
+        assert_eq!(find(&db, true).groups, [], "another first move");
+        let odds = kivisto("9.1", "1. e4").replace(
+            "[Result",
+            "[SetUp \"1\"]\n[FEN \"rnbqkbnr/ppppp1pp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\"]\n[Result",
+        );
+        let (_d, db) = db_of(&[kivisto("9.1", FULL), odds]);
+        assert_eq!(find(&db, true).groups, [], "another start");
         let other = kivisto("9.1", &LONG.replace("Re8", "h6"));
         let (_d, db) = db_of(&[kivisto("9.1", FULL), other, kivisto("9.1", "")]);
         assert_eq!(find(&db, true).groups, [], "next to two games");
@@ -1530,6 +1678,23 @@ mod tests {
             game("M2 Szewczyk", "Jose Carlos Martinez Alcantara").replace("Open", "Open (other source)"),
         ]);
         assert_eq!(find(&db, true).groups, [group(0, &[1], false), group(2, &[3], false)]);
+
+        // R3-4: different people whose surnames only share their last word
+        // (a mother's surname), one source with partial headers.
+        let line = &FULL[..FULL.find(" 22.").unwrap()];
+        let a = pgn("Garcia Martinez, Jose", "Lopez Fernandez, Juan", "2015.??.??", "1/2-1/2", "", line)
+            .replace("Round \"3\"", "Round \"?\"")
+            .replace("Open", "Madrid op");
+        let b = pgn("Perez Martinez, Javier", "Sanchez Fernandez, Jorge", "2015.06.12", "1/2-1/2", "", line)
+            .replace("Round \"3\"", "Round \"4.2\"")
+            .replace("Open", "Spanish Team ch");
+        let (_d, db) = db_of(&[a.clone(), b]);
+        assert_eq!(find(&db, true).groups, []);
+        let b = pgn("Martinez, J.", "Juan Lopez Fernandez", "2015.06.12", "1/2-1/2", "", line)
+            .replace("Round \"3\"", "Round \"4.2\"")
+            .replace("Open", "Spanish Team ch");
+        let (_d, db) = db_of(&[a, b]);
+        assert_eq!(find(&db, true).groups, [group(1, &[0], false)], "one surname ends the other");
     }
 
     #[test]
