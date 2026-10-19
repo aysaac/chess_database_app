@@ -626,7 +626,8 @@ pub struct AnalysisStatusDto {
     pub engine_name: Option<String>,
     pub session: Option<u32>,
     pub multipv: u32,
-    /// The threat search (ENG-07) runs next to the analysis.
+    /// The threat search (ENG-07) runs next to the analysis (not yet while
+    /// its engine starts: the first `threat` event says it's up).
     pub threat: bool,
 }
 

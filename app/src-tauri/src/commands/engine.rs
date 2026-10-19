@@ -213,10 +213,13 @@ pub async fn start_analysis(
     multipv: u32,
     threat: Option<bool>,
 ) -> AppResult<AnalysisStatusDto> {
-    start_analysis_with(&state, &Events::app(app), session, engine, multipv, threat.unwrap_or(false)).await
+    let events = Events::app(app.clone());
+    let later = threat_starter(app, events.clone());
+    start_analysis_with(&state, &events, session, engine, multipv, threat.unwrap_or(false), later).await
 }
 
-/// [`start_analysis`], sending what the engines find to `events`.
+/// [`start_analysis`], sending what the engines find to `events`; a
+/// threat engine to start goes to `start_later`.
 async fn start_analysis_with(
     state: &AppState,
     events: &Events,
@@ -224,6 +227,7 @@ async fn start_analysis_with(
     engine: Option<String>,
     multipv: u32,
     threat: bool,
+    start_later: impl FnOnce(ThreatRequest) + Send,
 ) -> AppResult<AnalysisStatusDto> {
     let config = {
         let s = state.settings.lock().expect("settings lock");
@@ -245,9 +249,10 @@ async fn start_analysis_with(
     let old = state.analysis.lock().expect("analysis lock").replace(analysis);
     drop_later(old);
     // Search the current position right away. The threat engine starts
-    // after that, so a slow one doesn't hold up the analysis.
+    // after that, and nothing waits for it: the reply says the analysis
+    // runs as soon as it does.
     state.with_session(session, |_| Ok(()))?;
-    set_threat(state, events, threat).await?;
+    set_threat(state, threat, start_later);
     Ok(status(state))
 }
 
@@ -275,17 +280,18 @@ pub async fn set_analysis_lines(state: State<'_, AppState>, multipv: u32) -> App
 }
 
 /// Turns the threat search (ENG-07) on or off for the running analysis. On
-/// starts a second engine process (blocking a moment) that follows the
-/// analysis, unless it's turned off again meanwhile; one that can't start
-/// is reported as a `threat` event. Off lets it quit. Without a running
-/// analysis nothing happens: `start_analysis` takes the setting.
+/// starts a second engine process in the background (the reply doesn't
+/// wait for it) that follows the analysis, unless it's turned off again
+/// meanwhile; one that can't start is reported as a `threat` event. Off
+/// lets it quit. Without a running analysis nothing happens:
+/// `start_analysis` takes the setting.
 #[tauri::command]
 pub async fn set_analysis_threat(
     app: AppHandle,
     state: State<'_, AppState>,
     on: bool,
 ) -> AppResult<AnalysisStatusDto> {
-    set_threat(&state, &Events::app(app), on).await?;
+    set_threat(&state, on, threat_starter(app.clone(), Events::app(app)));
     Ok(status(&state))
 }
 
@@ -300,24 +306,35 @@ struct ThreatRequest {
 }
 
 /// "Show threat" (ENG-07) for the running analysis: records it and, when
-/// it's on and no threat engine runs, starts one (off this thread) and
-/// attaches it if that's still wanted once it's up.
-async fn set_threat(state: &AppState, events: &Events, on: bool) -> AppResult<()> {
-    let Some(request) = ask_threat(state, on) else {
-        return Ok(());
-    };
+/// it's on and no threat engine runs, hands `start_later` one to start.
+fn set_threat(state: &AppState, on: bool, start_later: impl FnOnce(ThreatRequest)) {
+    if let Some(request) = ask_threat(state, on) {
+        start_later(request);
+    }
+}
+
+/// Starts threat engines on a blocking task of their own, which nothing
+/// waits for: a slow engine (Lc0 loading its network, one that hangs until
+/// the handshake times out) holds up neither the analysis nor the page.
+fn threat_starter(app: AppHandle, events: Events) -> impl FnOnce(ThreatRequest) + Send {
+    move |request| {
+        tauri::async_runtime::spawn_blocking(move || {
+            start_threat(&app.state::<AppState>(), &events, request);
+        });
+    }
+}
+
+/// Starts the threat engine for `request` (blocking: up to the engine's
+/// handshake timeout) and attaches it if that's still wanted once it's up.
+/// Returns whether it was attached.
+fn start_threat(state: &AppState, events: &Events, request: ThreatRequest) -> bool {
     let config = state.settings.lock().expect("settings lock").engine(&request.engine_id).cloned();
     // Removing the engine stopped its analysis.
     let Some(config) = config else {
-        return Ok(());
+        return false;
     };
-    let (session, sink) = (request.session, events.clone());
-    let started = tauri::async_runtime::spawn_blocking(move || ThreatSearch::start(&config, session, sink))
-        .await
-        .map_err(|e| AppError::new(ErrorCode::Internal, e.to_string()))?
-        .map_err(|e| e.to_string());
-    finish_threat(state, &request, started);
-    Ok(())
+    let started = ThreatSearch::start(&config, request.session, events.clone()).map_err(|e| e.to_string());
+    finish_threat(state, &request, started)
 }
 
 /// Records "Show threat" for the running analysis and says what to start:
@@ -476,7 +493,9 @@ pub async fn blunder_check(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::sync::Arc;
+    use std::thread::JoinHandle;
+    use std::time::{Duration, Instant};
 
     use chess_core::position::parse_uci;
 
@@ -485,15 +504,33 @@ mod tests {
     use crate::settings::EngineConfig;
 
     /// The app with the engine `config` set up and a game at `SCHOLAR`.
-    fn app_with(config: EngineConfig) -> (AppState, u32) {
+    fn app_with(config: EngineConfig) -> (Arc<AppState>, u32) {
         let state = AppState::default();
         state.settings.lock().unwrap().engines.push(config);
         let session = state.add_session(session_at(SCHOLAR));
-        (state, session)
+        (Arc::new(state), session)
     }
 
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
         tauri::async_runtime::block_on(f)
+    }
+
+    /// Starts a threat engine right away, on this thread.
+    fn now<'a>(state: &'a AppState, events: &'a Events) -> impl FnOnce(ThreatRequest) + Send + 'a {
+        move |request| {
+            start_threat(state, events, request);
+        }
+    }
+
+    /// Starts a threat engine on a thread of its own, as the commands do;
+    /// its handle goes to `handle`.
+    fn later<'a>(
+        state: &Arc<AppState>,
+        events: &Events,
+        handle: &'a mut Option<JoinHandle<bool>>,
+    ) -> impl FnOnce(ThreatRequest) + Send + 'a {
+        let (state, events) = (state.clone(), events.clone());
+        move |request| *handle = Some(std::thread::spawn(move || start_threat(&state, &events, request)))
     }
 
     /// Plays `uci` in `session`, as a move on the board does.
@@ -512,7 +549,8 @@ mod tests {
         let config = config(fake_uci(), &[]);
         let (state, session) = app_with(config.clone());
         let (events, rx) = events();
-        block_on(start_analysis_with(&state, &events, session, None, 1, false)).unwrap();
+        block_on(start_analysis_with(&state, &events, session, None, 1, false, now(&state, &events)))
+            .unwrap();
         let start = |request: &ThreatRequest| {
             ThreatSearch::start(&config, request.session, events.clone()).map_err(|e| e.to_string())
         };
@@ -541,9 +579,19 @@ mod tests {
         let t = threat_where(&rx, |t| t.line.is_some());
         assert_eq!((t.session, t.line.unwrap().moves[0].san.as_str()), (session, "gxh5"));
         // Turned off: it goes, and nothing is searched any more.
-        block_on(set_threat(&state, &events, false)).unwrap();
+        set_threat(&state, false, |_| panic!("off starts nothing"));
         assert!(!status(&state).threat && status(&state).running);
         play(&state, session, "f2f3");
+        assert_eq!(threats_within(&rx, Duration::from_millis(600)).len(), 0);
+
+        // The same with the engine started on a thread of its own, as the
+        // commands do: whichever comes first, off is what stays.
+        let mut handle = None;
+        set_threat(&state, true, later(&state, &events, &mut handle));
+        set_threat(&state, false, |_| panic!("off starts nothing"));
+        handle.expect("a threat engine to start").join().unwrap();
+        assert!(!status(&state).threat && status(&state).running);
+        play(&state, session, "a7a6");
         assert_eq!(threats_within(&rx, Duration::from_millis(600)).len(), 0);
     }
 
@@ -551,15 +599,18 @@ mod tests {
     fn a_threat_engine_that_cant_start_is_reported_once_as_a_threat_error() {
         let dir = tempfile::tempdir().unwrap();
         // Starts: the analysis, "Show threat" on (refused), the analysis
-        // again, then with "Show threat" on (refused).
+        // again, then with "Show threat" on (refused). Were the threat
+        // engine started before the main one, the second analysis would be
+        // refused and its start fail.
         let path = scripted_fake_uci(dir.path(), "ok refuse ok refuse");
         let (state, session) = app_with(config(path, &[]));
         let (events, rx) = events();
-        block_on(start_analysis_with(&state, &events, session, None, 1, false)).unwrap();
+        block_on(start_analysis_with(&state, &events, session, None, 1, false, now(&state, &events)))
+            .unwrap();
 
         // Turned on while the analysis runs: not an error of the command,
         // a threat event that says the threat engine couldn't start.
-        block_on(set_threat(&state, &events, true)).expect("reported as an event");
+        set_threat(&state, true, now(&state, &events));
         let failed = threats_within(&rx, Duration::from_millis(300));
         assert_eq!(failed.len(), 1, "{failed:?}");
         assert!(failed[0].start_failed && failed[0].session == session);
@@ -573,11 +624,14 @@ mod tests {
         assert!(told[0].start_failed && told[0].session == other && told[0].error == failed[0].error);
 
         // Started with "Show threat" on: one attempt, one report.
-        let st = block_on(start_analysis_with(&state, &events, session, None, 1, true)).unwrap();
+        let st = block_on(start_analysis_with(&state, &events, session, None, 1, true, now(&state, &events)))
+            .unwrap();
         assert!(st.running && !st.threat);
         let failed = threats_within(&rx, Duration::from_millis(300));
         assert_eq!(failed.len(), 1, "{failed:?}");
         assert!(failed[0].start_failed);
+        let starts = std::fs::read_to_string(dir.path().join("count.txt")).unwrap();
+        assert_eq!(starts.trim(), "4", "one attempt each time");
 
         // A failure for a request turned off meanwhile isn't reported.
         let on = ask_threat(&state, true).expect("a threat engine to start");
@@ -587,21 +641,35 @@ mod tests {
     }
 
     #[test]
-    fn the_analysis_searches_while_a_slow_threat_engine_starts() {
+    fn the_start_replies_once_the_analysis_searches_not_once_the_threat_engine_is_up() {
         let dir = tempfile::tempdir().unwrap();
-        let path = scripted_fake_uci(dir.path(), "ok slow:2000");
+        // The threat engine (the second start) takes 3 s, like Lc0 loading
+        // a big network.
+        let path = scripted_fake_uci(dir.path(), "ok slow:3000");
         let (state, session) = app_with(config(path, &[]));
         let (events, rx) = events();
-        std::thread::scope(|scope| {
-            let start =
-                scope.spawn(|| block_on(start_analysis_with(&state, &events, session, None, 1, true)));
-            // The main lines come while the threat engine is still starting.
-            let lines = analysis_where(&rx, Duration::from_millis(1500), |d| !d.lines.is_empty());
-            assert!(lines.is_some(), "no main lines while the threat engine starts");
-            assert!(!start.is_finished(), "the threat engine is still starting");
-            let st = start.join().unwrap().unwrap();
-            assert!(st.running && st.threat);
-        });
+        let mut handle = None;
+        let t0 = Instant::now();
+        let st = block_on(start_analysis_with(
+            &state,
+            &events,
+            session,
+            None,
+            1,
+            true,
+            later(&state, &events, &mut handle),
+        ))
+        .unwrap();
+        // The reply says the analysis runs as soon as it searches, so the
+        // page shows it running, not starting, with its lines.
+        assert!(t0.elapsed() < Duration::from_millis(1500), "the start took {:?}", t0.elapsed());
+        assert!(st.running && !st.threat);
+        assert!(analysis_where(&rx, Duration::from_millis(1500), |d| !d.lines.is_empty()).is_some());
+        let handle = handle.expect("a threat engine to start");
+        assert!(!handle.is_finished(), "the threat engine is still starting");
+        // Once it's up it's attached and searches the board.
+        assert!(handle.join().unwrap(), "attached once up");
+        assert!(status(&state).threat);
         assert_eq!(threat_where(&rx, |t| t.line.is_some()).session, session);
     }
 }

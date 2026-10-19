@@ -9,7 +9,7 @@ import { formatEval } from "../format";
 import {
   isCurrentThreat,
   isNewFailure,
-  oneAtATime,
+  taskQueue,
   threatErrorNotice,
   visibleThreat,
 } from "../threatView";
@@ -56,6 +56,7 @@ class AnalysisStore {
       this.#threat = threat;
       // Every window gets the event: only the one whose game it is says so.
       if (news && this.threat?.error) notices.show(threatErrorNotice(threat), "error");
+      if (this.threat && !this.threat.error) this.#noteThreatUp();
     });
   }
 
@@ -95,22 +96,47 @@ class AnalysisStore {
     await this.#sendShowThreat();
   }
 
+  /** Calls about the threat search, one at a time (`taskQueue`). */
+  #threatCalls = taskQueue();
+
   /**
-   * Sends "Show threat" to the running analysis, one call at a time, each
-   * with the setting as it is when its turn comes: turning it on waits for
-   * the threat engine to start, and a click meanwhile (a double click) is
-   * sent after that, so the engine ends up as the button says.
+   * Sends "Show threat" to the running analysis, after the calls before it
+   * and with the setting as it is when its turn comes, so the engine ends
+   * up as the button says however fast it's clicked.
    */
-  #sendShowThreat = oneAtATime(async () => {
-    if (!this.status.running) return;
-    try {
-      const status = await api.setAnalysisThreat(this.showThreat);
-      // Unless the engine was stopped meanwhile.
-      if (this.status.running) this.status = status;
-    } catch (e) {
-      notices.error(e);
-    }
-  });
+  #sendShowThreat = () =>
+    this.#threatCalls(async () => {
+      if (!this.status.running) return;
+      try {
+        const status = await api.setAnalysisThreat(this.showThreat);
+        // Unless the engine was stopped meanwhile.
+        if (this.status.running) this.status = status;
+      } catch (e) {
+        notices.error(e);
+      }
+    });
+
+  #statusQueued = false;
+
+  /**
+   * Reads the status again once the threat engine is up. It starts in the
+   * background, after the reply to the start or to "Show threat", so the
+   * first word of its search for this game is what says it's up.
+   */
+  #noteThreatUp() {
+    if (this.status.threat || !this.status.running || this.#statusQueued) return;
+    this.#statusQueued = true;
+    void this.#threatCalls(async () => {
+      this.#statusQueued = false;
+      if (this.status.threat || !this.status.running) return;
+      try {
+        const status = await api.analysisStatus();
+        if (this.status.running) this.status = status;
+      } catch {
+        // The next word of the threat search asks again.
+      }
+    });
+  }
 
   get lines(): number {
     return this.status.running ? this.status.multipv : prefs.get("analysisLines", 3);
@@ -191,11 +217,13 @@ class AnalysisStore {
     }
     this.starting = true;
     this.#threat = null;
-    // A threat engine that can't start is reported by the start itself, so
-    // "Show threat" is only sent again if it changed while the engine started.
+    // The start sees to the threat engine (it starts in the background and
+    // reports a failure itself), so "Show threat" is only sent again if it
+    // changed while the main engine started.
     const showThreat = this.showThreat;
     try {
       this.status = await api.startAnalysis(session, engine, this.lines, showThreat);
+      if (this.threat && !this.threat.error) this.#noteThreatUp();
       if (this.status.running && this.showThreat !== showThreat) await this.#sendShowThreat();
     } catch (e) {
       notices.error(e);
