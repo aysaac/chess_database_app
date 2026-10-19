@@ -14,8 +14,8 @@
 // engine stops. A double click while the threat engine starts (on, then
 // off before it's up), and on/off/on/off, end off with no threat engine
 // left in the backend, also after a move. The setting is remembered: after
-// a reload, starting the engine brings the threat back. Screenshots in dark
-// and light mode.
+// a reload, starting the engine brings the threat back (the start replies
+// before the threat engine is up). Screenshots in dark and light mode.
 (async () => {
   const OUT = "__OUT__";
 
@@ -200,7 +200,10 @@
       await game.newGame(SCHOLAR);
       await analysis.loadEngines();
       await analysis.start();
-      expect(analysis.status.running && analysis.status.threat, "the threat starts with the engine");
+      // The start replies once the main analysis searches; the threat
+      // engine comes up after that, and the page learns it from its search.
+      expect(analysis.status.running && !analysis.starting, "the analysis runs as soon as the start replies");
+      await until(() => analysis.status.threat, "the threat engine up, and the page told");
       await until(() => first()?.san === "Qxf7#", "the threat after the reload", 15000);
       await until(() => hasArrow("h5", "f7"), "its arrow after the reload");
       expect(toggle().getAttribute("aria-pressed") === "true", "the button pressed after the reload");

@@ -6,7 +6,7 @@ import type { ThreatDto } from "./bindings/ThreatDto";
 import {
   isCurrentThreat,
   isNewFailure,
-  oneAtATime,
+  taskQueue,
   threatErrorNotice,
   visibleThreat,
 } from "./threatView.ts";
@@ -107,7 +107,8 @@ function slowBackend() {
 test("a double click ends off: the second call waits for the first and sends the latest setting", async () => {
   const { b, set } = slowBackend();
   let showThreat = false;
-  const send = oneAtATime(() => set(showThreat));
+  const queue = taskQueue();
+  const send = () => queue(() => set(showThreat));
   showThreat = true;
   const first = send();
   // The first call is on its way (the engine starts) when the second click comes.
@@ -124,7 +125,8 @@ test("a double click ends off: the second call waits for the first and sends the
 test("on, off, on, off quickly ends off, one call at a time", async () => {
   const { b, set } = slowBackend();
   let showThreat = false;
-  const send = oneAtATime(() => set(showThreat));
+  const queue = taskQueue();
+  const send = () => queue(() => set(showThreat));
   const calls = [];
   for (const on of [true, false, true, false]) {
     showThreat = on;
@@ -139,11 +141,28 @@ test("on, off, on, off quickly ends off, one call at a time", async () => {
 
 test("a call that fails doesn't stop the ones after it", async () => {
   let n = 0;
-  const send = oneAtATime(async () => {
-    n++;
-    if (n === 1) throw new Error("no engine");
-  });
+  const queue = taskQueue();
+  const send = () =>
+    queue(async () => {
+      n++;
+      if (n === 1) throw new Error("no engine");
+    });
   await assert.rejects(send());
   await send();
   assert.equal(n, 2);
+});
+
+test("a status read queued after a call sees what the call did", async () => {
+  // The threat engine came up (its first event) just as the user turned it
+  // off: the read waits for the off, so the page doesn't end up saying on.
+  const { b, set } = slowBackend();
+  b.threat = true;
+  const queue = taskQueue();
+  let shown: boolean | null = null;
+  const off = queue(() => set(false));
+  const read = queue(async () => {
+    shown = b.threat;
+  });
+  await Promise.all([off, read]);
+  assert.equal(shown, false);
 });

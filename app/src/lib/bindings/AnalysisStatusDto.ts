@@ -2,6 +2,7 @@
 
 export type AnalysisStatusDto = { running: boolean, engineId: string | null, engineName: string | null, session: number | null, multipv: number, 
 /**
- * The threat search (ENG-07) runs next to the analysis.
+ * The threat search (ENG-07) runs next to the analysis (not yet while
+ * its engine starts: the first `threat` event says it's up).
  */
 threat: boolean, };

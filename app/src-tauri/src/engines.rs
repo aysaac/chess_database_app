@@ -20,8 +20,9 @@
 //! its engine starts (a double click: on, then off). The analysis keeps
 //! what was asked last and counts the requests; an engine that finished
 //! starting is attached only if nothing was asked since
-//! (`Analysis::offer_threat`), and quits otherwise. It starts once the main
-//! analysis searches, so a slow one doesn't hold that up. When the main
+//! (`Analysis::offer_threat`), and quits otherwise. It starts in the
+//! background once the main analysis searches, and nothing waits for it,
+//! so a slow one holds up neither the analysis nor the page. When the main
 //! engine fails, the threat engine quits with it. A threat engine that
 //! fails, or can't start, says so (a `threat` event with `error`), again to
 //! each game the analysis follows next, and nothing more until "Show
@@ -305,13 +306,17 @@ impl Analysis {
 
     /// Records "Show threat" (ENG-07) as just asked, and returns the
     /// request's number for [`Analysis::offer_threat`]. Off takes the
-    /// threat search out, returned to be dropped off the caller's locks (its
-    /// engine takes a moment to quit).
+    /// threat search out, and so does on when it failed (so its failure
+    /// isn't taken up again while a new one starts); it's returned to be
+    /// dropped off the caller's locks (its engine takes a moment to quit).
     pub fn ask_threat(&mut self, on: bool) -> (u64, Option<ThreatSearch>) {
         self.threat_wanted = on;
         self.threat_asked += 1;
         self.threat_failure = None;
-        let old = if on { None } else { self.slot().search.take() };
+        let mut slot = self.slot();
+        let gone = !on || slot.search.as_ref().is_some_and(|t| !t.is_alive());
+        let old = if gone { slot.search.take() } else { None };
+        drop(slot);
         (self.threat_asked, old)
     }
 
@@ -812,14 +817,17 @@ mod tests {
         assert!(told[0].seq > failed.seq);
         a.follow(2, &session_at(CHECK));
         assert_eq!(threats_within(&rx, Duration::from_millis(300)).len(), 0, "told once");
-        // Off and on again starts a new one, and the failure is forgotten.
-        let (_, dead) = a.ask_threat(false);
-        assert!(dead.is_some());
-        a.ask_threat(true);
+        // On again, even without off first (another window): the failed
+        // search goes, so its failure isn't taken up again while a new one
+        // starts, and a new one is needed.
+        let (_, dead) = a.ask_threat(true);
+        assert!(dead.is_some(), "the failed search goes");
         assert!(a.needs_threat_engine());
         a.attach(3);
         a.follow(3, &session_at(SCHOLAR));
-        assert_eq!(threats_within(&rx, Duration::from_millis(300)).len(), 0);
+        assert_eq!(threats_within(&rx, Duration::from_millis(300)).len(), 0, "the old failure isn't told");
+        let (_, none) = a.ask_threat(false);
+        assert!(none.is_none());
     }
 
     #[test]

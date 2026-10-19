@@ -47,15 +47,17 @@ export function threatErrorNotice(t: ThreatDto): string {
 }
 
 /**
- * Wraps `send` so calls run one at a time, in order: a call made while one
- * is on its way waits for it. `send` reads what to send when its turn
- * comes, so however fast the calls come the last one sends the latest
- * setting (a double click on "Show threat": on, then off).
+ * A queue that runs its tasks one at a time, in order: a task waits for the
+ * ones before it, and one that fails doesn't stop the ones after it. Tasks
+ * read what to send when their turn comes, so however fast "Show threat" is
+ * clicked the last call sends the latest setting (a double click: on, then
+ * off), and replies can't cross: a status read queued after a call sees
+ * what that call did.
  */
-export function oneAtATime(send: () => Promise<void>): () => Promise<void> {
+export function taskQueue(): (task: () => Promise<void>) => Promise<void> {
   let tail: Promise<void> = Promise.resolve();
-  return () => {
-    const next = tail.then(send);
+  return (task) => {
+    const next = tail.then(task);
     tail = next.catch(() => {});
     return next;
   };
