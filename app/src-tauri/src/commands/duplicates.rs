@@ -13,7 +13,7 @@
 //! compaction.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use chess_db::{Database, DuplicateOptions, Duplicates, GameId, Progress};
 use chess_jobs::JobError;
@@ -228,9 +228,7 @@ pub async fn delete_duplicates(
     let (db, ids) = start_delete(&state, handle, scan)?;
     Ok(state.jobs.spawn("duplicates-delete", "Deleting duplicate games", move |ctx| {
         let state = app.state::<AppState>();
-        let result = delete_copies(&state, handle, scan, &db, &ids, ctx);
-        finish(&state, handle);
-        Ok(match result? {
+        Ok(match delete_job(&state, handle, scan, &db, &ids, ctx)? {
             0 => "The copies were marked as deleted already".to_owned(),
             n => format!("Marked {} as deleted", copies(n.into())),
         })
@@ -253,9 +251,41 @@ fn start_delete(state: &AppState, handle: u32, scan: u64) -> AppResult<(Arc<Mute
     Ok((db, ids))
 }
 
-/// The delete job: marks `ids` as deleted a chunk at a time, checking
-/// before each one that the report still holds. Returns how many games it
-/// marked; on failure or Stop, those it marked can be restored.
+/// Clears the busy mark of a database when its delete or restore ends,
+/// however it ends (a panic too), and puts its deleted copies in order.
+struct Busy<'a> {
+    state: &'a AppState,
+    handle: u32,
+}
+
+impl Drop for Busy<'_> {
+    fn drop(&mut self) {
+        // Not `expect`: a second panic while unwinding would abort the app.
+        let mut all = self.state.duplicates.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(entry) = all.get_mut(&self.handle) {
+            entry.busy = false;
+            entry.deleted.sort_unstable();
+            entry.deleted.dedup();
+        }
+    }
+}
+
+/// The delete job, started by [`start_delete`].
+fn delete_job(
+    state: &AppState,
+    handle: u32,
+    scan: u64,
+    db: &Mutex<Database>,
+    ids: &[GameId],
+    progress: &dyn Progress,
+) -> Result<u32, JobError> {
+    let _busy = Busy { state, handle };
+    delete_copies(state, handle, scan, db, ids, progress)
+}
+
+/// Marks `ids` as deleted a chunk at a time, checking before each one that
+/// the report still holds. Returns how many games it marked; on failure or
+/// Stop, those it marked can be restored.
 fn delete_copies(
     state: &AppState,
     handle: u32,
@@ -274,23 +304,27 @@ fn delete_copies(
     };
     for (n, chunk) in ids.chunks(CHUNK).enumerate() {
         progress.check_cancelled().map_err(to_job_error)?;
-        let mut all = state.duplicates.lock().expect("duplicates lock");
-        let entry = all.get_mut(&handle).ok_or_else(|| so_far(marked, "The database was closed".into()))?;
-        let s = entry.scan(scan).map_err(|why| so_far(marked, why))?;
-        let mut db = db.lock().expect("db lock");
-        s.check(&db).map_err(|why| so_far(marked, why))?;
-        let mut fresh = Vec::with_capacity(chunk.len());
-        for &id in chunk {
-            if !db.record(id).map_err(to_job_error)?.is_deleted() {
-                fresh.push(id);
+        {
+            let mut all = state.duplicates.lock().expect("duplicates lock");
+            let entry =
+                all.get_mut(&handle).ok_or_else(|| so_far(marked, "The database was closed".into()))?;
+            let s = entry.scan(scan).map_err(|why| so_far(marked, why))?;
+            let mut db = db.lock().expect("db lock");
+            s.check(&db).map_err(|why| so_far(marked, why))?;
+            let mut fresh = Vec::with_capacity(chunk.len());
+            for &id in chunk {
+                if !db.record(id).map_err(to_job_error)?.is_deleted() {
+                    fresh.push(id);
+                }
             }
+            marked += db.set_deleted_many(&fresh, true).map_err(to_job_error)?;
+            s.generation = db.generation();
+            if n + 1 == ids.len().div_ceil(CHUNK) {
+                s.applied = true;
+            }
+            entry.deleted.extend(fresh);
         }
-        marked += db.set_deleted_many(&fresh, true).map_err(to_job_error)?;
-        s.generation = db.generation();
-        if n + 1 == ids.len().div_ceil(CHUNK) {
-            s.applied = true;
-        }
-        entry.deleted.extend(fresh);
+        // Not under the locks: whatever happens there leaves them good.
         progress.report(((n + 1) * CHUNK).min(ids.len()) as u64, ids.len() as u64);
     }
     if ids.is_empty()
@@ -301,16 +335,6 @@ fn delete_copies(
         s.applied = true;
     }
     Ok(marked)
-}
-
-/// Clears the busy mark of `handle` once a delete or restore ends, however
-/// it ends; the deleted copies' numbers are put in order.
-fn finish(state: &AppState, handle: u32) {
-    if let Some(entry) = state.duplicates.lock().expect("duplicates lock").get_mut(&handle) {
-        entry.busy = false;
-        entry.deleted.sort_unstable();
-        entry.deleted.dedup();
-    }
 }
 
 /// Restores, in a background job, the copies deleted from this database's
@@ -326,9 +350,7 @@ pub async fn restore_duplicates(
     let (db, ids, own) = start_restore(&state, handle, scan)?;
     Ok(state.jobs.spawn("duplicates-restore", "Restoring duplicate games", move |ctx| {
         let state = app.state::<AppState>();
-        let result = restore_copies(&state, handle, &db, &ids, own, ctx);
-        finish(&state, handle);
-        Ok(format!("Restored {}", copies(result?.into())))
+        Ok(format!("Restored {}", copies(restore_job(&state, handle, &db, &ids, own, ctx)?.into())))
     }))
 }
 
@@ -358,10 +380,23 @@ fn start_restore(
     Ok((db, entry.deleted.clone(), own))
 }
 
-/// The restore job: restores `ids` (the database's deleted copies, in
-/// order) a chunk at a time. The last report still holds afterwards if they
-/// were all its `own` copies. Returns how many games it restored; those it
-/// didn't reach stay restorable.
+/// The restore job, started by [`start_restore`].
+fn restore_job(
+    state: &AppState,
+    handle: u32,
+    db: &Mutex<Database>,
+    ids: &[GameId],
+    own: bool,
+    progress: &dyn Progress,
+) -> Result<u32, JobError> {
+    let _busy = Busy { state, handle };
+    restore_copies(state, handle, db, ids, own, progress)
+}
+
+/// Restores `ids` (the database's deleted copies, in order) a chunk at a
+/// time, each chunk leaving the deleted copies as it's restored. The last
+/// report still holds afterwards if they were all its `own` copies. Returns
+/// how many games it restored; those it didn't reach stay restorable.
 fn restore_copies(
     state: &AppState,
     handle: u32,
@@ -372,9 +407,9 @@ fn restore_copies(
 ) -> Result<u32, JobError> {
     let mut restored = 0u32;
     let mut done = 0usize;
-    let result = (|| {
-        for chunk in ids.chunks(CHUNK) {
-            progress.check_cancelled().map_err(to_job_error)?;
+    for chunk in ids.chunks(CHUNK) {
+        progress.check_cancelled().map_err(to_job_error)?;
+        {
             let mut all = state.duplicates.lock().expect("duplicates lock");
             let entry = all.get_mut(&handle).ok_or_else(|| JobError::failed("The database was closed"))?;
             let mut db = db.lock().expect("db lock");
@@ -391,17 +426,19 @@ fn restore_copies(
                     s.generation = db.generation();
                 }
             }
-            done += chunk.len();
-            progress.report(done as u64, ids.len() as u64);
+            // Nothing else changes the list meanwhile (busy): the chunk is
+            // its start.
+            if entry.deleted.starts_with(chunk) {
+                entry.deleted.drain(..chunk.len());
+            } else {
+                entry.deleted.retain(|id| chunk.binary_search(id).is_err());
+            }
         }
-        Ok(())
-    })();
-    if let Some(entry) = state.duplicates.lock().expect("duplicates lock").get_mut(&handle) {
-        // Nothing else changed the list meanwhile (busy): the first `done`
-        // are the ones restored.
-        entry.deleted.retain(|id| ids[..done].binary_search(id).is_err());
+        done += chunk.len();
+        // Not under the locks: whatever happens there leaves them good.
+        progress.report(done as u64, ids.len() as u64);
     }
-    result.map(|()| restored)
+    Ok(restored)
 }
 
 /// Limits the game list to the groups of report `scan`, each kept game
@@ -457,16 +494,12 @@ mod tests {
 
     fn delete(state: &AppState, handle: u32, scan: u64) -> Result<u32, String> {
         let (db, ids) = start_delete(state, handle, scan).map_err(|e| e.message)?;
-        let result = delete_copies(state, handle, scan, &db, &ids, &NoProgress);
-        finish(state, handle);
-        result.map_err(|e| e.to_string())
+        delete_job(state, handle, scan, &db, &ids, &NoProgress).map_err(|e| e.to_string())
     }
 
     fn restore(state: &AppState, handle: u32, scan: u64) -> Result<u32, String> {
         let (db, ids, own) = start_restore(state, handle, scan).map_err(|e| e.message)?;
-        let result = restore_copies(state, handle, &db, &ids, own, &NoProgress);
-        finish(state, handle);
-        result.map_err(|e| e.to_string())
+        restore_job(state, handle, &db, &ids, own, &NoProgress).map_err(|e| e.to_string())
     }
 
     fn deleted(state: &AppState, handle: u32) -> Vec<GameId> {
@@ -610,12 +643,47 @@ mod tests {
         let (db, ids) = start_delete(&state, handle, scan).unwrap();
         assert!(start_delete(&state, handle, scan).unwrap_err().message.contains("wait"), "busy");
         let stop = StopAfter(std::cell::Cell::new(0));
-        assert!(matches!(delete_copies(&state, handle, scan, &db, &ids, &stop), Err(JobError::Cancelled)));
-        finish(&state, handle);
+        assert!(matches!(delete_job(&state, handle, scan, &db, &ids, &stop), Err(JobError::Cancelled)));
         let now = report(&state, handle).unwrap().unwrap();
         assert_eq!((now.deleted, now.applied, now.stale), (CHUNK as u32, false, false));
         assert_eq!(delete(&state, handle, scan), Ok(10), "the rest");
         assert_eq!(restore(&state, handle, scan), Ok(CHUNK as u32 + 10));
+    }
+
+    /// R2-5: a delete or restore that panics (here in its progress report)
+    /// still clears the busy mark, and leaves the deleted copies as far as
+    /// it got.
+    #[test]
+    fn a_panic_in_a_delete_or_restore_doesnt_leave_the_database_busy() {
+        struct Panics;
+        impl Progress for Panics {
+            fn report(&self, _done: u64, _total: u64) {
+                panic!("a panic in the job");
+            }
+            fn is_cancelled(&self) -> bool {
+                false
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let handle = listed(&state, dir.path(), "duplicates.pgn", 1);
+        let scan = search(&state, handle, false);
+        let (db, ids) = start_delete(&state, handle, scan).unwrap();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            delete_job(&state, handle, scan, &db, &ids, &Panics)
+        }));
+        assert!(panicked.is_err());
+        let now = report(&state, handle).unwrap().unwrap();
+        assert_eq!((now.busy, now.deleted), (false, 2), "not busy; the two copies it marked restorable");
+
+        let (db, ids, own) = start_restore(&state, handle, scan).unwrap();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            restore_job(&state, handle, &db, &ids, own, &Panics)
+        }));
+        assert!(panicked.is_err());
+        let now = report(&state, handle).unwrap().unwrap();
+        assert_eq!((now.busy, now.deleted), (false, 0), "not busy; the two copies it restored are back");
+        assert_eq!(delete(&state, handle, scan), Ok(2), "and it can delete again");
     }
 
     /// R1-6: the list filter isn't saved (an older version can't read it,
