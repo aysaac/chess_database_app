@@ -279,7 +279,8 @@
       expect(/^Shares places 1–\d+:/.test(through) && column("pts")[0] === "2", "the winners of round 1 first, got " + through);
       // Round 1's tie-breaks aren't in this issue: its level matches are noted.
       const knotes = text($(".cross .notes"));
-      expect(/^\d+ matches ended level on points/.test(knotes), "the note on level matches, got " + knotes);
+      expect(/^\d+ matches ended level on points \(.*\): their players share places, between their round's winners and losers\.$/.test(knotes),
+        "the note on level matches, got " + knotes);
       // Their players between round 1's winners and its losers.
       const groups = [...new Set(column("pos"))].join(" ");
       expect(groups === "1–32 33–54 55–86", "winners, level matches, losers, got " + groups);

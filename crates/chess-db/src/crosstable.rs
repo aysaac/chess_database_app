@@ -42,7 +42,7 @@
 //!   round of the first match lost (never lost: the round reached), then
 //!   whether the player won their last match (the third-place match), so
 //!   players knocked out in the same round share places (points order them
-//!   within). A match level on points (an armageddon draw, or tie-breaks
+//!   within); a bye is a match won. A match level on points (an armageddon draw, or tie-breaks
 //!   missing) goes to the player who played on (when both did, before a
 //!   third-place match, by who their next opponents were). One the games
 //!   don't settle (`level_matches`) puts its players between that round's
@@ -758,45 +758,58 @@ fn same_game(r: &IndexRecord) -> IndexRecord {
 /// played after it doesn't count: they don't say who went through), 3r + 2
 /// for winning it as the last match. See the module docs.
 fn knock_out_stages(raw: &HashMap<u32, Vec<Raw>>) -> (HashMap<u32, [u32; 2]>, u32) {
-    // Each player's matches: round → (opponent, own half points, the opponent's).
-    let mut matches: HashMap<u32, BTreeMap<u16, (u32, u32, u32)>> = HashMap::new();
+    // Each player's matches by round. A bye is a match won, without an
+    // opponent: the player goes through to the next round.
+    let mut matches: HashMap<u32, BTreeMap<u16, Match>> = HashMap::new();
     for (&p, list) in raw {
         let m = matches.entry(p).or_default();
         for g in list.iter().filter(|g| g.round != 0) {
-            let Some(o) = g.opponent else { continue };
+            let Some(o) = g.opponent else {
+                m.entry(g.round).or_insert(Match { opponent: None, own: 1, theirs: 0 });
+                continue;
+            };
             let (own, theirs) = g.outcome.half_points().map_or((0, 0), |h| (h, 2 - h));
-            let e = m.entry(g.round).or_insert((o, 0, 0));
-            e.1 += own;
-            e.2 += theirs;
+            let e = m.entry(g.round).or_insert(Match { opponent: Some(o), own: 0, theirs: 0 });
+            if e.opponent.is_none() {
+                // A match counts, not a bye in the same round.
+                *e = Match { opponent: Some(o), own: 0, theirs: 0 };
+            }
+            e.own += own;
+            e.theirs += theirs;
         }
     }
     // Won (Greater), lost (Less) or level on points.
     let mut result: HashMap<(u32, u16), Ordering> = HashMap::new();
     for (&p, m) in &matches {
-        for (&r, &(_, own, theirs)) in m {
-            result.insert((p, r), own.cmp(&theirs));
+        for (&r, g) in m {
+            result.insert((p, r), g.own.cmp(&g.theirs));
         }
     }
-    let next_opponent =
-        |p: u32, r: u16| matches[&p].range((Bound::Excluded(r), Bound::Unbounded)).next().map(|(_, m)| m.0);
+    // A player's next match after round r: its opponent (`None` for a bye).
+    let next_match = |p: u32, r: u16| {
+        matches[&p].range((Bound::Excluded(r), Bound::Unbounded)).next().map(|(_, g)| g.opponent)
+    };
     // A level match goes to whoever played on; when both did (the semi-finals
     // before a third-place match), to the one whose next opponent won that
     // round as well, or whose opponent's next opponent lost it.
     let mut settled = Vec::new();
     let mut level = 0;
     for (&p, m) in &matches {
-        for (&r, &(o, _, _)) in m {
+        for (&r, g) in m {
+            let Some(o) = g.opponent else { continue };
             if result[&(p, r)] != Ordering::Equal || p > o {
                 continue;
             }
-            let won = match (next_opponent(p, r), next_opponent(o, r)) {
+            let won = match (next_match(p, r), next_match(o, r)) {
                 (Some(_), None) => Some(true),
                 (None, Some(_)) => Some(false),
-                (Some(x), Some(y)) => match (result.get(&(x, r)), result.get(&(y, r))) {
-                    (Some(Ordering::Greater), _) | (_, Some(Ordering::Less)) => Some(true),
-                    (Some(Ordering::Less), _) | (_, Some(Ordering::Greater)) => Some(false),
-                    _ => None,
-                },
+                (Some(x), Some(y)) => {
+                    match (x.and_then(|x| result.get(&(x, r))), y.and_then(|y| result.get(&(y, r)))) {
+                        (Some(Ordering::Greater), _) | (_, Some(Ordering::Less)) => Some(true),
+                        (Some(Ordering::Less), _) | (_, Some(Ordering::Greater)) => Some(false),
+                        _ => None,
+                    }
+                }
                 (None, None) => None,
             };
             match won {
@@ -832,6 +845,15 @@ fn knock_out_stages(raw: &HashMap<u32, Vec<Raw>>) -> (HashMap<u32, [u32; 2]>, u3
         })
         .collect();
     (stages, level)
+}
+
+/// A knock-out match of one player: the opponent (`None` for a bye) and
+/// both sides' half points.
+#[derive(Debug, Clone, Copy)]
+struct Match {
+    opponent: Option<u32>,
+    own: u32,
+    theirs: u32,
 }
 
 /// A game between two players, for telling how they were paired.
@@ -1525,6 +1547,78 @@ mod tests {
         assert_eq!(ranks[..3], place_list(&[("A", 1, 1), ("E", 2, 2), ("C", 3, 4)])[..]);
         assert_eq!(by_name(&db, &s, "H").rank, 5, "out in the quarter-finals: 5–8");
         assert_eq!(by_name(&db, &s, "H").rank_to, 8);
+    }
+
+    /// R3-1 of the review: seeds through to round 2 on a recorded bye (as
+    /// Swiss-Manager exports them) rank with round 1's winners, before and
+    /// after round 2 is in; the byes count for points as before.
+    #[test]
+    fn knock_out_byes_are_matches_won() {
+        let round1 = [
+            ("1.1", "S1", "BYE", "1-0"),
+            ("1.2", "S2", "BYE", "1-0"),
+            ("1.3", "A", "B", "1-0"),
+            ("1.3", "B", "A", "1/2-1/2"),
+            ("1.4", "C", "D", "1-0"),
+            ("1.4", "D", "C", "1/2-1/2"),
+            ("1.5", "E", "F", "1-0"),
+            ("1.5", "F", "E", "1/2-1/2"),
+            ("1.6", "G", "H", "1-0"),
+            ("1.6", "H", "G", "1/2-1/2"),
+        ];
+        let round2 = [
+            ("2.1", "S1", "A", "1-0"),
+            ("2.1", "A", "S1", "1/2-1/2"),
+            ("2.2", "S2", "C", "1-0"),
+            ("2.2", "C", "S2", "1/2-1/2"),
+            ("2.3", "E", "G", "1-0"),
+            ("2.3", "G", "E", "1/2-1/2"),
+        ];
+        let mut all = String::new();
+        for (event, games) in
+            [("Round 1", &round1[..]), ("Round 2", &[&round1[..], &round2[..]].concat()[..])]
+        {
+            for &(r, w, b, res) in games {
+                all += &game(
+                    event,
+                    "2024.06.01",
+                    r,
+                    (w, 0),
+                    (b, 0),
+                    res,
+                    if b == "BYE" { "" } else { "1. e4 e5" },
+                );
+            }
+        }
+        let (_d, db) = db_of(&all);
+        let groups = |s: &Standings| -> Vec<(u32, u32, String)> {
+            let mut out: Vec<(u32, u32, String)> = Vec::new();
+            for p in &s.players {
+                match out.last_mut() {
+                    Some(g) if (g.0, g.1) == (p.rank, p.rank_to) => {
+                        g.2 += &format!(" {}", name(&db, p.player))
+                    }
+                    _ => out.push((p.rank, p.rank_to, name(&db, p.player))),
+                }
+            }
+            for g in &mut out {
+                let mut names: Vec<&str> = g.2.split(' ').collect();
+                names.sort();
+                g.2 = names.join(" ");
+            }
+            out
+        };
+        let s = table(&db, "Round 1").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::KnockOut);
+        assert_eq!(s.byes, 2);
+        assert_eq!(groups(&s), [(1, 6, "A C E G S1 S2".into()), (7, 10, "B D F H".into())]);
+        let s1 = by_name(&db, &s, "S1");
+        assert_eq!((s1.games, s1.half_points, s1.wins), (1, 2, 0), "the bye counts as before");
+        let s = table(&db, "Round 2").standings.unwrap();
+        assert_eq!(s.pairing, Pairing::KnockOut);
+        assert_eq!(groups(&s), [(1, 3, "E S1 S2".into()), (4, 6, "A C G".into()), (7, 10, "B D F H".into())]);
+        let s1 = by_name(&db, &s, "S1");
+        assert_eq!((s1.games, s1.half_points, s1.wins, s1.draws), (3, 5, 1, 1));
     }
 
     /// R2-4 of the review: the games of a match recorded without game

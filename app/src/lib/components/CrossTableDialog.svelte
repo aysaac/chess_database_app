@@ -105,9 +105,10 @@
       out.push(`${n(data.duplicates, "game", "games", "", ["is", "are"])} in the database twice: ${each} once.`);
     }
     if (data.levelMatches) {
-      const one = data.levelMatches === 1;
+      const players = data.levelMatches === 1 ? "its players share their places" : "their players share places";
+      const round = data.levelMatches === 1 ? "that round's" : "their round's";
       out.push(
-        `${n(data.levelMatches, "match", "matches", "", ["ended", "ended"])} level on points (an armageddon draw, or tie-breaks missing from the database): ${one ? "its" : "their"} players share their places.`,
+        `${n(data.levelMatches, "match", "matches", "", ["ended", "ended"])} level on points (an armageddon draw, or tie-breaks missing from the database): ${players}, between ${round} winners and losers.`,
       );
     }
     return out;
