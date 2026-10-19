@@ -7,7 +7,7 @@ use chess_core::game::GameEditor;
 use chess_db::{Database, GameId, SortSpec, sorted_subset};
 use chess_jobs::{JobId, JobManager};
 
-use crate::commands::duplicates::DuplicateScan;
+use crate::commands::duplicates::DbDuplicates;
 use crate::dto::{ImportReportDto, LinesDto};
 use crate::engines::Analysis;
 use crate::error::{AppError, AppResult};
@@ -128,7 +128,7 @@ pub struct ActiveFilter {
     pub ids: Arc<Vec<GameId>>,
     pub description: String,
     /// How the filter was made, to make it again when the database is
-    /// reopened (QOL-07).
+    /// reopened (QOL-07); empty for one that can't be made again.
     pub steps: Vec<FilterStep>,
     /// The ids in each sort order used so far, valid for `epoch`.
     orders: HashMap<SortSpec, Arc<Vec<GameId>>>,
@@ -203,9 +203,9 @@ pub struct AppState {
     pub analysis: Mutex<Option<Analysis>>,
     /// The last import into each database (by handle), while it had warnings.
     pub import_reports: Mutex<HashMap<u32, ImportReportDto>>,
-    /// The last search for duplicate games (DB-08) in each database, by
-    /// handle. Lock order: `duplicates` before a database.
-    pub duplicates: Mutex<HashMap<u32, DuplicateScan>>,
+    /// The searches for duplicate games (DB-08) in each database in the
+    /// list, by handle. Lock order: `duplicates` before a database.
+    pub duplicates: Mutex<HashMap<u32, DbDuplicates>>,
     /// The Reference tab's counted lines (OPEN-14). Held only to read or
     /// store them (and to ask `jobs` about its jobs), never while taking a
     /// database or session lock.
@@ -335,12 +335,13 @@ impl AppState {
     }
 
     /// Stops using a database for `usage`; it's closed once nothing uses it.
-    /// Leaving the list drops its filter and import report either way.
-    /// False if `handle` isn't open.
+    /// Leaving the list drops its filter, import report and searches for
+    /// duplicates either way. False if `handle` isn't open.
     pub fn release_db(&self, handle: u32, usage: DbUse) -> bool {
         if usage == DbUse::List {
             self.filters.lock().expect("filters lock").remove(&handle);
             self.import_reports.lock().expect("import reports lock").remove(&handle);
+            self.duplicates.lock().expect("duplicates lock").remove(&handle);
         }
         let mut dbs = self.dbs.lock().expect("dbs lock");
         let Some(open) = dbs.get_mut(&handle) else { return false };
@@ -362,16 +363,22 @@ impl AppState {
         self.dbs.lock().expect("dbs lock").get(&handle).filter(|o| o.listed).map(|o| o.path.clone())
     }
 
+    /// Whether `handle` is open in the game list.
+    pub fn is_listed(&self, handle: u32) -> bool {
+        self.list_path(handle).is_some()
+    }
+
     /// Limits the list of `handle` to `filter`, and remembers it for the next
-    /// time the database is opened (QOL-07).
+    /// time the database is opened (QOL-07). A filter without steps can't be
+    /// made again (the duplicates of DB-08): none is remembered then.
     pub fn set_filter(&self, handle: u32, filter: ActiveFilter) {
-        let saved = filter.saved();
+        let saved = (!filter.steps.is_empty()).then(|| filter.saved());
         {
             let mut filters = self.filters.lock().expect("filters lock");
             filters.insert(handle, filter);
             self.filter_generation.fetch_add(1, Ordering::Relaxed);
         }
-        self.remember_filter(handle, Some(saved));
+        self.remember_filter(handle, saved);
     }
 
     /// Shows all games of `handle` again, next time too.

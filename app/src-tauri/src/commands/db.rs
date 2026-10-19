@@ -423,15 +423,21 @@ pub async fn search_games(
 ) -> AppResult<Option<u64>> {
     let db = state.db(handle)?;
     let mut steps = Vec::new();
+    // Within a filter that can't be made again (DB-08's duplicates), nor can this one.
+    let mut restorable = true;
     let base = within
         .then(|| {
             state.filters.lock().expect("filters lock").get(&handle).map(|f| {
                 steps = f.steps.clone();
+                restorable = !f.steps.is_empty();
                 (f.ids.clone(), f.description.clone())
             })
         })
         .flatten();
     steps.push(FilterStep::Header { query: query.clone(), quick });
+    if !restorable {
+        steps.clear();
+    }
     let query: HeaderQuery = query.into();
     if query == HeaderQuery::default() && base.is_none() {
         state.clear_filter(handle);
