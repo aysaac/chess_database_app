@@ -80,9 +80,14 @@ export const api = {
     invoke<number>("find_duplicates", { handle, fuzzy }),
   duplicatesReport: (handle: number) =>
     invoke<DuplicatesDto | null>("duplicates_report", { handle }),
-  deleteDuplicates: (handle: number) => invoke<number>("delete_duplicates", { handle }),
-  restoreDuplicates: (handle: number) => invoke<number>("restore_duplicates", { handle }),
-  showDuplicates: (handle: number) => invoke<DbInfoDto>("show_duplicates", { handle }),
+  /** Starts marking the copies of report `scan` as deleted, as a job. */
+  deleteDuplicates: (handle: number, scan: number) =>
+    invoke<number>("delete_duplicates", { handle, scan }),
+  /** Starts restoring the copies deleted from the database's reports, as a job. */
+  restoreDuplicates: (handle: number, scan: number) =>
+    invoke<number>("restore_duplicates", { handle, scan }),
+  showDuplicates: (handle: number, scan: number) =>
+    invoke<DbInfoDto>("show_duplicates", { handle, scan }),
   dbView: (handle: number) => invoke<DbViewDto>("db_view", { handle }),
   saveDbLayout: (handle: number, sort: SortSpecDto, columns: Record<string, number>) =>
     invoke<void>("save_db_layout", { handle, sort, columns }),

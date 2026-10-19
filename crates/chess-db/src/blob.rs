@@ -96,10 +96,16 @@ fn skip_header(r: &mut ByteReader<'_>) -> Result<Option<String>, DbError> {
     for _ in 0..3 {
         skip_str(r)?;
     }
-    for _ in 0..r.varint()? * 2 {
+    for _ in 0..extra_strings(r)? {
         skip_str(r)?;
     }
     Ok(fen)
+}
+
+/// The number of strings the extra tags take (a name and a value each),
+/// read from their count.
+fn extra_strings(r: &mut ByteReader<'_>) -> Result<u64, DbError> {
+    r.varint()?.checked_mul(2).ok_or_else(|| DbError::Corrupt("too many extra tags".into()))
 }
 
 /// Feeds the main line's move bytes to `each` until it returns false or
@@ -158,6 +164,12 @@ pub fn mainline_window(blob: &[u8], skip: usize, take: usize, out: &mut Vec<u8>)
     })
 }
 
+/// Extra tags that identify one game, as servers and broadcasts write them
+/// (its own page, its id, when it started, the board in a team match):
+/// duplicate detection (DB-08) never takes two games whose values differ
+/// for one of them as copies. Names are matched ignoring case.
+pub const GAME_ID_TAGS: [&str; 7] = ["Link", "GameId", "GameURL", "ChapterURL", "UTCTime", "Time", "Board"];
+
 /// A game's main line and a count of what else its blob holds, read
 /// without building the game tree: duplicate detection (DB-08) compares
 /// copies of a game by their moves and keeps the best annotated.
@@ -180,10 +192,26 @@ pub struct BlobDigest {
     pub commands: u32,
     /// Tags beyond those the index record keeps (`TimeControl`, `UTCDate`…).
     pub extra_tags: u32,
+    /// A hash of the moves with their variations, comments, symbols and
+    /// arrows (not the commands), or 0 when the game has none of those
+    /// annotations: two games with the same hash are annotated alike.
+    pub notes_hash: u64,
+    /// The [`GAME_ID_TAGS`] the game has (not empty, `?` or `-`): (index
+    /// in that list, hash of the value), by index.
+    pub game_ids: Vec<(u8, u64)>,
+}
+
+impl BlobDigest {
+    /// Variations, comments, symbols and arrows.
+    pub fn notes(&self) -> u32 {
+        self.variations.saturating_add(self.comments).saturating_add(self.nags).saturating_add(self.shapes)
+    }
 }
 
 /// Reads a blob into a [`BlobDigest`].
 pub fn digest(blob: &[u8]) -> Result<BlobDigest, DbError> {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
     let mut r = ByteReader::new(blob);
     let version = r.u8()?;
     if version != BLOB_VERSION {
@@ -196,11 +224,24 @@ pub fn digest(blob: &[u8]) -> Result<BlobDigest, DbError> {
     for _ in 0..3 {
         skip_str(&mut r)?;
     }
-    let extra = r.varint()?;
+    let extra = extra_strings(&mut r)? / 2;
     d.extra_tags = u32::try_from(extra).unwrap_or(u32::MAX);
-    for _ in 0..extra * 2 {
-        skip_str(&mut r)?;
+    for _ in 0..extra {
+        let len = r.varint()? as usize;
+        let name = r.bytes(len)?;
+        let len = r.varint()? as usize;
+        let value = r.bytes(len)?;
+        if let Some(i) = GAME_ID_TAGS.iter().position(|t| t.as_bytes().eq_ignore_ascii_case(name))
+            && !matches!(value, b"" | b"?" | b"-")
+            && !d.game_ids.iter().any(|&(j, _)| j == i as u8)
+        {
+            let mut h = DefaultHasher::new();
+            value.hash(&mut h);
+            d.game_ids.push((i as u8, h.finish()));
+        }
     }
+    d.game_ids.sort_unstable();
+    let moves_from = r.position();
     let mut depth = 0u32;
     loop {
         match r.u8()? {
@@ -217,9 +258,13 @@ pub fn digest(blob: &[u8]) -> Result<BlobDigest, DbError> {
             _ => {}
         }
     }
+    let mut notes = DefaultHasher::new();
+    blob[moves_from..r.position()].hash(&mut notes);
     for _ in 0..r.varint()? {
+        let at = r.position();
         r.varint()?;
-        match r.u8()? {
+        let kind = r.u8()?;
+        match kind {
             ANN_COMMENT_AFTER | ANN_COMMENT_BEFORE => {
                 skip_str(&mut r)?;
                 d.comments += 1;
@@ -246,6 +291,12 @@ pub fn digest(blob: &[u8]) -> Result<BlobDigest, DbError> {
             }
             other => return Err(DbError::Corrupt(format!("unknown annotation kind {other}"))),
         }
+        if matches!(kind, ANN_COMMENT_AFTER | ANN_COMMENT_BEFORE | ANN_NAGS | ANN_SHAPES) {
+            blob[at..r.position()].hash(&mut notes);
+        }
+    }
+    if d.notes() > 0 {
+        d.notes_hash = notes.finish().max(1);
     }
     Ok(d)
 }
@@ -691,6 +742,46 @@ mod tests {
         let setup = read_pgn_str(&format!("[FEN \"{fen}\"]\n\n1. Kd2 *")).remove(0);
         assert_eq!(digest(&encode_game(&setup)).unwrap().setup.as_deref(), Some(fen));
         assert!(digest(&blob[..blob.len() - 3]).is_err(), "a truncated blob");
+    }
+
+    #[test]
+    fn digest_hashes_the_annotations_and_reads_the_game_ids() {
+        let notes =
+            |movetext: &str| digest(&encode_game(&read_pgn_str(movetext).remove(0))).unwrap().notes_hash;
+        assert_eq!(notes("1. e4 e5 2. Nf3 *"), 0, "no annotations");
+        assert_eq!(notes("1. e4 {[%clk 0:03:00]} e5 {[%eval 0.2]} *"), 0, "commands aren't annotations");
+        let commented = notes("1. e4 {Best by test} e5 *");
+        assert_ne!(commented, 0);
+        assert_eq!(commented, notes("1. e4 {Best by test} e5 {[%clk 0:01:00]} *"), "the same, with a clock");
+        for other in [
+            "1. e4 {Best by test.} e5 *",
+            "1. e4 e5 {Best by test} *",
+            "1. e4 $1 e5 *",
+            "1. e4 (1. d4) e5 *",
+            "1. e4 {[%csl Ge4]} e5 *",
+        ] {
+            let other = notes(other);
+            assert!(other != 0 && other != commented, "{other}");
+        }
+
+        let tags = "[Link \"https://www.chess.com/game/live/1\"]\n[utctime \"18:00:01\"]\n[TimeControl \"60\"]\n\
+                    [Board \"?\"]\n\n1. f3 e5 *";
+        let d = digest(&encode_game(&read_pgn_str(tags).remove(0))).unwrap();
+        assert_eq!(
+            d.game_ids.iter().map(|&(i, _)| GAME_ID_TAGS[i as usize]).collect::<Vec<_>>(),
+            ["Link", "UTCTime"]
+        );
+        assert_eq!(d.extra_tags, 4);
+    }
+
+    #[test]
+    fn a_huge_count_of_extra_tags_is_an_error() {
+        // 2^63 extra tags: twice that overflows.
+        let mut blob = vec![BLOB_VERSION, 0, 0, 0, 0];
+        blob.extend_from_slice(&[0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01]);
+        assert!(digest(&blob).is_err());
+        assert!(mainline(&blob).is_err());
+        assert!(mainline_window(&blob, 0, 1, &mut Vec::new()).is_err());
     }
 
     #[test]

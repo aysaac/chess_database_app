@@ -14,12 +14,20 @@
 
   let fuzzy = $state(prefs.get<boolean>("duplicatesFuzzy", false));
   const report = $derived(duplicates.handle === db.info?.handle ? duplicates.report : null);
-  /** The report, while its game numbers are still good. */
+  /** The report, while the database hasn't changed since. */
   const found = $derived(report && !report.stale ? report : null);
+  const working = $derived(duplicates.working);
+  /** Another window deletes or restores copies of this database. */
+  const elsewhere = $derived(!working && !!report?.busy);
   const percent = $derived.by(() => {
     const job = duplicates.progress;
     return job && job.total > 0 ? Math.min(100, Math.round((job.done / job.total) * 100)) : 0;
   });
+  const doing: Record<string, string> = {
+    find: "Looking for copies…",
+    delete: "Marking the copies as deleted…",
+    restore: "Restoring the copies…",
+  };
 
   onMount(() => void duplicates.load());
 
@@ -41,19 +49,19 @@
 <Modal title="Find duplicate games" {onClose} width="660px">
   <p class="intro">
     Copies of the same game in <strong>{db.info?.name ?? "the database"}</strong>, as importing a
-    file twice or merging two sources leaves. Each group keeps its best copy (the most variations,
-    comments and symbols, then the longest, then the most complete headers); the others can be
-    marked as deleted.
+    file twice or merging two sources leaves. Each group keeps its best copy (the longest, then the
+    one with the most variations, comments and symbols, then the most complete headers); the others
+    can be marked as deleted. A copy with annotations of its own is never one of them.
   </p>
-  <fieldset disabled={duplicates.searching}>
+  <fieldset disabled={!!working}>
     <legend>What counts as a copy</legend>
     <label class="choice" class:on={!fuzzy}>
       <input type="radio" name="duplicate-kind" checked={!fuzzy} onchange={() => (fuzzy = false)} />
       <span>
         <strong>Exact copies</strong>
         <span class="soft"
-          >The same moves, players, ratings, event, site, date, round and result. Annotations may
-          differ.</span
+          >The same moves, players, ratings, event, site, date, round and result. Games of one
+          move or none only between named players in a known round.</span
         >
       </span>
     </label>
@@ -63,23 +71,31 @@
         <strong>Exact and fuzzy copies</strong>
         <span class="soft">
           Also the same game from another source: the players written another way ("Carlsen, M."),
-          another event name, or a copy that stops early. Dates, results, rounds and ratings must
-          agree where both copies have them.
+          another event name, or a copy that stops early (after 10 moves at least). Dates, results,
+          rounds and ratings must agree where both copies have them; a game that could be a copy of
+          two different games stays.
         </span>
       </span>
     </label>
   </fieldset>
 
-  <div class="result" class:empty={!duplicates.searching && !report} aria-live="polite">
-    {#if duplicates.searching}
+  <div class="result" class:empty={!working && !report} aria-live="polite">
+    {#if working}
       <div class="progress">
         <progress max="100" value={percent}></progress>
-        <span>Looking for copies… {percent}%</span>
+        <span>{doing[working]} {percent}%</span>
       </div>
+    {:else if elsewhere}
+      <p class="soft">Copies of this database are being deleted or restored in another window.</p>
     {:else if report?.stale}
       <p class="warn">
-        The database was compacted after the last search, so its games were renumbered. Find the
-        duplicates again.
+        {#if report.compacted}
+          The database was compacted after the last search, so its games were renumbered. Find the
+          duplicates again.
+        {:else}
+          The database changed after the last search (games were added, edited, deleted or
+          restored), so a copy may now be the only one left. Find the duplicates again.
+        {/if}
       </p>
     {:else if found && found.groups === 0}
       <p class="summary">
@@ -92,7 +108,7 @@
     {:else if found}
       <p class="summary">
         <strong>{count(found.toRemove, "copy", "copies")}</strong>
-        {found.deleted ? "marked as deleted" : "to delete"}, in {count(
+        {found.applied ? "marked as deleted" : "to delete"}, in {count(
           found.groups,
           "group",
           "groups",
@@ -144,42 +160,45 @@
           game list lists them all.
         </p>
       {/if}
-      {#if found.deleted}
-        <p class="done">
-          Marked {count(found.deleted, "copy", "copies")} as deleted. They stay in the database, struck
-          through in the list, until you compact it (Compact… in the status bar). Until then, Restore
-          brings them back.
-        </p>
-      {/if}
+    {/if}
+    {#if !working && report?.deleted}
+      <p class="done">
+        Marked {count(report.deleted, "copy", "copies")} as deleted. They stay in the database, struck
+        through in the list, until you compact it (Compact… in the status bar). Until then, Restore
+        brings them back while the database stays open, and so does Restore in the game list's menu.
+      </p>
     {/if}
   </div>
 
   {#snippet actions()}
-    {#if duplicates.searching}
-      <button onclick={() => duplicates.cancel()}>Stop searching</button>
+    {#if working}
+      <button onclick={() => duplicates.cancel()}
+        >{working === "find" ? "Stop searching" : "Stop"}</button
+      >
       <button onclick={onClose}>Close</button>
     {:else}
       <button onclick={onClose}>Close</button>
       {#if found?.groups}
         <button
-          title="Show every group in the game list, each kept game followed by its copies"
+          title="Show every group in the game list; in the list's own order, each kept game comes before its copies"
           onclick={show}>Show in game list</button
         >
-        {#if found.deleted}
-          <button disabled={duplicates.busy} onclick={() => duplicates.restore()}
-            >Restore {count(found.deleted, "copy", "copies")}</button
-          >
-        {:else}
+        {#if !found.applied}
           <button
             class="danger"
             title="Mark the copies as deleted; you can restore them until you compact the database"
-            disabled={duplicates.busy}
+            disabled={elsewhere}
             onclick={() => duplicates.remove()}
             >Delete {count(found.toRemove, "copy", "copies")}</button
           >
         {/if}
       {/if}
-      <button class:primary={!found?.groups} disabled={!db.info} onclick={find}
+      {#if report?.deleted}
+        <button disabled={elsewhere} onclick={() => duplicates.restore()}
+          >Restore {count(report.deleted, "copy", "copies")}</button
+        >
+      {/if}
+      <button class:primary={!found?.groups} disabled={!db.info || elsewhere} onclick={find}
         >{report ? "Find again" : "Find duplicates"}</button
       >
     {/if}

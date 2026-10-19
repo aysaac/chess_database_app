@@ -41,13 +41,11 @@ pub enum FilterStep {
         #[serde(default)]
         full: bool,
     },
-    /// Duplicate games (DB-08), each kept game followed by its copies;
-    /// `fuzzy` found fuzzy copies too.
-    #[serde(rename_all = "camelCase")]
-    Duplicates {
-        #[serde(default)]
-        fuzzy: bool,
-    },
+    /// A step this version doesn't know (a newer one saved it). The filter
+    /// is dropped when the settings are read, and the rest of them kept:
+    /// failing to read the whole file would lose them at the next save.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A filter to make again when its database is reopened.
@@ -148,6 +146,9 @@ impl Settings {
         let mut views: Vec<DbView> = Vec::with_capacity(self.database_views.len());
         for mut v in self.database_views.drain(..) {
             v.path = dunce::simplified(&v.path).to_path_buf();
+            if v.filter.as_ref().is_some_and(|f| f.steps.contains(&FilterStep::Unknown)) {
+                v.filter = None;
+            }
             if !views.iter().any(|seen| seen.path == v.path) {
                 views.push(v);
             }
@@ -408,5 +409,42 @@ mod tests {
         assert_eq!(s.recent_databases, [PathBuf::from(r"C:\x\a.chessdb"), PathBuf::from(r"C:\x\b.chessdb")]);
         assert_eq!(s.reference_database, Some(PathBuf::from(r"C:\x\b.chessdb")));
         assert_eq!(s.engines[0].path, PathBuf::from(r"C:\sf\stockfish.exe"));
+    }
+
+    /// A filter step this version doesn't know (DB-08's first draft saved a
+    /// `duplicates` one) loses only that filter, not the whole file, which
+    /// the next save would overwrite.
+    #[test]
+    fn a_filter_step_from_a_newer_version_drops_only_that_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = br#"{
+            "engines": [{"id": "engine-1", "name": "Stockfish", "path": "/sf/stockfish"}],
+            "recentDatabases": ["/x/a.chessdb", "/x/b.chessdb"],
+            "referenceDatabase": "/x/b.chessdb",
+            "welcomeDone": true,
+            "databaseViews": [
+                {"path": "/x/a.chessdb", "columns": {"white": 120},
+                 "filter": {"steps": [{"kind": "duplicates", "fuzzy": true}], "description": "Duplicates"}},
+                {"path": "/x/b.chessdb",
+                 "filter": {"steps": [{"kind": "name", "table": "player", "name": "Carlsen, Magnus"},
+                                      {"kind": "someday", "x": [1, 2]}], "description": "Later"}},
+                {"path": "/x/c.chessdb",
+                 "filter": {"steps": [{"kind": "position", "fen": "8/8/8/8/8/8/8/K1k5 w - - 0 1"}],
+                            "description": "A position"}}
+            ],
+            "ui": {"duplicatesFuzzy": true, "theme": "dark"}
+        }"#;
+        std::fs::write(dir.path().join(FILE), json).unwrap();
+        let s = Settings::load(dir.path());
+        assert_eq!(s.engines.len(), 1);
+        assert_eq!(s.recent_databases.len(), 2);
+        assert_eq!(s.reference_database, Some(PathBuf::from("/x/b.chessdb")));
+        assert!(s.welcome_done);
+        assert_eq!(s.ui.len(), 2);
+        let views = &s.database_views;
+        assert_eq!(views.len(), 3);
+        assert_eq!((views[0].filter.as_ref(), views[0].columns.get("white")), (None, Some(&120)));
+        assert_eq!(views[1].filter, None);
+        assert_eq!(views[2].filter.as_ref().map(|f| f.description.as_str()), Some("A position"));
     }
 }

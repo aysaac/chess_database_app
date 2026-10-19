@@ -41,29 +41,35 @@ fn a_file_imported_twice_is_found_deleted_restored_and_compacted_away() {
     import_pgn(&db, &exported, &NoProgress).unwrap();
     assert_eq!(db.lock().unwrap().count(), 2 * n);
 
+    // Every game is found but one: two plies, between club players, without
+    // a round (one move says nothing: they could have played it twice).
+    let thin: Vec<GameId> = (0..n).filter(|&id| db.lock().unwrap().record(id).unwrap().plies < 3).collect();
+    assert_eq!(thin.len(), 1);
+    let copied: Vec<GameId> = (0..n).filter(|id| !thin.contains(id)).collect();
     for fuzzy in [false, true] {
         let found = find(&db, fuzzy);
         assert_eq!(found.games, 2 * n);
-        assert_eq!(found.groups.len(), n as usize, "fuzzy: {fuzzy}");
-        for (g, id) in found.groups.iter().zip(0..) {
+        assert_eq!(found.groups.len(), copied.len(), "fuzzy: {fuzzy}");
+        for (g, &id) in found.groups.iter().zip(&copied) {
             // Copies look alike: the first one is kept.
             assert_eq!((g.keep, g.remove.as_slice(), g.exact), (id, [id + n].as_slice(), true));
         }
-        assert_eq!(found.to_remove(), (n..2 * n).collect::<Vec<GameId>>());
+        assert_eq!(found.to_remove(), copied.iter().map(|id| id + n).collect::<Vec<GameId>>());
     }
 
     // Deleting them leaves no copies; restoring brings them back.
     let found = find(&db, false);
     let ids = found.to_remove();
-    assert_eq!(db.lock().unwrap().set_deleted_many(&ids, true).unwrap(), n);
+    let m = ids.len() as u32;
+    assert_eq!(db.lock().unwrap().set_deleted_many(&ids, true).unwrap(), m);
     assert_eq!(find(&db, true).groups, []);
-    assert_eq!(db.lock().unwrap().set_deleted_many(&ids, false).unwrap(), n);
-    assert_eq!(find(&db, false), found);
+    assert_eq!(db.lock().unwrap().set_deleted_many(&ids, false).unwrap(), m);
+    assert_eq!(find(&db, false).groups, found.groups);
 
     // Compacting removes them for good.
     db.lock().unwrap().set_deleted_many(&ids, true).unwrap();
     let summary = db.lock().unwrap().compact(&NoProgress).unwrap();
-    assert_eq!((summary.kept, summary.removed), (n, n));
+    assert_eq!((summary.kept, summary.removed), (2 * n - m, m));
     assert_eq!(find(&db, true).groups, []);
 }
 
@@ -191,4 +197,83 @@ fn time_both(db: &Mutex<Database>, label: &str) -> [Duplicates; 2] {
         );
         found
     })
+}
+
+/// `n` games of one pair of engines that all start with the same 10 plies
+/// and go on at random for 40 plies, without a date.
+fn engine_match(n: usize, seed: u64) -> Vec<chess_db::PreparedGame> {
+    use chess_core::game::{Game, Headers, NodeId};
+    use chess_core::shakmaty::san::San;
+    use chess_core::shakmaty::{Chess, Position};
+
+    let head = ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6"];
+    let mut seed = seed;
+    (0..n)
+        .map(|_| {
+            let headers = Headers {
+                white: "Stockfish 16 64-bit".into(),
+                black: "Komodo 14 64-bit".into(),
+                event: "Engine match".into(),
+                ..Headers::default()
+            };
+            let mut game = Game::new(headers, None);
+            let mut pos = Chess::default();
+            let mut moves = Vec::new();
+            for san in head {
+                let m = san.parse::<San>().unwrap().to_move(&pos).unwrap();
+                pos.play_unchecked(m);
+                moves.push(m);
+            }
+            for _ in 0..40 {
+                let legal = pos.legal_moves();
+                if legal.is_empty() {
+                    break;
+                }
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let m = legal[((seed >> 33) as usize) % legal.len()];
+                pos.play_unchecked(m);
+                moves.push(m);
+            }
+            game.add_line(NodeId::ROOT, &moves);
+            chess_db::PreparedGame::new(&game)
+        })
+        .collect()
+}
+
+/// R1-9 (review of DB-08): one players' bucket of many games that share
+/// their first moves stays quick (it was quadratic: 100,000 games took
+/// 24 s), and Stop is heard while they're compared.
+/// `DUPLICATES_N=100000 cargo test --release -p chess-db --test duplicates -- --ignored big_bucket --nocapture`
+#[test]
+#[ignore]
+fn a_big_bucket_of_games_that_start_alike() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let n: usize = std::env::var("DUPLICATES_N").ok().and_then(|v| v.parse().ok()).unwrap_or(100_000);
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Database::create(&dir.path().join("Bucket")).unwrap();
+    let games = engine_match(n, 42);
+    db.append_prepared(&games).unwrap();
+    db.append_prepared(&games[..10]).unwrap();
+    let db = Mutex::new(db);
+    for found in time_both(&db, "one bucket") {
+        assert_eq!(found.removable(), 10);
+    }
+
+    /// Stop pressed as soon as the comparisons begin.
+    struct Stop(AtomicBool);
+    impl chess_db::Progress for Stop {
+        fn report(&self, done: u64, total: u64) {
+            if total == 1000 && done >= 950 {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::Relaxed)
+        }
+    }
+    let t = Instant::now();
+    let result = find_duplicates(&db, DuplicateOptions { fuzzy: true }, &Stop(AtomicBool::new(false)));
+    eprintln!("stopped: {:?} in {:.2}s", result.as_ref().err(), t.elapsed().as_secs_f64());
+    assert!(matches!(result, Err(chess_db::DbError::Cancelled)));
 }

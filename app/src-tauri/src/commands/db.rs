@@ -457,7 +457,7 @@ pub async fn search_games(
 
 /// The steps of the filter a search makes: the search, after those of the
 /// filter it searched within. Within a filter that isn't saved (no steps:
-/// a cross-table edition's games, DB-16), none: a filter made again from
+/// a cross-table edition's games, DB-16, or DB-08's duplicates), none: a filter made again from
 /// the search alone would be another one.
 fn search_steps(within: Option<Vec<FilterStep>>, search: FilterStep) -> Vec<FilterStep> {
     match within {
