@@ -309,7 +309,8 @@ mod tests {
     /// several keeps its filter for the session only: settings.json written
     /// with it stays readable by builds that know only the header, name and
     /// position steps (main at 9d846bb), which drop every setting when one
-    /// isn't. An event with one edition is saved as its event's filter.
+    /// isn't, and has no filter to restore (R2-3). An event with one edition
+    /// is saved as its event's filter.
     #[test]
     fn an_edition_filter_keeps_settings_readable_by_older_builds() {
         /// `FilterStep` as main at 9d846bb has it.
@@ -348,8 +349,12 @@ mod tests {
         }
 
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("Editions");
-        let db = Mutex::new(Database::create(&path).unwrap());
+        let config = dir.path().join("config");
+        let state = AppState::default();
+        state.init_dirs(config.clone(), dir.path().join("data"));
+        let handle =
+            state.add_db(Database::create(&dir.path().join("Editions")).unwrap(), crate::state::DbUse::List);
+        let db = state.db(handle).unwrap();
         let pgn = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/pgn/crosstable.pgn");
         chess_db::import_pgn(&db, &pgn, &NoProgress).unwrap();
         let event = |name: &str| db.lock().unwrap().names(NameKind::Event).id_of(name).unwrap();
@@ -365,19 +370,22 @@ mod tests {
         let name = FilterStep::Name { table: NameKindDto::Event, name: "Spring Round Robin".into() };
         assert_eq!(spring.steps, [name]);
 
-        for (filter, steps) in [
-            (club, vec![]),
-            (spring, vec![MainStep::Name { table: NameKindDto::Event, name: "Spring Round Robin".into() }]),
-        ] {
-            let mut settings = crate::settings::Settings::default();
-            settings.db_view_mut(&path).filter = Some(filter.saved());
-            settings.save(dir.path()).unwrap();
-            let json = std::fs::read(dir.path().join("settings.json")).unwrap();
-            let main: MainSettings = serde_json::from_slice(&json).expect("main reads the settings");
-            let saved = main.database_views[0].filter.as_ref().expect("the filter saved");
-            assert_eq!((&saved.description, &saved.steps), (&filter.description, &steps));
-            assert_eq!(crate::settings::Settings::load(dir.path()).database_views.len(), 1);
-        }
+        // As the app saves them, read with main's steps.
+        let read_by_main = || -> MainSettings {
+            let json = std::fs::read(config.join("settings.json")).unwrap();
+            serde_json::from_slice(&json).expect("main reads the settings")
+        };
+        state.set_filter(handle, spring);
+        let main = read_by_main();
+        let saved = main.database_views[0].filter.as_ref().expect("the event's filter saved");
+        let name = MainStep::Name { table: NameKindDto::Event, name: "Spring Round Robin".into() };
+        assert_eq!(
+            (saved.description.as_str(), saved.steps.as_slice()),
+            ("Event: Spring Round Robin", [name].as_slice())
+        );
+        state.set_filter(handle, club);
+        assert!(read_by_main().database_views[0].filter.is_none(), "the edition's filter isn't saved");
+        assert_eq!(crate::settings::Settings::load(&config).database_views.len(), 1);
     }
 
     fn edition(first: &str, last: &str) -> Edition {
