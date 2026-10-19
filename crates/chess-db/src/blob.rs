@@ -192,10 +192,11 @@ pub struct BlobDigest {
     pub commands: u32,
     /// Tags beyond those the index record keeps (`TimeControl`, `UTCDate`…).
     pub extra_tags: u32,
-    /// A hash of the moves with their variations, comments, symbols and
-    /// arrows (not the commands), or 0 when the game has none of those
-    /// annotations: two games with the same hash are annotated alike.
-    pub notes_hash: u64,
+    /// A hash of the moves with their variations and every annotation
+    /// (comments, symbols, arrows, and commands such as clock times and
+    /// evals), or 0 when the game has none: two games with the same hash
+    /// are annotated alike.
+    pub annotations_hash: u64,
     /// The [`GAME_ID_TAGS`] the game has (not empty, `?` or `-`): (index
     /// in that list, hash of the value), by index.
     pub game_ids: Vec<(u8, u64)>,
@@ -291,12 +292,10 @@ pub fn digest(blob: &[u8]) -> Result<BlobDigest, DbError> {
             }
             other => return Err(DbError::Corrupt(format!("unknown annotation kind {other}"))),
         }
-        if matches!(kind, ANN_COMMENT_AFTER | ANN_COMMENT_BEFORE | ANN_NAGS | ANN_SHAPES) {
-            blob[at..r.position()].hash(&mut notes);
-        }
+        blob[at..r.position()].hash(&mut notes);
     }
-    if d.notes() > 0 {
-        d.notes_hash = notes.finish().max(1);
+    if d.notes() > 0 || d.commands > 0 {
+        d.annotations_hash = notes.finish().max(1);
     }
     Ok(d)
 }
@@ -746,22 +745,26 @@ mod tests {
 
     #[test]
     fn digest_hashes_the_annotations_and_reads_the_game_ids() {
-        let notes =
-            |movetext: &str| digest(&encode_game(&read_pgn_str(movetext).remove(0))).unwrap().notes_hash;
+        let notes = |movetext: &str| {
+            digest(&encode_game(&read_pgn_str(movetext).remove(0))).unwrap().annotations_hash
+        };
         assert_eq!(notes("1. e4 e5 2. Nf3 *"), 0, "no annotations");
-        assert_eq!(notes("1. e4 {[%clk 0:03:00]} e5 {[%eval 0.2]} *"), 0, "commands aren't annotations");
+        let clocks = notes("1. e4 {[%clk 0:03:00]} e5 {[%eval 0.2]} *");
+        assert_ne!(clocks, 0, "a clock and an eval are annotations too (DB-08 review R2-1)");
+        assert_eq!(clocks, notes("1. e4 {[%clk 0:03:00]} e5 {[%eval 0.2]} *"));
         let commented = notes("1. e4 {Best by test} e5 *");
         assert_ne!(commented, 0);
-        assert_eq!(commented, notes("1. e4 {Best by test} e5 {[%clk 0:01:00]} *"), "the same, with a clock");
         for other in [
             "1. e4 {Best by test.} e5 *",
             "1. e4 e5 {Best by test} *",
             "1. e4 $1 e5 *",
             "1. e4 (1. d4) e5 *",
             "1. e4 {[%csl Ge4]} e5 *",
+            "1. e4 {Best by test} e5 {[%clk 0:01:00]} *",
+            "1. e4 {[%clk 0:03:00]} e5 {[%eval 0.3]} *",
         ] {
             let other = notes(other);
-            assert!(other != 0 && other != commented, "{other}");
+            assert!(other != 0 && other != commented && other != clocks, "{other}");
         }
 
         let tags = "[Link \"https://www.chess.com/game/live/1\"]\n[utctime \"18:00:01\"]\n[TimeControl \"60\"]\n\
