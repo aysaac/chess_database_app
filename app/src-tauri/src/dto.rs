@@ -203,6 +203,10 @@ pub enum CopyModeDto {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct DuplicatesDto {
+    /// The search's number, which the actions on the report send back: they
+    /// are refused once another search replaced it.
+    #[ts(type = "number")]
+    pub scan: u64,
     /// Fuzzy copies were looked for too, not only exact ones.
     pub fuzzy: bool,
     /// Games looked at (those not marked as deleted then).
@@ -212,11 +216,19 @@ pub struct DuplicatesDto {
     pub exact_groups: u32,
     /// Copies to delete: every game of a group but the one kept.
     pub to_remove: u32,
-    /// Copies this search marked as deleted, which Restore brings back.
+    /// They were marked as deleted.
+    pub applied: bool,
+    /// Copies marked as deleted from this or an earlier report of the
+    /// database (since it was opened, until it's compacted), which Restore
+    /// brings back.
     pub deleted: u32,
-    /// The database was compacted since, so the games were renumbered:
-    /// look again.
+    /// A delete or restore is running (maybe started in another window).
+    pub busy: bool,
+    /// The database changed since (games added, edited, deleted, restored
+    /// or a compaction), so a copy may be the only one left: look again.
     pub stale: bool,
+    /// It changed by a compaction, which renumbered the games.
+    pub compacted: bool,
     /// The first groups.
     pub preview: Vec<DuplicateGroupDto>,
 }

@@ -1,39 +1,43 @@
 import { api } from "../api";
 import type { DuplicatesDto } from "../bindings/DuplicatesDto";
 import type { JobDto } from "../bindings/JobDto";
-import { formatCount } from "../format";
 import { db } from "./db.svelte";
 import { jobs } from "./jobs.svelte";
 import { notices } from "./notify.svelte";
 
-function copies(n: number): string {
-  return n === 1 ? "1 copy" : `${formatCount(n)} copies`;
-}
+/** What a job of the dialog does. */
+export type DuplicatesWork = "find" | "delete" | "restore";
 
 /**
- * Duplicate games (DB-08) in the open database: the search runs as a job in
- * Rust, which keeps what it found per database; this holds its report for
- * the dialog and runs the actions on it.
+ * Duplicate games (DB-08) in the open database: the search, deleting and
+ * restoring run as jobs in Rust, which keeps the reports per database; this
+ * holds the report for the dialog and runs the actions on it. Each action
+ * names the report it was shown (`scan`): Rust refuses it once another
+ * search (maybe in another window) replaced that report, or the database
+ * changed under it, and the dialog then loads the report as it is now.
  */
 class DuplicatesStore {
   /** What the last search in the open database found, if one ran. */
   report = $state<DuplicatesDto | null>(null);
   /** The database `report` is for. */
   handle = $state<number | null>(null);
-  /** The search running in this window, and the database it searches. */
-  job = $state<{ id: number; handle: number } | null>(null);
-  /** A delete or restore on its way. */
-  busy = $state(false);
+  /** The job this window runs (null `id` while it starts), and its database. */
+  job = $state<{ id: number | null; handle: number; work: DuplicatesWork } | null>(null);
 
-  /** The running search's progress, once it reported any. */
+  /** The running job's progress, once it reported any. */
   get progress(): JobDto | undefined {
     const id = this.job?.id;
-    return id === undefined ? undefined : jobs.running.find((j) => j.id === id);
+    return id == null ? undefined : jobs.running.find((j) => j.id === id);
+  }
+
+  /** What this window is doing to the open database, if anything. */
+  get working(): DuplicatesWork | null {
+    return this.job && this.job.handle === db.info?.handle ? this.job.work : null;
   }
 
   /** Whether a search of the open database is running. */
   get searching(): boolean {
-    return !!this.job && this.job.handle === db.info?.handle;
+    return this.working === "find";
   }
 
   /** Loads the report of the open database (null if it has none yet). */
@@ -56,48 +60,35 @@ class DuplicatesStore {
 
   /** Looks for duplicates in the open database; resolves when done. */
   async find(fuzzy: boolean) {
-    const handle = db.info?.handle;
-    if (handle === undefined || this.job) return;
-    try {
-      const id = await api.findDuplicates(handle, fuzzy);
-      this.job = { id, handle };
-      await jobs.waitFor(id);
-    } catch (e) {
-      notices.error(e);
-    } finally {
-      this.job = null;
-    }
-    if (db.info?.handle === handle) await this.load();
+    await this.#run("find", (handle) => api.findDuplicates(handle, fuzzy));
+  }
+
+  /** Marks the copies of the report shown as deleted (restorable until compacting). */
+  async remove() {
+    const scan = this.#scan();
+    if (scan !== null) await this.#run("delete", (handle) => api.deleteDuplicates(handle, scan));
+  }
+
+  /** Restores the copies deleted from the database's reports. */
+  async restore() {
+    const scan = this.#scan();
+    if (scan !== null) await this.#run("restore", (handle) => api.restoreDuplicates(handle, scan));
   }
 
   cancel() {
-    if (this.job) void jobs.cancel(this.job.id);
+    if (this.job?.id != null) void jobs.cancel(this.job.id);
   }
 
-  /** Marks the copies found as deleted (restorable until compacting). */
-  async remove() {
-    await this.#act(async (handle) => {
-      const n = await api.deleteDuplicates(handle);
-      notices.show(
-        n ? `Marked ${copies(n)} as deleted` : "The copies were marked as deleted already",
-      );
-    });
-  }
-
-  /** Restores the copies `remove` marked as deleted. */
-  async restore() {
-    await this.#act(async (handle) => {
-      const n = await api.restoreDuplicates(handle);
-      notices.show(`Restored ${copies(n)}`);
-    });
-  }
-
-  /** Limits the game list to the groups found, each kept game first. */
+  /**
+   * Limits the game list to the groups of the report shown: in the list's
+   * own order, each kept game comes before its copies.
+   */
   async show() {
     const handle = db.info?.handle;
-    if (handle === undefined) return;
+    const scan = this.#scan();
+    if (handle === undefined || scan === null) return;
     try {
-      const info = await api.showDuplicates(handle);
+      const info = await api.showDuplicates(handle, scan);
       if (db.info?.handle !== handle) return;
       db.info = info;
       db.quickText = "";
@@ -105,21 +96,32 @@ class DuplicatesStore {
       db.listVersion++;
     } catch (e) {
       notices.error(e);
+      await this.load();
     }
   }
 
-  async #act(f: (handle: number) => Promise<void>) {
+  /** The number of the report shown, if it's the open database's. */
+  #scan(): number | null {
+    return this.report && this.handle === db.info?.handle ? this.report.scan : null;
+  }
+
+  async #run(work: DuplicatesWork, start: (handle: number) => Promise<number>) {
     const handle = db.info?.handle;
-    if (handle === undefined || this.busy) return;
-    this.busy = true;
+    if (handle === undefined || this.job) return;
+    this.job = { id: null, handle, work };
     try {
-      await f(handle);
-      await db.refresh();
+      const id = await start(handle);
+      this.job = { id, handle, work };
+      // Its outcome is a notice (jobs.svelte.ts).
+      await jobs.waitFor(id);
     } catch (e) {
+      // Refused: the report shown was replaced, or the database changed.
       notices.error(e);
     } finally {
-      this.busy = false;
+      this.job = null;
     }
+    if (db.info?.handle !== handle) return;
+    if (work !== "find") await db.refresh();
     await this.load();
   }
 }

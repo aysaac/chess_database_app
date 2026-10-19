@@ -6,6 +6,11 @@ import type { DuplicateGroupDto } from "./DuplicateGroupDto";
  */
 export type DuplicatesDto = { 
 /**
+ * The search's number, which the actions on the report send back: they
+ * are refused once another search replaced it.
+ */
+scan: number, 
+/**
  * Fuzzy copies were looked for too, not only exact ones.
  */
 fuzzy: boolean, 
@@ -22,14 +27,28 @@ exactGroups: number,
  */
 toRemove: number, 
 /**
- * Copies this search marked as deleted, which Restore brings back.
+ * They were marked as deleted.
+ */
+applied: boolean, 
+/**
+ * Copies marked as deleted from this or an earlier report of the
+ * database (since it was opened, until it's compacted), which Restore
+ * brings back.
  */
 deleted: number, 
 /**
- * The database was compacted since, so the games were renumbered:
- * look again.
+ * A delete or restore is running (maybe started in another window).
+ */
+busy: boolean, 
+/**
+ * The database changed since (games added, edited, deleted, restored
+ * or a compaction), so a copy may be the only one left: look again.
  */
 stale: boolean, 
+/**
+ * It changed by a compaction, which renumbered the games.
+ */
+compacted: boolean, 
 /**
  * The first groups.
  */
