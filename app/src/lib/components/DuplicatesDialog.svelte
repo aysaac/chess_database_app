@@ -2,7 +2,8 @@
   // Find and remove duplicate games (DB-08, ChessBase's "Double game
   // killer"): choose what counts as a copy, search the open database in the
   // background, then mark the copies as deleted (restorable until the
-  // database is compacted) or show them in the game list.
+  // database is compacted) or show them in the game list. Before its copies
+  // are deleted, a kept game takes the headers it lacks from them (R4-1).
   import { onMount } from "svelte";
   import { formatCount, resultLabel } from "../format";
   import { db } from "../stores/db.svelte";
@@ -51,8 +52,10 @@
     Copies of the same game in <strong>{db.info?.name ?? "the database"}</strong>, as importing a
     file twice or merging two sources leaves. Each group keeps its best copy (the longest, then the
     one with the most variations, comments and symbols, then clock times and evals, then the most
-    complete headers); the others can be marked as deleted. A copy with anything the kept game lacks
-    (annotations, clock times, ratings, a board, an ECO code) is never one of them.
+    complete headers); the others can be marked as deleted. The kept game first takes the ratings,
+    round and board, ECO code, date, event, site and result it lacks from them. A copy with
+    annotations or clock times of its own, or a header that disagrees with another copy's, is never
+    one of them.
   </p>
   <fieldset disabled={!!working}>
     <legend>What counts as a copy</legend>
@@ -164,9 +167,19 @@
     {/if}
     {#if !working && report?.deleted}
       <p class="done">
-        Marked {count(report.deleted, "copy", "copies")} as deleted. They stay in the database, struck
-        through in the list, until you compact it (Compact… in the status bar). Until then, Restore
-        brings them back while the database stays open, and so does Restore in the game list's menu.
+        Marked {count(report.deleted, "copy", "copies")} as deleted{#if report.filled}, after filling
+          in what {count(report.filled, "kept game", "kept games")} lacked from them{/if}. They stay in
+        the database, struck through in the list, until you compact it (Compact… in the status bar).
+        Until then, Restore brings them back while the database stays open{#if report.filled}, and
+          takes out what the kept games took (unless you changed them since). Restore in the game
+          list's menu brings copies back too, but leaves the kept games as they are{:else}, and so
+          does Restore in the game list's menu{/if}.
+      </p>
+    {:else if !working && report?.filled}
+      <p class="done">
+        {count(report.filled, "kept game", "kept games")} still {report.filled === 1 ? "has" : "have"}
+        what {report.filled === 1 ? "it" : "they"} took from copies restored since: Restore takes it
+        out.
       </p>
     {/if}
   </div>
@@ -187,7 +200,7 @@
         {#if !found.applied}
           <button
             class="danger"
-            title="Mark the copies as deleted; you can restore them until you compact the database"
+            title="Fill in what the kept games lack from their copies, then mark the copies as deleted; you can restore them until you compact the database"
             disabled={elsewhere}
             onclick={() => duplicates.remove()}
             >Delete {count(found.toRemove, "copy", "copies")}</button
@@ -198,6 +211,8 @@
         <button disabled={elsewhere} onclick={() => duplicates.restore()}
           >Restore {count(report.deleted, "copy", "copies")}</button
         >
+      {:else if report?.filled}
+        <button disabled={elsewhere} onclick={() => duplicates.restore()}>Restore kept games</button>
       {/if}
       <button class:primary={!found?.groups} disabled={!db.info || elsewhere} onclick={find}
         >{report ? "Find again" : "Find duplicates"}</button

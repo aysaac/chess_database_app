@@ -13,7 +13,9 @@
 //!   "Magnus Carlsen (NOR)", "Cervantes Landeiro, T." and "Thalia Cervantes
 //!   Landeiro": the surname's last word and the first initial, one surname's
 //!   words ending the other's, so "Garcia Martinez" and "Perez Martinez" are
-//!   two people; a name with digits, such as an engine's "Stockfish 16
+//!   two people, and given names written out that start alike, so "Alex"
+//!   and "Alexander" or "Sergey" and "Sergei" are one but "Hao" and "Hui"
+//!   two; a name with digits, such as an engine's "Stockfish 16
 //!   64-bit", must have the same words); dates, results, rounds (with the board or game after the dot:
 //!   "5.1" and "5.3" are two games), players' ratings, Site URLs (one per
 //!   online game) and game ids that agree where both copies have them; and
@@ -42,10 +44,13 @@
 //! database. The others are the ones to delete, and none of them has moves
 //! or annotations the kept game lacks: a copy with annotations or commands
 //! of its own (a different comment, a broadcast's clock times, a shorter
-//! copy that is annotated) is no copy. Nor is a copy with a rating, round
-//! or board, ECO, date, event or site the kept game lacks: those fields of
-//! the index record are what searches, sorts and the Reference tab use
-//! (other tags may be lost; merging headers isn't done yet). Every
+//! copy that is annotated) is no copy. The fields of the index record that
+//! searches, sorts, the opening tree and the Reference tab use (ratings,
+//! round and board, ECO, date, event, site, result) aren't lost either:
+//! where the kept game lacks one, it takes it from its copies before they
+//! are deleted ([`delete_copies`]; R4-1), and the copies must agree on it,
+//! else the one that disagrees stays (other tags may be lost; merging them
+//! isn't done yet). Every
 //! one of them is a copy of the kept game itself: fuzzy matches don't chain,
 //! and a game that could be a copy of two different games (the start of
 //! both, or without the headers that tell them apart), or of many games of
@@ -62,10 +67,10 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Mutex;
 
-use crate::blob::{BlobDigest, digest};
+use crate::blob::{BlobDigest, date_round_eco, digest, with_date_round_eco};
 use crate::database::NameKind;
 use crate::positions::for_each_game;
-use crate::record::IndexRecord;
+use crate::record::{IndexRecord, pack_date, pack_eco, pack_round, unpack_eco};
 use crate::{Database, DbError, GameId, Progress};
 
 /// Main lines shorter than this (10 moves) are weak evidence on their own:
@@ -195,30 +200,58 @@ fn is_placeholder(plain: &str) -> bool {
     words.first().is_none_or(|first| PLACEHOLDERS.contains(&first.as_str())) || words.iter().any(nn)
 }
 
-/// A player's name as fuzzy matching sees it: its [`PlayerKey`], and the
+/// A player's name as fuzzy matching sees it: its [`PlayerKey`], the
 /// words its surname is to end with (hashed): the surname's words for
 /// "Last, First", every word of a name without a comma (its surname is
 /// some of the last ones), none for a name with digits (the key is all of
-/// it).
+/// it); and the given name's first word.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct PlayerName {
     key: PlayerKey,
     comma: bool,
     words: Box<[u64]>,
+    /// The given name's first word, folded, letters only ("" for none):
+    /// "magnus" in "Carlsen, Magnus" and "Magnus Carlsen", "m" in
+    /// "Carlsen, M." and "j" in "Garcia, J.C.".
+    given: Box<str>,
 }
 
 impl PlayerName {
     /// Whether the surnames can be one (their last words are, by the key):
     /// one surname's words end the other's ("Landeiro" and "Cervantes
     /// Landeiro"; "Thalia Cervantes Landeiro"), not two surnames that only
-    /// share their last word ("Garcia Martinez", "Perez Martinez").
+    /// share their last word ("Garcia Martinez", "Perez Martinez"). Without
+    /// commas, the words after the first (a given name) are compared so
+    /// (R4-3): "Magnus Carlsen" and "M Carlsen" are one, "Jose Garcia
+    /// Martinez" and "Javier Perez Martinez" two.
     fn same_surname(&self, other: &PlayerName) -> bool {
         match (self.comma, other.comma) {
-            (false, false) => true,
+            (false, false) => {
+                let (a, b) =
+                    (self.words.get(1..).unwrap_or_default(), other.words.get(1..).unwrap_or_default());
+                a.ends_with(b) || b.ends_with(a)
+            }
             (true, false) => other.words.ends_with(&self.words),
             (false, true) => self.words.ends_with(&other.words),
             (true, true) => self.words.ends_with(&other.words) || other.words.ends_with(&self.words),
         }
+    }
+
+    /// Whether the given names can be one (R4-2). An initial matches a name
+    /// with that initial ([`PlayerKey::initial`] checks it). Two names
+    /// written out must be one the start of the other ("Alex",
+    /// "Alexander") or share their first three letters ("Sergey",
+    /// "Sergei"; "Aleksandr", "Alexander"): "Hao" and "Hui" are two people.
+    /// So are "Mikhail" and "Michail" then, which errs toward keeping games.
+    fn same_given(&self, other: &PlayerName) -> bool {
+        let (a, b) = (&*self.given, &*other.given);
+        let len = |s: &str| s.chars().count();
+        let three = |s: &str| s.chars().take(3).collect::<String>();
+        len(a) <= 1
+            || len(b) <= 1
+            || a.starts_with(b)
+            || b.starts_with(a)
+            || (len(a) >= 3 && len(b) >= 3 && three(a) == three(b))
     }
 }
 
@@ -249,7 +282,7 @@ fn player_name(name: &str) -> PlayerName {
             .collect();
         words.sort_unstable();
         let key = PlayerKey { surname: hash_of(("whole", words)).max(1), initial: None };
-        return PlayerName { key, comma: false, words: Box::default() };
+        return PlayerName { key, comma: false, words: Box::default(), given: Box::default() };
     }
     let (surname, given) = match plain.split_once(',') {
         Some((last, first)) => (last, first),
@@ -266,7 +299,15 @@ fn player_name(name: &str) -> PlayerName {
     let Some(last) = words_of(surname).pop() else { return PlayerName::default() };
     let key =
         PlayerKey { surname: hash_of(&last).max(1), initial: given.chars().find(|c| c.is_alphanumeric()) };
-    PlayerName { key, comma, words: words.iter().map(hash_of).collect() }
+    // "J.C." and "Jean-Pierre" start with "j" and "jean".
+    let given =
+        given.split(|c: char| c.is_whitespace() || c == '.' || c == '-').map(letters).find(|w| !w.is_empty());
+    PlayerName {
+        key,
+        comma,
+        words: words.iter().map(hash_of).collect(),
+        given: given.unwrap_or_default().into(),
+    }
 }
 
 /// What the comparisons need of the name tables, read once.
@@ -291,10 +332,18 @@ impl Names {
         self.players.get(id as usize).map(|p| p.key).unwrap_or_default()
     }
 
-    /// Whether two players' surnames can be one ([`PlayerName::same_surname`]).
-    fn same_surname(&self, a: u32, b: u32) -> bool {
+    /// Whether two players can be one: their surnames
+    /// ([`PlayerName::same_surname`]), initials and given names
+    /// ([`PlayerName::same_given`]).
+    fn same_player(&self, a: u32, b: u32) -> bool {
         match (self.players.get(a as usize), self.players.get(b as usize)) {
-            (Some(a), Some(b)) => a.same_surname(b),
+            (Some(a), Some(b)) => {
+                let initials = match (a.key.initial, b.key.initial) {
+                    (Some(p), Some(q)) => p == q,
+                    _ => true,
+                };
+                initials && a.same_surname(b) && a.same_given(b)
+            }
             _ => false,
         }
     }
@@ -469,6 +518,10 @@ impl Candidate {
     fn exact_key(&self) -> (Tags, u64, u64, u32, u64) {
         (self.tags, self.start, self.line, self.quality.plies, self.game_ids)
     }
+
+    fn fields(&self) -> Fields {
+        Fields::of(&self.tags, self.eco)
+    }
 }
 
 /// A class's best copy as fuzzy matching sees it: with its moves and game
@@ -500,10 +553,6 @@ fn ids_agree(a: &[(u8, u64)], b: &[(u8, u64)]) -> bool {
 /// players' surnames are known to agree (they share a bucket).
 fn fuzzy_match(a: &Line, b: &Line, names: &Names) -> bool {
     let (ta, tb) = (&a.c.tags, &b.c.tags);
-    let initials = |x: u32, y: u32| match (names.player(x).initial, names.player(y).initial) {
-        (Some(p), Some(q)) => p == q,
-        _ => true,
-    };
     let year = |d: u32| d >> 9 != 0;
     let (short, long) = if a.moves.len() <= b.moves.len() { (a.moves, b.moves) } else { (b.moves, a.moves) };
     // Something more than the players and the year that they share: a long
@@ -525,10 +574,8 @@ fn fuzzy_match(a: &Line, b: &Line, names: &Names) -> bool {
         && long.starts_with(short)
         && (short.len() == long.len() || stops_early)
         && enough
-        && initials(ta.white, tb.white)
-        && initials(ta.black, tb.black)
-        && names.same_surname(ta.white, tb.white)
-        && names.same_surname(ta.black, tb.black)
+        && names.same_player(ta.white, tb.white)
+        && names.same_player(ta.black, tb.black)
         && dates_agree(ta.date, tb.date)
         && (short.len() >= SHORT_PLIES || (full_date(ta.date) && ta.date == tb.date))
         && (ta.result == tb.result || ta.result == 0 || tb.result == 0)
@@ -540,31 +587,123 @@ fn fuzzy_match(a: &Line, b: &Line, names: &Names) -> bool {
         && ids_agree(a.ids, b.ids)
 }
 
-/// Whether `kept` has every field of the index record `copy` has: deleting
-/// `copy` mustn't take a game's ratings, round or board, ECO, date, event
-/// or site from it (they're what searches, sorts and the Reference tab
-/// use). Other tags may be lost; merging headers isn't done yet.
-fn covers(kept: &Candidate, copy: &Candidate) -> bool {
-    let (k, c) = (&kept.tags, &copy.tags);
-    let has = |k: u32, c: u32| k != 0 || c == 0;
-    has(k.white_elo.into(), c.white_elo.into())
-        && has(k.black_elo.into(), c.black_elo.into())
-        && has(k.round.into(), c.round.into())
-        && has(k.subround.into(), c.subround.into())
-        && has(kept.eco.into(), copy.eco.into())
-        && has(k.date >> 9, c.date >> 9)
-        && has((k.date >> 5) & 0xf, (c.date >> 5) & 0xf)
-        && has(k.date & 0x1f, c.date & 0x1f)
-        && has(k.event, c.event)
-        && has(k.site, c.site)
+/// The fields of an index record that a kept game takes from the copies
+/// deleted for it where it lacks them (R4-1): what searches, sorts, the
+/// opening tree and the Reference tab use. In this order: White's and
+/// Black's ratings, the round and its board, the year, month and day, and
+/// the result, which must agree where two games have them; then, from
+/// [`OWN`] on, the ECO code, event and site, of which the kept game's own
+/// stand (another source may name them differently). 0 is unknown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Fields([u32; 11]);
+
+/// The first of the [`Fields`] where the kept game's own value stands.
+const OWN: usize = 8;
+
+impl Fields {
+    fn of(t: &Tags, eco: u16) -> Fields {
+        let d = t.date;
+        Fields([
+            t.white_elo.into(),
+            t.black_elo.into(),
+            t.round.into(),
+            t.subround.into(),
+            d >> 9,
+            (d >> 5) & 0xf,
+            d & 0x1f,
+            t.result.into(),
+            eco.into(),
+            t.event,
+            t.site,
+        ])
+    }
+
+    fn of_record(r: &IndexRecord) -> Fields {
+        Fields::of(&Tags::of(r), r.eco)
+    }
+
+    /// `r` with these fields.
+    fn apply(&self, r: &IndexRecord) -> IndexRecord {
+        let f = &self.0;
+        IndexRecord {
+            white_elo: f[0] as u16,
+            black_elo: f[1] as u16,
+            round: f[2] as u16,
+            subround: f[3] as u16,
+            date: (f[4] << 9) | (f[5] << 5) | f[6],
+            result: f[7] as u8,
+            eco: f[8] as u16,
+            event: f[9],
+            site: f[10],
+            ..*r
+        }
+    }
 }
 
-/// Whether deleting `copy` for `kept` loses nothing: it has no annotations
-/// or commands, or the same moves annotated the same, and `kept` has every
-/// field of its index record ([`covers`]).
+/// A kept game's [`Fields`] as the copies deleted for it fill them in
+/// (R4-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Fill {
+    /// The kept game's own.
+    own: Fields,
+    /// With what the copies taken so far fill in.
+    now: Fields,
+}
+
+impl Fill {
+    fn new(own: Fields) -> Fill {
+        Fill { own, now: own }
+    }
+
+    /// Takes what a copy has that the kept game lacks, if the copy agrees
+    /// with the kept game (ratings, round, board, date, result) and with
+    /// the copies taken before on what they filled in; else takes nothing,
+    /// and deleting the copy would lose a value. The outcome doesn't depend
+    /// on the order the copies are taken in.
+    fn take(&mut self, copy: &Fields) -> bool {
+        let mut now = self.now;
+        for (i, (slot, &value)) in now.0.iter_mut().zip(&copy.0).enumerate() {
+            if value == 0 || *slot == value || (i >= OWN && self.own.0[i] != 0) {
+                continue;
+            }
+            if *slot != 0 {
+                return false;
+            }
+            *slot = value;
+        }
+        self.now = now;
+        true
+    }
+
+    /// Takes every game of an exact class (indices into `copies`), or none.
+    fn take_class(&mut self, class: &[usize], copies: &[Candidate]) -> bool {
+        let mut next = *self;
+        let ok = class.iter().all(|&i| next.take(&copies[i].fields()));
+        if ok {
+            *self = next;
+        }
+        ok
+    }
+
+    /// The fill of a group: its first class's best copy is kept, and every
+    /// other game of its classes is taken (they were chosen so that all
+    /// can be).
+    fn of_group(group: &[usize], classes: &[&[usize]], copies: &[Candidate]) -> Fill {
+        let lead = &classes[group[0]];
+        let mut fill = Fill::new(copies[lead[0]].fields());
+        for &ci in group {
+            let taken = fill.take_class(classes[ci], copies);
+            debug_assert!(taken, "a group's copies agree on what they fill in");
+        }
+        fill
+    }
+}
+
+/// Whether deleting `copy` for `kept` loses no annotations: it has none (nor
+/// commands), or the same moves annotated the same. Its index record's
+/// fields are the [`Fill`]'s to check.
 fn removable(copy: &Line, kept: &Line) -> bool {
-    (copy.c.annotations == 0 || (copy.moves == kept.moves && copy.c.annotations == kept.c.annotations))
-        && covers(kept.c, copy.c)
+    copy.c.annotations == 0 || (copy.moves == kept.moves && copy.c.annotations == kept.c.annotations)
 }
 
 /// Reports one part of the whole job's progress, in thousandths.
@@ -589,11 +728,13 @@ fn compacted() -> DbError {
     DbError::Invalid("the database was compacted while looking for duplicates, so look for them again".into())
 }
 
-/// Sorts exact copies (`run`, the same exact key, best first) into classes
-/// by their annotations and commands: the best copy's, with the copies
-/// without any; then each other annotation, best first. A copy with an ECO
-/// code the best copy lacks goes apart too (the only field of the index
-/// record exact copies may differ in, [`covers`]). Pushes each class's
+/// Sorts exact copies (`run`, the same exact key, best first) into classes,
+/// each led by its best copy and holding the copies it can be kept for:
+/// those without annotations or commands of their own (none, or the
+/// leader's), that agree on what they fill in ([`Fill`]: an ECO code the
+/// leader lacks, the only field of the index record exact copies may
+/// differ in). Each class is the best copy left, with every copy left
+/// that it can take. Reorders `run` class by class and pushes each class's
 /// range of `order`.
 fn split_by_annotations(
     run: &mut [usize],
@@ -601,19 +742,24 @@ fn split_by_annotations(
     copies: &[Candidate],
     classes: &mut Vec<(usize, usize)>,
 ) {
-    let lead = &copies[run[0]];
-    let class = |i: usize| {
-        let h = copies[i].annotations;
-        let annotations = if h == 0 || h == lead.annotations { 0 } else { h };
-        (annotations, if covers(lead, &copies[i]) { 0 } else { copies[i].eco })
-    };
-    // Stable: each class keeps its best copy first.
-    run.sort_by_key(|&i| class(i));
-    let mut from = 0;
-    for part in run.chunk_by(|&a, &b| class(a) == class(b)) {
-        classes.push((at + from, at + from + part.len()));
-        from += part.len();
+    let mut sorted = Vec::with_capacity(run.len());
+    let mut left = run.to_vec();
+    while let Some(&first) = left.first() {
+        let lead = &copies[first];
+        let mut fill = Fill::new(lead.fields());
+        let from = sorted.len();
+        // In order: each class keeps its best copy first.
+        left.retain(|&i| {
+            let c = &copies[i];
+            let joins = (c.annotations == 0 || c.annotations == lead.annotations) && fill.take(&c.fields());
+            if joins {
+                sorted.push(i);
+            }
+            !joins
+        });
+        classes.push((at + from, at + sorted.len()));
     }
+    run.copy_from_slice(&sorted);
 }
 
 /// Finds the duplicate games of `db` (see the module docs). The database is
@@ -810,7 +956,7 @@ pub fn find_duplicates(
             Ok(())
         };
         for bucket in &open {
-            merged.extend(cluster(bucket, &classes, &line, &names, &mut tick)?);
+            merged.extend(cluster(bucket, &classes, &copies, &line, &names, &mut tick)?);
         }
         attach_bare_records(&mut merged, &classes, &copies, &names);
     } else {
@@ -839,10 +985,11 @@ pub fn find_duplicates(
 
 /// Records of a game without its moves (one at most), without annotations,
 /// join the group that the game with moves leads, if it's the only game
-/// with their [`record_key`], starts where they do and with their move, has
-/// the same ratings where both have them and every field of their index
-/// records ([`covers`]). The game is kept; a
-/// game that is itself another's copy takes none.
+/// with their [`record_key`], starts where they do and with their move, and
+/// the group can take their fields ([`Fill`]: the same ratings where both
+/// have them, and what they fill in agreeing with the group's other
+/// copies). The game is kept; a game that is itself another's copy takes
+/// none.
 fn attach_bare_records(
     merged: &mut Vec<Vec<usize>>,
     classes: &[&[usize]],
@@ -875,6 +1022,7 @@ fn attach_bare_records(
             continue;
         }
         let kept = &copies[classes[game][0]];
+        let mut fill = Fill::of_group(&merged[g], classes, copies);
         for ci in bare {
             let record = &copies[classes[ci][0]];
             let (own, _) = place[ci];
@@ -882,10 +1030,7 @@ fn attach_bare_records(
             let alone = own != g && merged[own].len() == 1;
             let same_start =
                 record.start == kept.start && record.first_move.is_none_or(|m| kept.first_move == Some(m));
-            let t = &record.tags;
-            let ratings =
-                known_same(kept.tags.white_elo, t.white_elo) && known_same(kept.tags.black_elo, t.black_elo);
-            if alone && same_start && ratings && classes[ci].iter().all(|&i| covers(kept, &copies[i])) {
+            if alone && same_start && fill.take_class(classes[ci], copies) {
                 merged[g].push(ci);
                 merged[own].clear();
             }
@@ -908,14 +1053,16 @@ enum Role {
 
 /// Fuzzy groups among `bucket` (exact classes of the same players). The
 /// classes are taken longest first, then best annotated: each joins the
-/// group of the best game it's a copy of (and has nothing more than), or
-/// leads a new group, or stays alone when it could be a copy of two
-/// different games (or of too many). The leader is kept, and every member matches it.
+/// group of the best game it's a copy of (and has no annotations more
+/// than, and whose fill can take its fields: [`Fill`]), or leads a new
+/// group, or stays alone when it could be a copy of two different games
+/// (or of too many). The leader is kept, and every member matches it.
 /// A class whose moves couldn't be read again, or that has next to none,
 /// stays alone.
 fn cluster<'m>(
     bucket: &[usize],
     classes: &[&[usize]],
+    copies: &[Candidate],
     line: &dyn Fn(usize) -> Option<Line<'m>>,
     names: &Names,
     tick: &mut dyn FnMut() -> Result<(), DbError>,
@@ -938,6 +1085,8 @@ fn cluster<'m>(
 
     let mut role = vec![Role::Unseen; live.len()];
     let mut groups: Vec<Vec<usize>> = Vec::new();
+    // Each group's kept game, filled in by its copies so far.
+    let mut fills: Vec<Fill> = Vec::new();
     for &x in &todo {
         tick()?;
         let xl = &live[x].1;
@@ -975,17 +1124,23 @@ fn cluster<'m>(
             out.push(vec![live[x].0]);
             Role::Alone
         } else {
+            let class = classes[live[x].0];
             let target = matches
                 .iter()
-                .filter(|&&(y, _)| removable(xl, &live[y].1))
+                .filter(|&&(y, g)| {
+                    let mut trial = fills[g];
+                    removable(xl, &live[y].1) && trial.take_class(class, copies)
+                })
                 .max_by_key(|&&(y, _)| live[y].1.c.quality);
             match target {
                 Some(&(_, g)) => {
+                    fills[g].take_class(class, copies);
                     groups[g].push(live[x].0);
                     Role::Joined
                 }
                 None => {
                     groups.push(vec![live[x].0]);
+                    fills.push(Fill::of_group(&[live[x].0], classes, copies));
                     Role::Leads(groups.len() - 1)
                 }
             }
@@ -993,6 +1148,220 @@ fn cluster<'m>(
     }
     out.extend(groups);
     Ok(out)
+}
+
+/// What deleting a group's copies wrote into its kept game first (R4-1):
+/// its index record before and after, for [`unfill`]. The record before
+/// points at the game's earlier blob, which stays in `games.blob` until a
+/// compaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Filled {
+    pub game: GameId,
+    pub before: IndexRecord,
+    pub after: IndexRecord,
+}
+
+/// What [`delete_copies`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeletedCopies {
+    /// The copies it marked as deleted, ascending (not those marked
+    /// already).
+    pub marked: Vec<GameId>,
+    /// The kept games it filled in first, in order.
+    pub filled: Vec<Filled>,
+    /// Groups it left alone: the kept game is deleted, or the copies
+    /// disagree on a field it lacks (only a change since the search can
+    /// bring either).
+    pub left: u32,
+}
+
+/// What a kept game takes from its copies.
+enum Plan {
+    /// Nothing: it has every field they have.
+    Nothing,
+    /// Its record before and after, and its new blob if Date, Round or ECO
+    /// change.
+    Write(IndexRecord, IndexRecord, Option<Vec<u8>>),
+    /// Leave the group alone (see [`DeletedCopies::left`]).
+    Leave,
+}
+
+/// A packed date as a PGN Date: "2024.01.??".
+fn date_string(d: u32) -> String {
+    let part = |v: u32, width: usize| if v == 0 { "?".repeat(width) } else { format!("{v:0width$}") };
+    format!("{}.{}.{}", part(d >> 9, 4), part((d >> 5) & 0xf, 2), part(d & 0x1f, 2))
+}
+
+/// A packed round as a PGN Round: "7", "7.3".
+fn round_string(round: u16, subround: u16) -> String {
+    match (round, subround) {
+        (0, 0) => String::new(),
+        (r, 0) => r.to_string(),
+        (r, s) => format!("{r}.{s}"),
+    }
+}
+
+/// What group `g`'s kept game takes from its copies ([`Fill`]), and the
+/// copies' records as read.
+fn plan_fill(db: &Database, g: &DuplicateGroup) -> Result<(Plan, Vec<(GameId, IndexRecord)>), DbError> {
+    let before = db.record(g.keep)?;
+    if before.is_deleted() {
+        return Ok((Plan::Leave, Vec::new()));
+    }
+    let mut fill = Fill::new(Fields::of_record(&before));
+    let mut read = Vec::with_capacity(g.remove.len());
+    for &id in &g.remove {
+        let rec = db.record(id)?;
+        if !fill.take(&Fields::of_record(&rec)) {
+            return Ok((Plan::Leave, Vec::new()));
+        }
+        read.push((id, rec));
+    }
+    let plan = plan_write(db, g.keep, before, &fill, &read)?;
+    Ok((plan, read))
+}
+
+/// The kept game's new record and blob for `fill` ([`plan_fill`]). Its blob
+/// holds the Date, Round and ECO strings: a copy's where it says the same,
+/// else made from the packed values.
+fn plan_write(
+    db: &Database,
+    keep: GameId,
+    before: IndexRecord,
+    fill: &Fill,
+    copies: &[(GameId, IndexRecord)],
+) -> Result<Plan, DbError> {
+    if fill.now == fill.own {
+        return Ok(Plan::Nothing);
+    }
+    let after = fill.now.apply(&before);
+    let round = |r: &IndexRecord| (r.round, r.subround);
+    let (date_new, round_new, eco_new) =
+        (after.date != before.date, round(&after) != round(&before), after.eco != before.eco);
+    if !(date_new || round_new || eco_new) {
+        return Ok(Plan::Write(before, after, None));
+    }
+    let blob = db.blob_of(&before)?;
+    let (mut date, mut round_str, mut eco) = date_round_eco(&blob)?;
+    let strings_of =
+        |pick: &dyn Fn(&IndexRecord) -> bool| -> Result<Option<(String, String, String)>, DbError> {
+            copies
+                .iter()
+                .map(|(_, r)| r)
+                .find(|r| pick(r))
+                .map(|r| date_round_eco(&db.blob_of(r)?))
+                .transpose()
+        };
+    if date_new {
+        date = strings_of(&|r| r.date == after.date)?
+            .map(|s| s.0)
+            .filter(|s| pack_date(s) == after.date)
+            .unwrap_or_else(|| date_string(after.date));
+    }
+    if round_new {
+        round_str = strings_of(&|r| round(r) == round(&after))?
+            .map(|s| s.1)
+            .filter(|s| pack_round(s) == round(&after))
+            .unwrap_or_else(|| round_string(after.round, after.subround));
+    }
+    if eco_new {
+        eco = strings_of(&|r| r.eco == after.eco)?
+            .map(|s| s.2)
+            .filter(|s| pack_eco(s) == after.eco)
+            .unwrap_or_else(|| unpack_eco(after.eco));
+    }
+    // The record holds the packed strings; never let the two disagree.
+    if pack_date(&date) != after.date
+        || pack_round(&round_str) != round(&after)
+        || pack_eco(&eco) != after.eco
+    {
+        log::warn!("duplicates: game {keep} keeps its headers: they don't pack as its record");
+        return Ok(Plan::Leave);
+    }
+    Ok(Plan::Write(before, after, Some(with_date_round_eco(&blob, &date, &round_str, &eco)?)))
+}
+
+/// Fills in each kept game of `groups` (a report's, or some of them) what
+/// it lacks of its copies' index records: ratings, round and board, ECO,
+/// date, event, site, result ([`Fill`]; R4-1). This is [`delete_copies`]'s
+/// first step, committed (fsynced) before any copy is deleted, so a crash
+/// in between leaves the copies and their kept games filled in: nothing is
+/// lost, and deleting them again fills in nothing more. Nothing is written
+/// where a kept game lacks nothing. Returns the kept games filled in, and
+/// for each group whether its copies can go (not if they disagree on a
+/// field the kept game lacks, or the kept game is deleted: only a change
+/// since the search can bring either).
+pub fn fill_kept_games(
+    db: &mut Database,
+    groups: &[DuplicateGroup],
+) -> Result<(Vec<Filled>, Vec<bool>), DbError> {
+    let (filled, copies) = fill(db, groups)?;
+    Ok((filled, copies.iter().map(Option::is_some).collect()))
+}
+
+/// A group's copies as read, if they can go.
+type CopiesRead = Option<Vec<(GameId, IndexRecord)>>;
+
+/// [`fill_kept_games`], with the records of each group's copies as read
+/// before the fill, where they can go.
+fn fill(db: &mut Database, groups: &[DuplicateGroup]) -> Result<(Vec<Filled>, Vec<CopiesRead>), DbError> {
+    let mut copies = Vec::with_capacity(groups.len());
+    let mut writes: Vec<(GameId, Option<Vec<u8>>, IndexRecord)> = Vec::new();
+    let mut before: Vec<IndexRecord> = Vec::new();
+    for g in groups {
+        let (plan, read) = plan_fill(db, g)?;
+        match plan {
+            Plan::Nothing => copies.push(Some(read)),
+            Plan::Write(earlier, record, blob) => {
+                before.push(earlier);
+                writes.push((g.keep, blob, record));
+                copies.push(Some(read));
+            }
+            Plan::Leave => copies.push(None),
+        }
+    }
+    db.rewrite_records(&mut writes)?;
+    let filled =
+        writes.iter().zip(before).map(|(&(game, _, after), before)| Filled { game, before, after }).collect();
+    Ok((filled, copies))
+}
+
+/// Deletes the copies of `groups` (a report's, or some of them): marks them
+/// as deleted, after filling in what their kept games lack of them
+/// ([`fill_kept_games`]), so that a deleted copy never takes a field of
+/// its index record with it. The copies stay restorable
+/// ([`Database::set_deleted_many`]) and the fills undoable ([`unfill`])
+/// until a compaction. Run it under one lock of the database, on a report
+/// it still holds for.
+pub fn delete_copies(db: &mut Database, groups: &[DuplicateGroup]) -> Result<DeletedCopies, DbError> {
+    let (filled, copies) = fill(db, groups)?;
+    // The copies' records as the fill read them (it deletes a million
+    // copies at once), but a game the fill itself rewrote: one that is also
+    // another group's kept game, were `groups` to overlap.
+    let rewritten: std::collections::HashSet<GameId> = filled.iter().map(|f| f.game).collect();
+    let mut marked: Vec<(GameId, IndexRecord)> = Vec::new();
+    for &(id, rec) in copies.iter().flatten().flatten() {
+        let rec = if rewritten.contains(&id) { db.record(id)? } else { rec };
+        if !rec.is_deleted() {
+            marked.push((id, rec));
+        }
+    }
+    marked.sort_unstable_by_key(|&(id, _)| id);
+    marked.dedup_by_key(|&mut (id, _)| id);
+    db.mark_deleted(&marked)?;
+    let left = copies.iter().filter(|c| c.is_none()).count() as u32;
+    Ok(DeletedCopies { marked: marked.into_iter().map(|(id, _)| id).collect(), filled, left })
+}
+
+/// Undoes fills of [`delete_copies`] (in the order they were made), newest
+/// first, each only where the kept game is unchanged since: one edited
+/// since keeps what it took, and the edit. Restore the copies first, so
+/// that a deleted copy never has fields its kept game lacks. Returns how
+/// many it undid.
+pub fn unfill(db: &mut Database, filled: &[Filled]) -> Result<u32, DbError> {
+    let reverts: Vec<(GameId, IndexRecord, IndexRecord)> =
+        filled.iter().rev().map(|f| (f.game, f.after, f.before)).collect();
+    Ok(db.revert_records(&reverts)?.into_iter().filter(|&done| done).count() as u32)
 }
 
 #[cfg(test)]
@@ -1198,10 +1567,15 @@ mod tests {
             pgn("Carlsen, Magnus", "Caruana, Fabiano", "2024.01.20", "1/2-1/2", "", &commented(eval))
                 .replace("Open", "Tata Steel Masters 2024")
         };
-        // R3-1: the broadcast lacks the ratings: neither copy has all the
-        // other has, so both stay.
+        // R4-1: the broadcast lacks the ratings: it's kept for its clocks,
+        // and takes TWIC's ratings before TWIC's copy is deleted.
         let (_d, db) = db_of(&[twic.clone(), broadcast("0.3")]);
-        assert_eq!(find(&db, true).groups, [], "the clocks on one, the ratings on the other");
+        let found = find(&db, true);
+        assert_eq!(found.groups, [group(1, &[0], false)], "the clocks on one, the ratings on the other");
+        let done = delete_copies(&mut db.lock().unwrap(), &found.groups).unwrap();
+        assert_eq!((done.marked.as_slice(), done.filled.len()), ([0].as_slice(), 1));
+        let kept = db.lock().unwrap().record(1).unwrap();
+        assert_eq!((kept.white_elo, kept.black_elo), (2830, 2804));
         let rated =
             |game: String| game.replace("[Result", "[WhiteElo \"2830\"]\n[BlackElo \"2804\"]\n[Result");
         let (_d, db) = db_of(&[twic.clone(), rated(broadcast("0.3"))]);
@@ -1550,34 +1924,168 @@ mod tests {
         assert_eq!(find(&db, true).groups, [group(0, &[1], false)]);
     }
 
-    /// R3-1: a copy whose ratings, round with board, ECO or date the kept
-    /// game lacks isn't deleted for it: those fields are what searches,
-    /// sorts and the Reference tab use. Both stay.
+    /// R4-1 (was R3-1): a copy whose ratings, round with board, ECO, date,
+    /// event, site or result the kept game lacks is deleted for it once the
+    /// kept game has taken them ([`delete_copies`]): those fields are what
+    /// searches, sorts and the Reference tab use. Copies that disagree on a
+    /// field the kept game lacks can't both give it: the second one stays.
     #[test]
-    fn a_copy_with_fields_the_kept_game_lacks_stays() {
+    fn the_kept_game_takes_the_fields_it_lacks_from_its_copies() {
         let with = |game: String, tags: &str| game.replace("[Result", &format!("{tags}\n[Result"));
         let game = |round: &str, moves: &str| {
             pgn("Carlsen, Magnus", "Caruana, Fabiano", "2024.01.20", "1/2-1/2", "", moves)
                 .replace("Round \"3\"", &format!("Round \"{round}\""))
         };
-        // The longer copy is kept: the shorter one's board would go with it.
+        /// Deletes the copies of `db`'s groups; the kept games' rows after.
+        fn delete_all(db: &Mutex<Database>, fuzzy: bool) -> Vec<crate::GameRow> {
+            let found = find(db, fuzzy);
+            let mut db = db.lock().unwrap();
+            delete_copies(&mut db, &found.groups).unwrap();
+            found.groups.iter().map(|g| db.row(g.keep).unwrap()).collect()
+        }
+        // The longer copy is kept, and takes the shorter one's board.
         let (_d, db) = db_of(&[game("7", FULL), game("7.3", FULL.trim_end_matches(" Bf6"))]);
-        assert_eq!(find(&db, true).groups, []);
+        assert_eq!(find(&db, true).groups, [group(0, &[1], false)]);
+        assert_eq!(delete_all(&db, true)[0].round, "7.3");
         let (_d, db) = db_of(&[game("7.3", FULL), game("7", FULL.trim_end_matches(" Bf6"))]);
         assert_eq!(find(&db, true).groups, [group(0, &[1], false)], "the kept game has the board");
-        // The annotated copy is kept: the plain one's ratings or ECO would go.
+        // The annotated copy is kept, and takes the plain one's ratings or ECO.
         let annotated = game("7.3", &FULL.replace("Nb8", "Nb8 {The Breyer.}"));
-        for tags in ["[WhiteElo \"2830\"]", "[ECO \"C95\"]"] {
+        for (tags, exact) in [("[WhiteElo \"2830\"]", false), ("[ECO \"C95\"]", true)] {
             let (_d, db) = db_of(&[annotated.clone(), with(game("7.3", FULL), tags)]);
-            assert_eq!(find(&db, true).groups, [], "{tags}");
+            assert_eq!(find(&db, true).groups, [group(0, &[1], exact)], "{tags}");
+            let kept = &delete_all(&db, true)[0];
+            assert_eq!(
+                (kept.white_elo, kept.eco.as_str()),
+                if exact { (None, "C95") } else { (Some(2830), "") }
+            );
             let (_d, db) = db_of(&[with(annotated.clone(), tags), with(game("7.3", FULL), tags)]);
             assert_eq!(find(&db, false).groups, [group(0, &[1], true)], "both have it: {tags}");
         }
-        // Exact copies differ only in ECO: the copy with it stays, the plain
-        // one goes.
-        let (_d, db) =
-            db_of(&[annotated.clone(), with(game("7.3", FULL), "[ECO \"C95\"]"), game("7.3", FULL)]);
-        assert_eq!(find(&db, false).groups, [group(0, &[2], true)]);
+        // Exact copies differ only in ECO: the kept game takes it.
+        let eco = |e: &str| with(game("7.3", FULL), &format!("[ECO \"{e}\"]"));
+        let (_d, db) = db_of(&[annotated.clone(), eco("C95"), game("7.3", FULL)]);
+        assert_eq!(find(&db, false).groups, [group(0, &[1, 2], true)]);
+        // Two ECO codes: the best copy's goes in, the other stays, and is
+        // kept for its own copy.
+        let (_d, db) = db_of(&[annotated.clone(), eco("C95"), eco("C96"), game("7.3", FULL), eco("C96")]);
+        for fuzzy in [false, true] {
+            assert_eq!(find(&db, fuzzy).groups, [group(0, &[1, 3], true), group(2, &[4], true)], "{fuzzy}");
+        }
+        // The kept game's own ECO stands; the copies' may differ.
+        let (_d, db) = db_of(&[with(annotated.clone(), "[ECO \"C95\"]"), eco("C96"), eco("C92")]);
+        assert_eq!(find(&db, false).groups, [group(0, &[1, 2], true)]);
+
+        // Two copies from other events with other ratings: the kept game
+        // lacks one, and the copies can't both give it. Each would be a copy
+        // of the kept game, not of each other: the second stays.
+        let other = |event: &str, elo: &str| {
+            with(game("7.3", FULL), &format!("[WhiteElo \"{elo}\"]")).replace("Open", event)
+        };
+        let (_d, db) = db_of(&[annotated.clone(), other("Wijk", "2830"), other("Tata", "2831")]);
+        assert_eq!(find(&db, true).groups, [group(0, &[1], false)]);
+        assert_eq!(delete_all(&db, true)[0].white_elo, Some(2830));
+        // Nor two dates, events or results.
+        let dated = |g: String, date: &str| g.replace("2024.01.20", date);
+        let undated = dated(annotated.clone(), "2024.01.??");
+        let (_d, db) = db_of(&[
+            undated.clone(),
+            dated(other("Wijk", "2830"), "2024.01.20"),
+            dated(other("Tata", "2830"), "2024.01.21"),
+        ]);
+        assert_eq!(find(&db, true).groups, [group(0, &[1], false)], "two days");
+        let (_d, db) = db_of(&[
+            annotated.replace("[Event \"Open\"]\n", ""),
+            game("7.3", FULL).replace("Open", "Wijk"),
+            game("7.3", FULL).replace("Open", "Tata"),
+        ]);
+        assert_eq!(find(&db, true).groups, [group(0, &[1], false)], "two events");
+        let unfinished = annotated.replace("1/2-1/2", "*");
+        let (_d, db) = db_of(&[unfinished, game("7.3", FULL), game("7.3", FULL).replace("1/2-1/2", "1-0")]);
+        assert_eq!(find(&db, true).groups, [group(0, &[1], false)], "two results");
+        assert_eq!(delete_all(&db, true)[0].result, chess_core::game::GameResult::Draw);
+    }
+
+    /// R4-2: one surname word each (Wang, Li), the same 42-ply line, one
+    /// source with partial headers: given names written out must start
+    /// alike, so Hao and Hui (Chao and Chen) are other players. An initial
+    /// still matches.
+    #[test]
+    fn given_names_written_out_must_start_alike() {
+        let given = |a: &str, b: &str| {
+            player_name(&format!("Wang, {a}")).same_given(&player_name(&format!("Wang, {b}")))
+        };
+        for (a, b) in [
+            ("Alex", "Alexander"),
+            ("Sergey", "Sergei"),
+            ("Aleksandr", "Alexander"),
+            ("H.", "Hao"),
+            ("", "Hao"),
+            ("Jean-Pierre", "Jean"),
+            ("J.C.", "Jose Carlos"),
+            ("Sa", "Sara"),
+        ] {
+            assert!(given(a, b) && given(b, a), "{a} / {b}");
+        }
+        for (a, b) in [("Hao", "Hui"), ("Chao", "Chen"), ("Mikhail", "Michail"), ("Sa", "Sebastian")] {
+            assert!(!given(a, b) && !given(b, a), "{a} / {b}");
+        }
+        assert!(player_name("Hao Wang").same_given(&player_name("Wang, Hao")));
+        assert!(!player_name("Hui Wang").same_given(&player_name("Wang, Hao")));
+
+        let line = &FULL[..FULL.find(" 22.").unwrap()];
+        let a = pgn("Wang, Hao", "Li, Chao", "2015.??.??", "1/2-1/2", "", line)
+            .replace("Round \"3\"", "Round \"?\"")
+            .replace("Open", "China op");
+        let b = |white: &str, black: &str| {
+            pgn(white, black, "2015.06.12", "1/2-1/2", "[WhiteElo \"2410\"]\n[BlackElo \"2380\"]", line)
+                .replace("Round \"3\"", "Round \"4.2\"")
+                .replace("Open", "China Team ch")
+        };
+        let (_d, db) = db_of(&[a.clone(), b("Wang, Hui", "Li, Chen")]);
+        assert_eq!(find(&db, true).groups, []);
+        let (_d, db) = db_of(&[a.clone(), b("Wang, H.", "Chao Li")]);
+        assert_eq!(find(&db, true).groups, [group(1, &[0], false)], "an initial, a name the other way round");
+    }
+
+    /// R4-3: names without commas, of different people whose surnames
+    /// share their last word: the words after the given name are compared
+    /// as surnames ("Magnus Carlsen" and "M Carlsen" are still one).
+    #[test]
+    fn names_without_commas_compare_their_surnames() {
+        let same = |a: &str, b: &str| player_name(a).same_surname(&player_name(b));
+        assert!(same("Magnus Carlsen", "M Carlsen"));
+        assert!(same("Carlsen", "Magnus Carlsen"));
+        assert!(same("Thalia Cervantes Landeiro", "T Landeiro"));
+        assert!(same("Jose Carlos Martinez Alcantara", "J Martinez Alcantara"));
+        assert!(!same("Jose Garcia Martinez", "Jose Perez Martinez"));
+        assert!(!same("J Garcia Martinez", "Javier Perez Martinez"));
+
+        // The reviewer's repro, and the same given names (only R4-3 tells).
+        let line = &FULL[..FULL.find(" 22.").unwrap()];
+        let a = |white: &str, black: &str| {
+            pgn(white, black, "2015.??.??", "1/2-1/2", "", line)
+                .replace("Round \"3\"", "Round \"?\"")
+                .replace("Open", "Madrid op")
+                .replace("[Site \"Prague\"]\n", "")
+        };
+        let b = |white: &str, black: &str| {
+            pgn(white, black, "2015.06.12", "1/2-1/2", "[WhiteElo \"2410\"]\n[BlackElo \"2380\"]", line)
+                .replace("Round \"3\"", "Round \"4.2\"")
+                .replace("Open", "Spanish Team ch")
+        };
+        for (white, black) in [
+            ("Javier Perez Martinez", "Jorge Sanchez Fernandez"),
+            ("Jose Perez Martinez", "Juan Sanchez Fernandez"),
+        ] {
+            let (_d, db) = db_of(&[a("Jose Garcia Martinez", "Juan Lopez Fernandez"), b(white, black)]);
+            assert_eq!(find(&db, true).groups, [], "{white} – {black}");
+        }
+        let (_d, db) = db_of(&[
+            a("Jose Garcia Martinez", "Juan Lopez Fernandez"),
+            b("J Garcia Martinez", "J Lopez Fernandez"),
+        ]);
+        assert_eq!(find(&db, true).groups, [group(1, &[0], false)]);
     }
 
     /// R2-2: the same short draw (22 plies) by the same players in two

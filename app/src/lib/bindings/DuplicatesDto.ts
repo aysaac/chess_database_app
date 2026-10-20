@@ -37,6 +37,13 @@ applied: boolean,
  */
 deleted: number, 
 /**
+ * Kept games that took fields they lacked (ratings, round and board,
+ * ECO, date, event, site, result) from those copies before they were
+ * deleted, which Restore takes out again while the database stays
+ * open.
+ */
+filled: number, 
+/**
  * A delete or restore is running (maybe started in another window).
  */
 busy: boolean, 
