@@ -299,14 +299,26 @@ impl PositionIndex {
 
     /// Records that `game` is about to change: its entries become stale.
     pub(crate) fn mark_dirty(&mut self, game: GameId) -> Result<(), DbError> {
-        if game >= self.covered() || self.dirty_set.contains(game) {
+        self.mark_dirty_many(&[game])
+    }
+
+    /// [`mark_dirty`](Self::mark_dirty) for several games, with one fsync.
+    pub(crate) fn mark_dirty_many(&mut self, games: &[GameId]) -> Result<(), DbError> {
+        let mut new: Vec<GameId> =
+            games.iter().copied().filter(|&g| g < self.covered() && !self.dirty_set.contains(g)).collect();
+        new.sort_unstable();
+        new.dedup();
+        if new.is_empty() {
             return Ok(());
         }
         let mut f = OpenOptions::new().create(true).append(true).open(self.dir.join(DIRTY_FILE))?;
-        std::io::Write::write_all(&mut f, &game.to_le_bytes())?;
+        let bytes: Vec<u8> = new.iter().flat_map(|g| g.to_le_bytes()).collect();
+        std::io::Write::write_all(&mut f, &bytes)?;
         f.sync_data()?;
-        self.dirty.push(game);
-        self.dirty_set.insert(game);
+        for game in new {
+            self.dirty.push(game);
+            self.dirty_set.insert(game);
+        }
         Ok(())
     }
 

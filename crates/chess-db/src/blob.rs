@@ -314,6 +314,32 @@ pub fn date_round_eco(blob: &[u8]) -> Result<(String, String, String), DbError> 
     Ok((r.str()?, r.str()?, r.str()?))
 }
 
+/// `blob` with other Date, Round and ECO strings, and everything else (the
+/// set-up position, extra tags, moves and annotations) byte for byte the
+/// same: a kept duplicate taking them from its copies (DB-08).
+pub fn with_date_round_eco(blob: &[u8], date: &str, round: &str, eco: &str) -> Result<Vec<u8>, DbError> {
+    let mut r = ByteReader::new(blob);
+    let version = r.u8()?;
+    if version != BLOB_VERSION {
+        return Err(DbError::Corrupt(format!("unknown blob version {version}")));
+    }
+    if r.u8()? & FLAG_SETUP != 0 {
+        skip_str(&mut r)?;
+    }
+    let head = r.position();
+    for _ in 0..3 {
+        skip_str(&mut r)?;
+    }
+    let rest = r.position();
+    let mut out = Vec::with_capacity(blob.len() + date.len() + round.len() + eco.len());
+    out.extend_from_slice(&blob[..head]);
+    put_str(&mut out, date);
+    put_str(&mut out, round);
+    put_str(&mut out, eco);
+    out.extend_from_slice(&blob[rest..]);
+    Ok(out)
+}
+
 pub fn encode_game(game: &Game) -> Vec<u8> {
     let mut out = Vec::with_capacity(64 + game.mainline_len() * 2);
     out.push(BLOB_VERSION);
@@ -775,6 +801,30 @@ mod tests {
             ["Link", "UTCTime"]
         );
         assert_eq!(d.extra_tags, 4);
+    }
+
+    /// DB-08: the kept copy's new Date, Round and ECO, the rest unchanged.
+    #[test]
+    fn date_round_and_eco_are_rewritten_alone() {
+        for (fen, tags) in [
+            ("", "[TimeControl \"40/7200\"]\n[WhiteFideId \"1503014\"]"),
+            ("[SetUp \"1\"]\n[FEN \"8/8/8/4k3/8/8/4P3/4K3 w - - 0 1\"]\n", ""),
+        ] {
+            let moves = if fen.is_empty() { "1. e4 {Hi} e5 (1... c5 $1) 2. Nf3 *" } else { "1. Kd2 Kd5 *" };
+            let pgn = format!("{fen}[Date \"2024.??.??\"]\n[Round \"7\"]\n{tags}\n\n{moves}");
+            let game = chess_core::pgn::read_pgn_str(&pgn).remove(0);
+            let blob = encode_game(&game);
+            let new = with_date_round_eco(&blob, "2024.01.20", "7.3", "C95").unwrap();
+            assert_eq!(date_round_eco(&new).unwrap(), ("2024.01.20".into(), "7.3".into(), "C95".into()));
+            let mut expected = game.clone();
+            expected.headers.date = "2024.01.20".into();
+            expected.headers.round = "7.3".into();
+            expected.headers.eco = "C95".into();
+            assert_eq!(new, encode_game(&expected), "{fen}");
+            assert_eq!(decode_game(&new).unwrap(), expected);
+            assert_eq!(with_date_round_eco(&new, "2024.??.??", "7", "").unwrap(), blob, "and back");
+        }
+        assert!(with_date_round_eco(&[9, 0], "", "", "").is_err());
     }
 
     #[test]

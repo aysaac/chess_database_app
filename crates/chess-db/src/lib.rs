@@ -26,7 +26,10 @@ pub use copy::{CopySummary, copy_games};
 pub use database::{
     CompactSummary, Database, DbInfo, DbSummary, EXTENSION, GameRow, GameStat, NameKind, PreparedGame,
 };
-pub use duplicates::{DuplicateGroup, DuplicateOptions, Duplicates, find_duplicates};
+pub use duplicates::{
+    DeletedCopies, DuplicateGroup, DuplicateOptions, Duplicates, Filled, delete_copies, fill_kept_games,
+    find_duplicates, unfill,
+};
 pub use export::export_pgn;
 pub use import::{ImportSummary, ImportWarning, game_label, import_pgn, import_reader};
 pub use names::NameTable;

@@ -93,6 +93,23 @@ the original. Copies go in batches of 2,000 games, each a normal crash-safe
 commit; a move marks the originals as deleted only after their copies are
 committed, so a crash in between leaves duplicates, never a lost game.
 
+Deleting duplicate games (DB-08) gives the same guarantee. Each kept game
+first takes the fields of its index record that it lacks from the copies
+about to be deleted (ratings, round and board, ECO, date parts, event, site,
+result): a new blob with its new Date, Round and ECO strings and everything
+else byte for byte the same, appended like a replaced game's, then its new
+record. Both are fsynced before any copy is marked as deleted (see
+[Crash safety](#crash-safety)). The format can't commit several records at
+once (only an append is atomic across games), so after a crash the database
+holds one of: nothing done; the kept games filled in and their copies still
+there (nothing lost: deleting them again fills in nothing more); or the kept
+games filled in and some copies deleted. Never a deleted copy whose fields
+its kept game lacks. Restore marks the copies as not deleted, then points
+each kept game back at its earlier record (whose blob stays until a
+compaction) if the game is unchanged since. That undo lives in memory, like
+the list of deleted copies: once the database is closed, Restore in the game
+list still brings the copies back, but the kept games keep what they took.
+
 ### Game blob
 
 ```text
@@ -185,7 +202,9 @@ after a gap in coverage are dropped.
 
 Game ids (u32 each) replaced since their segment was built. `replace()`
 appends the id and fsyncs *before* rewriting the game's index record, so the
-index never trusts entries of a changed game. Entries of dirty games are
+index never trusts entries of a changed game. A kept duplicate taking fields
+from its copies (DB-08) keeps its moves, so it is added only if its result
+changes (entries hold the result), and so is one whose fill Restore undoes. Entries of dirty games are
 ignored; dirty games and games not covered yet are replayed at query time
 (up to 20,000 of them; beyond that results are marked partial until the next
 update). A rebuild clears the list, keeping ids added while it ran.
@@ -215,6 +234,20 @@ Opening a database:
 
 In-place updates (soft delete, repointing a replaced game) rewrite a single
 64-byte record, then fsync.
+
+Deleting duplicates (DB-08), a batch of groups at a time (the app takes up to
+16,384 copies a batch):
+
+1. Append the filled-in kept games' new blobs to `games.blob`, then fsync.
+2. Append to `positions.dirty` the kept games whose result changes, then
+   fsync.
+3. Rewrite the kept games' records, then fsync.
+4. Mark the copies as deleted (their records' flag), then fsync.
+
+Each record is written whole, so a crash leaves each kept game with its old
+record or its filled-in one, and each copy deleted or not; a copy is only
+marked once its kept game's record is on disk. Restore runs it backwards:
+the copies first, then the kept games' earlier records.
 
 Only one process may have a database open at a time: `.lock` is held with
 `File::try_lock` (Rust ≥ 1.89, works on Linux, macOS and Windows).
