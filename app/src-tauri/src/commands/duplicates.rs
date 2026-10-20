@@ -13,12 +13,18 @@
 //! unchanged: a game deleted, edited, added or restored since may have left
 //! a copy as the only one, so Delete and Show refuse a report the database
 //! changed under. Restore only needs the game numbers, which hold until a
-//! compaction.
+//! compaction. A group whose kept game is open in a tab (in any window) is
+//! left as it is: saving the tab would write its game over what it took
+//! from its deleted copies (R5-1).
 
+use std::borrow::Cow;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use chess_db::{Database, DuplicateOptions, Duplicates, Filled, GameId, Progress};
+use chess_db::{
+    Database, DeletedCopies, DuplicateGroup, DuplicateOptions, Duplicates, Filled, GameId, Progress,
+};
 use chess_jobs::JobError;
 use tauri::{AppHandle, Manager, State};
 
@@ -64,6 +70,18 @@ struct DuplicateScan {
     compactions: u64,
     /// Its copies were all marked as deleted.
     applied: bool,
+    /// The groups (and their copies) the last delete that went through the
+    /// whole report left as they are, as their kept games were open in a
+    /// tab (R5-1).
+    open: Open,
+}
+
+/// Groups left as they are because their kept game is open in a tab, and
+/// their copies.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Open {
+    groups: u32,
+    copies: u32,
 }
 
 fn none_found() -> AppError {
@@ -149,7 +167,15 @@ fn keep_scan(state: &AppState, handle: u32, options: DuplicateOptions, found: Du
     entry.renumbered(compactions);
     let generation = found.generation;
     let found = Arc::new(found);
-    entry.scan = Some(DuplicateScan { id, options, found, generation, compactions, applied: false });
+    entry.scan = Some(DuplicateScan {
+        id,
+        options,
+        found,
+        generation,
+        compactions,
+        applied: false,
+        open: Open::default(),
+    });
     Some(id)
 }
 
@@ -216,8 +242,11 @@ fn report(state: &AppState, handle: u32) -> AppResult<Option<DuplicatesDto>> {
         exact_groups: found.groups.iter().filter(|g| g.exact).count() as u32,
         to_remove: found.removable() as u32,
         applied: scan.applied,
+        open_groups: scan.open.groups,
+        open_copies: scan.open.copies,
         deleted: entry.deleted.len() as u32,
-        filled: entry.filled.len() as u32,
+        // Games, not fills: two deletes can fill one game in (R5-5).
+        filled: entry.filled.iter().map(|f| f.game).collect::<HashSet<_>>().len() as u32,
         busy: entry.busy,
         stale,
         compacted,
@@ -260,6 +289,7 @@ fn start_delete(
     let s = entry.scan(scan).map_err(AppError::invalid)?;
     s.check(&db.lock().expect("db lock")).map_err(AppError::invalid)?;
     let found = s.found.clone();
+    s.open = Open::default();
     entry.busy = true;
     Ok((db, found))
 }
@@ -292,17 +322,32 @@ struct Deleted {
     filled: u32,
     /// Groups left alone (`chess_db::DeletedCopies::left`).
     left: u32,
+    /// Groups left as they are because their kept game is open in a tab.
+    open: Open,
 }
 
 impl Deleted {
     fn message(&self) -> String {
-        let mut out = match self.marked {
-            0 => "The copies were marked as deleted already".to_owned(),
-            n => format!("Marked {} as deleted", copies(n.into())),
+        let mut out = match (self.marked, self.open.groups) {
+            (0, 0) => "The copies were marked as deleted already".to_owned(),
+            (0, _) => "Marked no copies as deleted".to_owned(),
+            (n, _) => format!("Marked {} as deleted", copies(n.into())),
         };
         if self.filled > 0 {
             let kept = plural(self.filled.into(), "kept game", "kept games");
             out.push_str(&format!(", after filling in what {kept} lacked from them"));
+        }
+        if self.open.groups > 0 {
+            out.push_str(&match self.open.groups {
+                1 => "; 1 group left as it is, as its kept game is open in a tab: close that tab and delete \
+                      again"
+                    .to_owned(),
+                n => format!(
+                    "; {n} groups left as they are, as their kept games are open in tabs: close those tabs \
+                     and delete again",
+                    n = thousands(n.into())
+                ),
+            });
         }
         if self.left > 0 {
             let groups = plural(self.left.into(), "group", "groups");
@@ -331,8 +376,11 @@ fn delete_job(
 /// to [`CHUNK`] copies, one group at least), checking before each one that
 /// the report still holds. Each chunk fills in what its kept games lack of
 /// their copies, committed before its copies are marked as deleted
-/// (`chess_db::delete_copies`). On failure or Stop, what it did can be
-/// restored.
+/// (`chess_db::delete_copies`). It leaves the groups whose kept game is
+/// open in a tab (R5-1), looked up under the same lock of the database as
+/// the chunk's writes, which opening a game also holds until its session
+/// is added (`AppState::open_games`). On failure or Stop, what it did can
+/// be restored.
 fn delete_copies(
     state: &AppState,
     handle: u32,
@@ -365,12 +413,18 @@ fn delete_copies(
             let entry =
                 all.get_mut(&handle).ok_or_else(|| so_far(&done, "The database was closed".into()))?;
             let s = entry.scan(scan).map_err(|why| so_far(&done, why))?;
-            let mut db = db.lock().expect("db lock");
-            s.check(&db).map_err(|why| so_far(&done, why))?;
-            let out = chess_db::delete_copies(&mut db, &groups[at..end]).map_err(to_job_error)?;
-            s.generation = db.generation();
+            let mut locked = db.lock().expect("db lock");
+            s.check(&locked).map_err(|why| so_far(&done, why))?;
+            let todo = without_open(&groups[at..end], &state.open_games(db), &mut done.open);
+            let out = if todo.is_empty() {
+                DeletedCopies::default()
+            } else {
+                chess_db::delete_copies(&mut locked, &todo).map_err(to_job_error)?
+            };
+            s.generation = locked.generation();
             if end == groups.len() {
-                s.applied = true;
+                s.applied = done.open.groups == 0;
+                s.open = done.open;
             }
             done.marked += out.marked.len() as u32;
             done.filled += out.filled.len() as u32;
@@ -391,6 +445,24 @@ fn delete_copies(
         s.applied = true;
     }
     Ok(done)
+}
+
+/// `groups` but those whose kept game is in `open` (ascending), counted in
+/// `left`.
+fn without_open<'a>(
+    groups: &'a [DuplicateGroup],
+    open: &[GameId],
+    left: &mut Open,
+) -> Cow<'a, [DuplicateGroup]> {
+    let is_open = |g: &DuplicateGroup| open.binary_search(&g.keep).is_ok();
+    if !groups.iter().any(is_open) {
+        return Cow::Borrowed(groups);
+    }
+    for g in groups.iter().filter(|g| is_open(g)) {
+        left.groups += 1;
+        left.copies += g.remove.len() as u32;
+    }
+    Cow::Owned(groups.iter().filter(|g| !is_open(g)).cloned().collect())
 }
 
 /// Restores, in a background job, the copies deleted from this database's
@@ -453,7 +525,8 @@ fn start_restore(state: &AppState, handle: u32, scan: u64) -> AppResult<ToRestor
 struct Restored {
     /// Copies restored.
     copies: u32,
-    /// Kept games that gave back what they took from their copies.
+    /// Kept games that gave back what they took from their copies (games,
+    /// not fills: two deletes can fill one game in, R5-5).
     unfilled: u32,
     /// Kept games changed since (edited, renamed), which keep what they
     /// took.
@@ -527,6 +600,7 @@ fn restore_copies(
             restored.copies += db.set_deleted_many(chunk, false).map_err(to_job_error)?;
             if let Some(s) = entry.scan.as_mut() {
                 s.applied = false;
+                s.open = Open::default();
                 if fresh {
                     s.generation = db.generation();
                 }
@@ -543,6 +617,7 @@ fn restore_copies(
         // Not under the locks: whatever happens there leaves them good.
         progress.report(done, total);
     }
+    let (mut unfilled, mut kept) = (HashSet::new(), HashSet::new());
     for chunk in fills.rchunks(CHUNK) {
         progress.check_cancelled().map_err(to_job_error)?;
         {
@@ -553,11 +628,11 @@ fn restore_copies(
                 return Err(compacted());
             }
             let fresh = own && entry.scan.as_ref().is_some_and(|s| s.check(&db).is_ok());
-            let undone = chess_db::unfill(&mut db, chunk).map_err(to_job_error)?;
-            restored.unfilled += undone;
-            restored.changed += chunk.len() as u32 - undone;
+            unfilled.extend(chess_db::unfill(&mut db, chunk).map_err(to_job_error)?);
+            kept.extend(chunk.iter().map(|f| f.game));
             if let Some(s) = entry.scan.as_mut() {
                 s.applied = false;
+                s.open = Open::default();
                 if fresh {
                     s.generation = db.generation();
                 }
@@ -572,6 +647,8 @@ fn restore_copies(
         done += chunk.len() as u64;
         progress.report(done, total);
     }
+    restored.unfilled = unfilled.len() as u32;
+    restored.changed = kept.difference(&unfilled).count() as u32;
     Ok(restored)
 }
 
@@ -606,6 +683,8 @@ mod tests {
     use chess_db::NoProgress;
 
     use super::*;
+    use crate::commands::game;
+    use crate::dto::SaveModeDto;
     use crate::state::DbUse;
 
     /// A database in the list with `pgn` imported `times` times.
@@ -642,6 +721,20 @@ mod tests {
     fn restoring(state: &AppState, handle: u32, scan: u64) -> Result<Restored, String> {
         let work = start_restore(state, handle, scan).map_err(|e| e.message)?;
         restore_job(state, handle, &work, &NoProgress).map_err(|e| e.to_string())
+    }
+
+    /// Edits the game in tab `session` (the annotator "Me") and saves it
+    /// over the game it was opened from, as Save changes does.
+    fn annotate_and_save(state: &AppState, session: u32) {
+        state
+            .with_session(session, |s| {
+                let headers =
+                    chess_core::game::Headers { annotator: "Me".into(), ..s.editor.game().headers.clone() };
+                s.editor.set_headers(headers);
+                Ok(())
+            })
+            .unwrap();
+        game::save(state, session, SaveModeDto::Replace, None).unwrap();
     }
 
     fn deleted(state: &AppState, handle: u32) -> Vec<GameId> {
@@ -842,7 +935,7 @@ mod tests {
         let blob = db.lock().unwrap().read_blob(0).unwrap();
         let scan = search(&state, handle, true);
         let done = deleting(&state, handle, scan).unwrap();
-        assert_eq!(done, Deleted { marked: 4, filled: 1, left: 0 });
+        assert_eq!(done, Deleted { marked: 4, filled: 1, ..Deleted::default() });
         assert_eq!(
             done.message(),
             "Marked 4 copies as deleted, after filling in what 1 kept game lacked from them"
@@ -879,6 +972,127 @@ mod tests {
         assert_eq!(round(0), "1.3");
         assert_eq!(report(&state, handle).unwrap().unwrap().filled, 0);
         assert!(restore(&state, handle, scan).unwrap_err().contains("no deleted copies"));
+    }
+
+    /// R5-1: a kept game open in a tab (in any window) when its copies are
+    /// deleted would, saved after, write over what it took from them while
+    /// they stay deleted. Its group is left as it is (nothing written), and
+    /// the delete and the report say so; the other groups go. Once its tab
+    /// is gone (closed, or its window), deleting again fills it in.
+    #[test]
+    fn a_group_whose_kept_game_is_open_in_a_tab_is_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        // Copies of 0 in 1 and 2 (whose round 1.3 game 0 lacks), of 4 in 5, 6.
+        let handle = listed(&state, dir.path(), "duplicates.pgn", 1);
+        let db = state.db(handle).unwrap();
+        let records = |ids: &[GameId]| -> Vec<_> {
+            let db = db.lock().unwrap();
+            ids.iter().map(|&id| db.record(id).unwrap()).collect()
+        };
+        let before = records(&[0, 1, 2]);
+        let scan = search(&state, handle, true);
+        let tab = game::open(&state, Some("editor-2"), handle, 0, None).unwrap().session;
+
+        let done = deleting(&state, handle, scan).unwrap();
+        let open = Open { groups: 1, copies: 2 };
+        assert_eq!(done, Deleted { marked: 2, open, ..Deleted::default() });
+        assert_eq!(
+            done.message(),
+            "Marked 2 copies as deleted; 1 group left as it is, as its kept game is open in a tab: close \
+             that tab and delete again"
+        );
+        assert_eq!(records(&[0, 1, 2]), before, "nothing written to the open group");
+        assert_eq!(deleted(&state, handle), [5, 6]);
+        let now = report(&state, handle).unwrap().unwrap();
+        assert_eq!(
+            (now.applied, now.open_groups, now.open_copies, now.deleted, now.filled, now.stale),
+            (false, 1, 2, 2, 0, false),
+            "the report holds, to delete the rest"
+        );
+        // Again with the tab still open: nothing more.
+        let again = deleting(&state, handle, scan).unwrap();
+        assert_eq!(again, Deleted { open, ..Deleted::default() });
+        assert!(
+            again.message().starts_with("Marked no copies as deleted; 1 group left"),
+            "{}",
+            again.message()
+        );
+
+        // Edited in its tab and saved: nothing is lost (its copies are
+        // there), and the report is out of date.
+        annotate_and_save(&state, tab);
+        assert!(delete(&state, handle, scan).unwrap_err().contains("changed after"));
+        let scan = search(&state, handle, true);
+        assert_eq!(deleting(&state, handle, scan).unwrap().open, Open { groups: 1, copies: 2 });
+
+        // Its window closes: its tabs go, and the group with them.
+        state.drop_window_sessions("editor-2");
+        let done = deleting(&state, handle, scan).unwrap();
+        assert_eq!(done, Deleted { marked: 2, filled: 1, ..Deleted::default() });
+        let row = db.lock().unwrap().row(0).unwrap();
+        assert_eq!((row.round.as_str(), row.annotator.as_str()), ("1.3", "Me"), "filled in, the edit kept");
+        let now = report(&state, handle).unwrap().unwrap();
+        assert_eq!((now.applied, now.open_groups, now.deleted, now.filled), (true, 0, 4, 1));
+        // Restore: every copy back, the board out, the edit kept.
+        let back = restoring(&state, handle, scan).unwrap();
+        assert_eq!(back, Restored { copies: 4, unfilled: 1, changed: 0 });
+        let row = db.lock().unwrap().row(0).unwrap();
+        assert_eq!((row.round.as_str(), row.annotator.as_str()), ("1", "Me"));
+    }
+
+    /// R5-1, the other way round: a copy open in a tab is deleted. Saving
+    /// the tab after writes into the deleted copy, which stays deleted
+    /// (`Database::replace` keeps the flag), and leaves its kept game as
+    /// the delete filled it in; Restore brings the copy back with the edit
+    /// and takes the fill out. So those groups go.
+    #[test]
+    fn a_copy_open_in_a_tab_is_deleted_and_stays_deleted_when_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let handle = listed(&state, dir.path(), "duplicates.pgn", 1);
+        let db = state.db(handle).unwrap();
+        let scan = search(&state, handle, true);
+        // Game 2 is the copy with the board (round 1.3).
+        let tab = game::open(&state, Some("editor-2"), handle, 2, None).unwrap().session;
+        assert_eq!(
+            deleting(&state, handle, scan).unwrap(),
+            Deleted { marked: 4, filled: 1, ..Deleted::default() }
+        );
+        annotate_and_save(&state, tab);
+        let row = |id| db.lock().unwrap().row(id).unwrap();
+        assert!(row(2).deleted && row(2).annotator == "Me", "saved into the deleted copy");
+        assert_eq!(row(0).round, "1.3", "the kept game as filled in");
+        assert_eq!(deleted(&state, handle), [1, 2, 5, 6]);
+
+        let back = restoring(&state, handle, scan).unwrap();
+        assert_eq!(back, Restored { copies: 4, unfilled: 1, changed: 0 });
+        assert!(!row(2).deleted && row(2).annotator == "Me" && row(2).round == "1.3");
+        assert_eq!(row(0).round, "1");
+    }
+
+    /// R5-5: two deletes that fill in one kept game (here two reports made
+    /// by hand, each filling in other fields) count it once, in the report
+    /// and in what Restore says.
+    #[test]
+    fn two_fills_of_one_kept_game_count_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let handle = listed(&state, dir.path(), "duplicates.pgn", 1);
+        let generation = || state.db(handle).unwrap().lock().unwrap().generation();
+        // Game 1 lacks game 0's ratings and ECO, and game 2's board.
+        for copy in [0, 2] {
+            let group = DuplicateGroup { keep: 1, remove: vec![copy], exact: false };
+            let found = Duplicates { groups: vec![group], games: 9, compared: 0, generation: generation() };
+            let scan = keep_scan(&state, handle, DuplicateOptions { fuzzy: true }, found).unwrap();
+            assert_eq!(deleting(&state, handle, scan).unwrap().filled, 1);
+        }
+        let now = report(&state, handle).unwrap().unwrap();
+        assert_eq!((now.deleted, now.filled), (2, 1), "one kept game");
+        let back = restoring(&state, handle, now.scan).unwrap();
+        assert_eq!(back, Restored { copies: 2, unfilled: 1, changed: 0 });
+        let row = state.db(handle).unwrap().lock().unwrap().row(1).unwrap();
+        assert_eq!((row.white_elo, row.round.as_str()), (None, "1"), "both fills out");
     }
 
     /// A Stop between restoring the copies and taking out the fills leaves

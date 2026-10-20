@@ -81,9 +81,17 @@ pub fn run() {
         // gets no clipboard permissions.
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::default())
-        .on_page_load(|webview, payload| {
-            if payload.event() == PageLoadEvent::Finished {
-                run_smoke_script(webview);
+        .on_page_load(|webview, payload| match payload.event() {
+            // A page loading again (a reload) starts with no tabs: the
+            // sessions of the one before go (they'd count as games open in
+            // a tab, R5-1).
+            PageLoadEvent::Started => webview.state::<AppState>().drop_window_sessions(webview.label()),
+            PageLoadEvent::Finished => run_smoke_script(webview),
+        })
+        .on_window_event(|window, event| {
+            // Its tabs went with it.
+            if let tauri::WindowEvent::Destroyed = event {
+                window.state::<AppState>().drop_window_sessions(window.label());
             }
         })
         .setup(|app| {

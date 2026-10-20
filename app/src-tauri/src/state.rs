@@ -160,23 +160,34 @@ impl ActiveFilter {
     }
 }
 
-/// An editing session for one game shown in the UI.
+/// An editing session for one game shown in the UI: a tab of an editor
+/// window (UI-05, DB-07).
 pub struct Session {
     pub editor: GameEditor,
     /// Database handle and game id the game was loaded from / saved to.
     pub source: Option<(u32, GameId)>,
     /// Editor revision whose notation the frontend already has.
     pub sent_revision: Option<u64>,
+    /// The label of the window whose tab it is: its sessions go when it
+    /// closes or loads its page again (`drop_window_sessions`), as its tabs
+    /// do. None outside a window (tests).
+    pub window: Option<String>,
 }
 
 impl Session {
     pub fn new(editor: GameEditor, source: Option<(u32, GameId)>) -> Session {
-        Session { editor, source, sent_revision: None }
+        Session { editor, source, sent_revision: None, window: None }
+    }
+
+    /// This session, as a tab of the window labelled `window`.
+    pub fn in_window(self, window: Option<&str>) -> Session {
+        Session { window: window.map(str::to_owned), ..self }
     }
 }
 
-/// Lock order: `sessions` before `analysis`; `settings` is never held
-/// while taking another lock.
+/// Lock order: a database before `sessions` (a game is opened in a session
+/// under its database's lock, R5-1), `sessions` before `analysis`;
+/// `settings` is never held while taking another lock.
 #[derive(Default)]
 pub struct AppState {
     dbs: Mutex<HashMap<u32, OpenDb>>,
@@ -467,6 +478,37 @@ impl AppState {
 
     pub fn remove_session(&self, id: u32) {
         self.sessions.lock().expect("sessions lock").remove(&id);
+    }
+
+    /// Drops the sessions of the window labelled `window`: it closed, or
+    /// loaded its page again, and its tabs went with it. Its page closes no
+    /// session as it goes (app/AGENTS.md), and one left over would keep
+    /// counting as a game open in a tab (`open_games`).
+    pub fn drop_window_sessions(&self, window: &str) {
+        self.sessions.lock().expect("sessions lock").retain(|_, s| s.window.as_deref() != Some(window));
+    }
+
+    /// The games of `db` open in a session (a tab of any window), ascending,
+    /// each once. Call it under `db`'s lock: opening a game adds its session
+    /// before letting go of that lock (`commands::game::open`), so no game
+    /// is opened meanwhile, and a game opened afterwards reads what was
+    /// written under it. Deleting duplicates (DB-08) leaves the groups whose
+    /// kept game is open (R5-1).
+    pub fn open_games(&self, db: &Mutex<Database>) -> Vec<GameId> {
+        let handles: Vec<u32> = {
+            let dbs = self.dbs.lock().expect("dbs lock");
+            dbs.iter().filter(|(_, o)| std::ptr::eq(Arc::as_ptr(&o.db), db)).map(|(&h, _)| h).collect()
+        };
+        let sessions = self.sessions.lock().expect("sessions lock");
+        let mut games: Vec<GameId> = sessions
+            .values()
+            .filter_map(|s| s.source)
+            .filter(|(h, _)| handles.contains(h))
+            .map(|(_, game)| game)
+            .collect();
+        games.sort_unstable();
+        games.dedup();
+        games
     }
 
     /// After a compaction renumbered the games of `handle`: sessions and

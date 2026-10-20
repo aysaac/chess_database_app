@@ -644,11 +644,11 @@ impl Database {
         // Before the record points at the new game: the index must never
         // trust entries of a changed game.
         self.positions.mark_dirty(id)?;
-        self.write_record(id, &rec)?;
         // Header edits may change any sort order.
-        self.sorts.clear();
-        self.sort_epoch += 1;
-        self.generation += 1;
+        self.update_records(true, |db, tried| {
+            *tried += 1;
+            db.put_record(id, &rec)
+        })?;
         Ok(())
     }
 
@@ -686,13 +686,13 @@ impl Database {
         }
         // Before the records change (see `replace`).
         self.positions.mark_dirty_many(&dirty)?;
-        for (id, _, rec) in writes.iter() {
-            self.put_record(*id, rec)?;
-        }
-        self.idx.sync_data()?;
-        self.sorts.clear();
-        self.sort_epoch += 1;
-        self.generation += 1;
+        self.update_records(true, |db, tried| {
+            for (id, _, rec) in writes.iter() {
+                *tried += 1;
+                db.put_record(*id, rec)?;
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -739,13 +739,13 @@ impl Database {
             return Ok(done);
         }
         self.positions.mark_dirty_many(&dirty)?;
-        for (id, rec) in &now {
-            self.put_record(*id, rec)?;
-        }
-        self.idx.sync_data()?;
-        self.sorts.clear();
-        self.sort_epoch += 1;
-        self.generation += 1;
+        self.update_records(true, |db, tried| {
+            for (id, rec) in &now {
+                *tried += 1;
+                db.put_record(*id, rec)?;
+            }
+            Ok(())
+        })?;
         Ok(done)
     }
 
@@ -761,21 +761,18 @@ impl Database {
         if let Some(&bad) = ids.iter().find(|&&id| id >= self.count) {
             return Err(DbError::NotFound(bad));
         }
-        let mut changed = 0;
-        for &id in ids {
-            let mut rec = self.record(id)?;
-            if rec.is_deleted() == deleted {
-                continue;
+        self.update_records(false, |db, changed| {
+            for &id in ids {
+                let mut rec = db.record(id)?;
+                if rec.is_deleted() == deleted {
+                    continue;
+                }
+                rec.flags ^= FLAG_DELETED;
+                *changed += 1;
+                db.put_record(id, &rec)?;
             }
-            rec.flags ^= FLAG_DELETED;
-            self.put_record(id, &rec)?;
-            changed += 1;
-        }
-        if changed > 0 {
-            self.idx.sync_data()?;
-            self.generation += 1;
-        }
-        Ok(changed)
+            Ok(())
+        })
     }
 
     /// Marks games as deleted from their records just read (`(game, record)`,
@@ -787,22 +784,45 @@ impl Database {
         if let Some(&(bad, _)) = games.iter().find(|&&(id, _)| id >= self.count) {
             return Err(DbError::NotFound(bad));
         }
-        let mut changed = 0;
-        for (id, rec) in games.iter().filter(|(_, rec)| !rec.is_deleted()) {
-            self.put_record(*id, &IndexRecord { flags: rec.flags | FLAG_DELETED, ..*rec })?;
-            changed += 1;
-        }
-        if changed > 0 {
-            self.idx.sync_data()?;
-            self.generation += 1;
-        }
-        Ok(changed)
+        self.update_records(false, |db, changed| {
+            for (id, rec) in games.iter().filter(|(_, rec)| !rec.is_deleted()) {
+                *changed += 1;
+                db.put_record(*id, &IndexRecord { flags: rec.flags | FLAG_DELETED, ..*rec })?;
+            }
+            Ok(())
+        })
     }
 
-    fn write_record(&mut self, id: GameId, rec: &IndexRecord) -> Result<(), DbError> {
-        self.put_record(id, rec)?;
-        self.idx.sync_data()?;
-        Ok(())
+    /// Rewrites index records in place: `write` puts them
+    /// ([`put_record`](Self::put_record)), counting each in `tried` before
+    /// it does, then they're synced with one fsync. However that ends (an
+    /// I/O error partway leaves some records written, R5-4), once one was
+    /// tried the generation moves on, and with `headers` (fields other than
+    /// the deleted flag) the cached sort orders go, so nothing made from the
+    /// records as they were is trusted after. After an error the cached
+    /// per-game stats go too, to be read again from what is on disk.
+    /// Returns how many were tried (all of them, unless it fails).
+    fn update_records(
+        &mut self,
+        headers: bool,
+        write: impl FnOnce(&mut Database, &mut u32) -> Result<(), DbError>,
+    ) -> Result<u32, DbError> {
+        let mut tried = 0;
+        let mut out = write(self, &mut tried);
+        if out.is_ok() && tried > 0 {
+            out = self.idx.sync_data().map_err(DbError::from);
+        }
+        if tried > 0 {
+            if headers {
+                self.sorts.clear();
+                self.sort_epoch += 1;
+            }
+            self.generation += 1;
+            if out.is_err() {
+                self.stats = None;
+            }
+        }
+        out.map(|()| tried)
     }
 
     /// Writes a record without syncing (the caller syncs).
@@ -1456,6 +1476,53 @@ mod tests {
         assert!(matches!(Database::summary(dir.path()), Err(DbError::NotADatabase(_))));
         std::fs::write(path.join(META_FILE), "chessdb 99\n").unwrap();
         assert!(matches!(Database::summary(&path), Err(DbError::UnsupportedVersion(99))));
+    }
+
+    /// R5-4: an I/O error while records are written in place (here every
+    /// write to the index fails: it's open read-only under the database)
+    /// still moves the generation on, and drops the cached sort orders where
+    /// headers change and the cached stats, whichever writer it is: a
+    /// partial write may have changed some records.
+    #[test]
+    fn a_failed_record_write_still_drops_what_trusted_the_records() {
+        type Writer = Box<dyn Fn(&mut Database) -> Result<(), DbError>>;
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Failing")).unwrap();
+        for g in sample_games() {
+            db.append(&g).unwrap();
+        }
+        let rec = db.record(0).unwrap();
+        let edited = IndexRecord { white_elo: 2000, ..rec };
+        let read_write = std::mem::replace(&mut db.idx, File::open(db.dir.join(IDX_FILE)).unwrap());
+        let spec = SortSpec::new(crate::SortKey::White, true);
+        let writers: [(&str, bool, Writer); 5] = [
+            (
+                "replace",
+                true,
+                Box::new(|db| {
+                    let game = db.read_game(1)?;
+                    db.replace(1, &game)
+                }),
+            ),
+            ("rewrite_records", true, Box::new(move |db| db.rewrite_records(&mut [(0, None, edited)]))),
+            ("revert_records", true, Box::new(move |db| db.revert_records(&[(0, rec, edited)]).map(|_| ()))),
+            ("set_deleted_many", false, Box::new(|db| db.set_deleted_many(&[0, 1], true).map(|_| ()))),
+            ("mark_deleted", false, Box::new(move |db| db.mark_deleted(&[(0, rec)]).map(|_| ()))),
+        ];
+        for (name, headers, write) in writers {
+            db.store_sort(spec, Arc::new(vec![0, 1]));
+            db.game_stats().unwrap();
+            let (generation, epoch) = (db.generation(), db.sort_epoch());
+            assert!(write(&mut db).is_err(), "{name}: the write fails");
+            assert_eq!(db.generation(), generation + 1, "{name}");
+            assert_eq!((db.has_sort(spec), db.sort_epoch() == epoch), (!headers, !headers), "{name}");
+            assert!(db.stats.is_none(), "{name}");
+        }
+        // Nothing was written; with the index writable again, it all works.
+        db.idx = read_write;
+        assert_eq!(db.record(0).unwrap(), rec);
+        assert_eq!(db.set_deleted_many(&[0, 1], true).unwrap(), 2);
+        assert!(db.game_stats().unwrap().iter().all(|s| s.deleted));
     }
 
     #[test]
