@@ -5,9 +5,11 @@
 // after a reload (it isn't saved), and from PR #16's review: a report the
 // database changed under refused (A: the kept game deleted in the list), an
 // action on a report another search replaced refused (B: as from a second
-// window), Find again keeping Restore (C); then deleting the copies, Escape,
-// restoring them, the report going stale after a compaction, finding again,
-// and the dialog in light mode. Deleting and restoring are jobs.
+// window), Find again keeping Restore (C); then deleting the copies (the kept
+// game 0 first takes its copy's board: round 1 becomes 1.3, R4-1), Escape,
+// restoring them (round 1 again), the report going stale after a compaction,
+// finding again, and the dialog in light mode. Deleting and restoring are
+// jobs.
 // With the 1M-game file present it times a search over it, imports it again
 // and times finding, showing, deleting and restoring a million copies.
 //
@@ -88,6 +90,7 @@
     await until(() => !dialog().querySelector(".progress") && summary().includes(what), `“${what}”, got “${summary()}”`, ms);
   }
   const deletedIds = async () => (await api.listGames(db.info.handle, db.sort, 0, 50)).rows.filter((r) => r.deleted).map((r) => r.id);
+  const roundOf = async (id) => (await api.listGames(db.info.handle, db.sort, 0, 50)).rows.find((r) => r.id === id)?.round;
 
   try {
     await log("start, phase=" + phase);
@@ -181,9 +184,12 @@
       await find(true, "6 copies to delete, in 4 groups");
       button("Delete 6 copies").click();
       await until(() => db.info.deleted === 6 && button("Restore 6 copies"), "6 copies marked as deleted");
-      expect(done().includes("Marked 6 copies as deleted"), "says what it did: " + done());
+      expect(done().includes("Marked 6 copies as deleted, after filling in what 1 kept game lacked from them"),
+        "says what it did: " + done());
       expect(summary().includes("6 copies marked as deleted, in 4 groups"), "the report: " + summary());
       expect(same(await deletedIds(), [1, 2, 5, 6, 11, 12]), "the copies deleted, not the kept games");
+      // R4-1: the kept game took the board of its copy that stops early.
+      expect((await roundOf(0)) === "1.3", "game 0 took round 1.3, got " + (await roundOf(0)));
       await shot("d09-deleted");
 
       // Escape closes it; the list shows the copies struck through.
@@ -200,14 +206,16 @@
       await shot("d11-find-again");
       button("Restore 6 copies").click();
       await until(() => db.info.deleted === 0 && !button("Restore"), "the copies restored");
+      expect((await roundOf(0)) === "1", "the fill taken out too, got " + (await roundOf(0)));
       // The report lacked them: it says so.
       await until(() => warn().includes("changed after the last search"), "the report out of date: " + warn());
       await find(true, "6 copies to delete, in 4 groups");
       button("Delete 6 copies").click();
       await until(() => db.info.deleted === 6 && button("Restore 6 copies"), "deleted again");
       button("Restore 6 copies").click();
-      // Its own copies back: the report holds.
+      // Its own copies back: the report holds. The board is out again.
       await until(() => db.info.deleted === 0 && button("Delete 6 copies"), "restored, Delete offered again");
+      expect((await roundOf(0)) === "1", "game 0 back to round 1, got " + (await roundOf(0)));
       await shot("d12-restored");
 
       // A compaction renumbers the games: the report goes stale.

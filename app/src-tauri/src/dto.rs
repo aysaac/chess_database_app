@@ -222,6 +222,11 @@ pub struct DuplicatesDto {
     /// database (since it was opened, until it's compacted), which Restore
     /// brings back.
     pub deleted: u32,
+    /// Kept games that took fields they lacked (ratings, round and board,
+    /// ECO, date, event, site, result) from those copies before they were
+    /// deleted, which Restore takes out again while the database stays
+    /// open.
+    pub filled: u32,
     /// A delete or restore is running (maybe started in another window).
     pub busy: bool,
     /// The database changed since (games added, edited, deleted, restored

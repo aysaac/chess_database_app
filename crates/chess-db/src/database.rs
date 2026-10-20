@@ -652,6 +652,103 @@ impl Database {
         Ok(())
     }
 
+    /// Rewrites games' index records, with a new blob for some, in one
+    /// crash-safe commit: a kept duplicate taking the fields it lacks from
+    /// its copies before they're deleted (DB-08). The new blobs are appended
+    /// (fsync), the games whose result changes are marked in the position
+    /// index (fsync), then the records are written (fsync). Each record is
+    /// written whole, so after a crash every game has its old record or its
+    /// new one. A new blob must hold the same moves as the old one: the
+    /// position index keeps a game's entries unless its result changes.
+    /// Sets the records' blob offsets and lengths for the new blobs.
+    pub(crate) fn rewrite_records(
+        &mut self,
+        writes: &mut [(GameId, Option<Vec<u8>>, IndexRecord)],
+    ) -> Result<(), DbError> {
+        let mut dirty = Vec::new();
+        for (id, _, rec) in writes.iter() {
+            if self.record(*id)?.result != rec.result {
+                dirty.push(*id);
+            }
+        }
+        if writes.is_empty() {
+            return Ok(());
+        }
+        let blobs: Vec<&[u8]> = writes.iter().filter_map(|(_, blob, _)| blob.as_deref()).collect();
+        if !blobs.is_empty() {
+            let mut offsets = self.write_blobs(&blobs)?.into_iter();
+            for (_, blob, rec) in writes.iter_mut() {
+                if let Some(blob) = blob {
+                    rec.blob_offset = offsets.next().expect("one offset per blob");
+                    rec.blob_len = blob.len() as u32;
+                }
+            }
+        }
+        // Before the records change (see `replace`).
+        self.positions.mark_dirty_many(&dirty)?;
+        for (id, _, rec) in writes.iter() {
+            self.put_record(*id, rec)?;
+        }
+        self.idx.sync_data()?;
+        self.sorts.clear();
+        self.sort_epoch += 1;
+        self.generation += 1;
+        Ok(())
+    }
+
+    /// Puts back games' earlier index records, `(game, current, earlier)`
+    /// in order, each only if the game's record is still `current` but for
+    /// the deleted flag, which it keeps (else the game changed since, and
+    /// stays as it is): DB-08's Restore undoing what
+    /// [`rewrite_records`](Self::rewrite_records) wrote. An earlier record's
+    /// blob stays in `games.blob` until a compaction. One commit, like
+    /// `rewrite_records`. Returns whether each record was put back.
+    pub(crate) fn revert_records(
+        &mut self,
+        reverts: &[(GameId, IndexRecord, IndexRecord)],
+    ) -> Result<Vec<bool>, DbError> {
+        let unflagged = |r: &IndexRecord| IndexRecord { flags: r.flags & !FLAG_DELETED, ..*r };
+        // Each game's record as the reverts before leave it.
+        let mut now: HashMap<GameId, IndexRecord> = HashMap::new();
+        let mut done = Vec::with_capacity(reverts.len());
+        let mut dirty = Vec::new();
+        for (id, current, earlier) in reverts {
+            let rec = match now.get(id) {
+                Some(rec) => *rec,
+                None => self.record(*id)?,
+            };
+            let back = unflagged(&rec) == unflagged(current);
+            if back {
+                let end = earlier.blob_offset.checked_add(u64::from(earlier.blob_len));
+                if end.is_none_or(|end| earlier.blob_offset < BLOB_HEADER || end > self.blob_len) {
+                    return Err(DbError::Corrupt(format!(
+                        "game {id}'s earlier record points outside the blob file"
+                    )));
+                }
+                if rec.result != earlier.result {
+                    dirty.push(*id);
+                }
+                now.insert(
+                    *id,
+                    IndexRecord { flags: unflagged(earlier).flags | (rec.flags & FLAG_DELETED), ..*earlier },
+                );
+            }
+            done.push(back);
+        }
+        if now.is_empty() {
+            return Ok(done);
+        }
+        self.positions.mark_dirty_many(&dirty)?;
+        for (id, rec) in &now {
+            self.put_record(*id, rec)?;
+        }
+        self.idx.sync_data()?;
+        self.sorts.clear();
+        self.sort_epoch += 1;
+        self.generation += 1;
+        Ok(done)
+    }
+
     pub fn set_deleted(&mut self, id: GameId, deleted: bool) -> Result<(), DbError> {
         self.set_deleted_many(&[id], deleted).map(|_| ())
     }
@@ -672,6 +769,27 @@ impl Database {
             }
             rec.flags ^= FLAG_DELETED;
             self.put_record(id, &rec)?;
+            changed += 1;
+        }
+        if changed > 0 {
+            self.idx.sync_data()?;
+            self.generation += 1;
+        }
+        Ok(changed)
+    }
+
+    /// Marks games as deleted from their records just read (`(game, record)`,
+    /// under the same borrow, so they are current), with one fsync:
+    /// [`set_deleted_many`](Self::set_deleted_many) without reading each
+    /// record again (DB-08 deletes a million copies at once). Returns how
+    /// many changed.
+    pub(crate) fn mark_deleted(&mut self, games: &[(GameId, IndexRecord)]) -> Result<u32, DbError> {
+        if let Some(&(bad, _)) = games.iter().find(|&&(id, _)| id >= self.count) {
+            return Err(DbError::NotFound(bad));
+        }
+        let mut changed = 0;
+        for (id, rec) in games.iter().filter(|(_, rec)| !rec.is_deleted()) {
+            self.put_record(*id, &IndexRecord { flags: rec.flags | FLAG_DELETED, ..*rec })?;
             changed += 1;
         }
         if changed > 0 {
