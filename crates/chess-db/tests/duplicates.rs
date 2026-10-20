@@ -102,7 +102,7 @@ fn the_duplicates_fixture() {
     assert_eq!(db.lock().unwrap().row(0).unwrap().round, "1.3");
     let mut d = db.lock().unwrap();
     d.set_deleted_many(&done.marked, false).unwrap();
-    assert_eq!(unfill(&mut d, &done.filled).unwrap(), 1);
+    assert_eq!(unfill(&mut d, &done.filled).unwrap(), [0]);
     drop(d);
     assert_eq!(snapshot(&db), before);
 }
@@ -351,13 +351,13 @@ fn deleting_copies_fills_in_the_kept_game_and_restore_takes_it_out() {
     // Restore: the copies, then the fill. Every record and blob as before.
     let mut d = db.lock().unwrap();
     assert_eq!(d.set_deleted_many(&done.marked, false).unwrap(), 3);
-    assert_eq!(unfill(&mut d, &done.filled).unwrap(), 1);
+    assert_eq!(unfill(&mut d, &done.filled).unwrap(), [0]);
     drop(d);
     assert_eq!(snapshot(&db), before);
     assert_eq!(indexed_result(&db, 0), 0);
     assert_eq!(search_headers(&db, &eco, None, &NoProgress).unwrap(), [1]);
     assert_eq!(groups_of(&find(&db, true)), groups_of(&found), "found again");
-    assert_eq!(unfill(&mut db.lock().unwrap(), &done.filled).unwrap(), 0, "undone already");
+    assert_eq!(unfill(&mut db.lock().unwrap(), &done.filled).unwrap(), [], "undone already");
 }
 
 /// R4-1: a kept game that has every field of its copies is left as it is;
@@ -467,6 +467,52 @@ fn a_copy_filled_in_as_another_groups_kept_game_keeps_it() {
     assert!(rec.is_deleted() && rec.eco != 0, "deleted, with the ECO it took");
 }
 
+/// R5-3: two groups with the same kept game (not a report's) would each
+/// fill it in from its record as it was, the second write losing the
+/// first's fields: refused before anything is written.
+#[test]
+fn two_groups_with_the_same_kept_game_are_refused() {
+    let (_dir, db) = sources();
+    let before = snapshot(&db);
+    let (len, generation) = (blob_file_len(&db), db.lock().unwrap().generation());
+    let groups = [
+        chess_db::DuplicateGroup { keep: 0, remove: vec![1], exact: false },
+        chess_db::DuplicateGroup { keep: 3, remove: vec![4], exact: true },
+        chess_db::DuplicateGroup { keep: 0, remove: vec![5], exact: false },
+    ];
+    let deleting = delete_copies(&mut db.lock().unwrap(), &groups).unwrap_err();
+    let filling = fill_kept_games(&mut db.lock().unwrap(), &groups).unwrap_err();
+    for err in [deleting, filling] {
+        assert!(err.to_string().contains("game 0 is the kept game of two groups"), "{err}");
+    }
+    assert_eq!((blob_file_len(&db), db.lock().unwrap().generation()), (len, generation));
+    assert_eq!(snapshot(&db), before);
+    // As one group, the copies fill it in together.
+    let one = chess_db::DuplicateGroup { keep: 0, remove: vec![1, 5], exact: false };
+    let done = delete_copies(&mut db.lock().unwrap(), &[one]).unwrap();
+    assert_eq!((done.marked.as_slice(), done.filled.len()), ([1, 5].as_slice(), 1));
+}
+
+/// R5-5: two deletes that fill in one kept game (an exact search, then a
+/// fuzzy one finding more copies of it) are undone together, and counted
+/// as one game.
+#[test]
+fn two_fills_of_one_kept_game_are_undone_as_one() {
+    let (_dir, db) = sources();
+    let before = snapshot(&db);
+    let first = chess_db::DuplicateGroup { keep: 0, remove: vec![5], exact: false };
+    let second = chess_db::DuplicateGroup { keep: 0, remove: vec![1], exact: false };
+    let mut d = db.lock().unwrap();
+    let one = delete_copies(&mut d, &[first]).unwrap();
+    let two = delete_copies(&mut d, &[second]).unwrap();
+    let filled: Vec<_> = one.filled.iter().chain(&two.filled).copied().collect();
+    assert_eq!(filled.iter().map(|f| f.game).collect::<Vec<_>>(), [0, 0], "two fills of game 0");
+    d.set_deleted_many(&[1, 5], false).unwrap();
+    assert_eq!(unfill(&mut d, &filled).unwrap(), [0]);
+    drop(d);
+    assert_eq!(snapshot(&db), before);
+}
+
 /// R4-1: Restore after the user edited the kept game brings the copies
 /// back and leaves the edit (with what the game took) alone.
 #[test]
@@ -480,7 +526,7 @@ fn restore_leaves_a_kept_game_edited_since() {
     d.replace(0, &edited).unwrap();
     let record = d.record(0).unwrap();
     assert_eq!(d.set_deleted_many(&done.marked, false).unwrap(), 3);
-    assert_eq!(unfill(&mut d, &done.filled).unwrap(), 0);
+    assert_eq!(unfill(&mut d, &done.filled).unwrap(), []);
     assert_eq!(d.record(0).unwrap(), record);
     let row = d.row(0).unwrap();
     assert_eq!((row.annotator.as_str(), row.white_elo, row.eco.as_str()), ("Me", Some(2830), "C95"));

@@ -5,7 +5,7 @@ use chess_core::notation;
 use chess_core::pgn::{PgnReader, PgnWarning, write_game};
 use chess_core::position;
 use chess_core::shakmaty::{Position, Role, Square};
-use tauri::State;
+use tauri::{State, Webview};
 
 use crate::dto::{
     CommentSlotDto, FenCheckDto, GameViewDto, GotoPositionDto, HeadersDto, ImportWarningDto, LegalMoveDto,
@@ -15,30 +15,54 @@ use crate::error::{AppError, AppResult, ErrorCode};
 use crate::state::{AppState, Session};
 use crate::view::game_view;
 
-/// Opens a game in a new session, at the start or, with `ply`, that many
-/// moves into its main line (the Reference tab opens games where they reach
-/// the position, OPEN-14).
+/// Opens a game in a new session (a tab of the calling window), at the
+/// start or, with `ply`, that many moves into its main line (the Reference
+/// tab opens games where they reach the position, OPEN-14).
 #[tauri::command]
 pub async fn open_game(
+    webview: Webview,
     state: State<'_, AppState>,
     handle: u32,
     game: u32,
     ply: Option<u32>,
 ) -> AppResult<GameViewDto> {
+    open(&state, Some(webview.label()), handle, game, ply)
+}
+
+/// [`open_game`] for the window labelled `window`.
+pub(crate) fn open(
+    state: &AppState,
+    window: Option<&str>,
+    handle: u32,
+    game: u32,
+    ply: Option<u32>,
+) -> AppResult<GameViewDto> {
     let db = state.db(handle)?;
-    let loaded = db.lock().expect("db lock").read_game(game)?;
-    let mut editor = GameEditor::new(loaded);
-    for _ in 0..ply.unwrap_or(0) {
-        if !editor.forward() {
-            break;
+    let id = {
+        // The session is added before the database's lock is let go: a
+        // delete of duplicates (DB-08) leaves the groups whose kept game is
+        // open in a tab, looked up under that lock, so a kept game is
+        // either open by then (and left as it is) or read after it was
+        // filled in. Read before and opened after, saving the tab would
+        // write over what it took from its deleted copies (R5-1).
+        let db = db.lock().expect("db lock");
+        let mut editor = GameEditor::new(db.read_game(game)?);
+        for _ in 0..ply.unwrap_or(0) {
+            if !editor.forward() {
+                break;
+            }
         }
-    }
-    let id = state.add_session(Session::new(editor, Some((handle, game))));
+        state.add_session(Session::new(editor, Some((handle, game))).in_window(window))
+    };
     state.with_session(id, |s| Ok(game_view(id, s, true)))
 }
 
 #[tauri::command]
-pub async fn new_game(state: State<'_, AppState>, fen: Option<String>) -> AppResult<GameViewDto> {
+pub async fn new_game(
+    webview: Webview,
+    state: State<'_, AppState>,
+    fen: Option<String>,
+) -> AppResult<GameViewDto> {
     let setup = match fen.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
         Some(f) => {
             let pos = position::from_fen(f)?;
@@ -47,7 +71,7 @@ pub async fn new_game(state: State<'_, AppState>, fen: Option<String>) -> AppRes
         None => None,
     };
     let game = Game::new(Default::default(), setup);
-    let id = state.add_session(Session::new(GameEditor::new(game), None));
+    let id = state.add_session(Session::new(GameEditor::new(game), None).in_window(Some(webview.label())));
     state.with_session(id, |s| Ok(game_view(id, s, true)))
 }
 
@@ -132,16 +156,25 @@ fn read_pasted(text: &str) -> AppResult<Pasted> {
 }
 
 /// Shows `game` as a new unsaved game in `session`, unless that has unsaved
-/// changes (or is gone): then in a new session. That's the rule opening a
-/// game from the list and QOL-10 follow.
-fn open_unsaved(state: &AppState, session: Option<u32>, game: Game) -> AppResult<GameViewDto> {
+/// changes (or is gone): then in a new session, a tab of the window
+/// labelled `window`. That's the rule opening a game from the list and
+/// QOL-10 follow.
+fn open_unsaved(
+    state: &AppState,
+    window: Option<&str>,
+    session: Option<u32>,
+    game: Game,
+) -> AppResult<GameViewDto> {
     let mut editor = Some(GameEditor::new(game));
     if let Some(id) = session {
         let replaced = state.with_session(id, |s| {
             if s.editor.is_dirty() {
                 return Ok(None);
             }
-            *s = Session::new(editor.take().expect("the editor is only taken here"), None);
+            let editor = editor.take().expect("the editor is only taken here");
+            // Still the same tab.
+            let window = s.window.take();
+            *s = Session { window, ..Session::new(editor, None) };
             Ok(Some(game_view(id, s, true)))
         });
         match replaced {
@@ -152,11 +185,16 @@ fn open_unsaved(state: &AppState, session: Option<u32>, game: Game) -> AppResult
         }
     }
     let editor = editor.expect("the session kept its game, so the editor is unused");
-    let id = state.add_session(Session::new(editor, None));
+    let id = state.add_session(Session::new(editor, None).in_window(window));
     state.with_session(id, |s| Ok(game_view(id, s, true)))
 }
 
-fn paste(state: &AppState, session: Option<u32>, text: &str) -> AppResult<PastedGameDto> {
+fn paste(
+    state: &AppState,
+    window: Option<&str>,
+    session: Option<u32>,
+    text: &str,
+) -> AppResult<PastedGameDto> {
     let pasted = read_pasted(text)?;
     let Some((index, game, warnings)) = pasted.first else {
         return Ok(PastedGameDto::NoGame { reason: pasted.skipped });
@@ -171,7 +209,7 @@ fn paste(state: &AppState, session: Option<u32>, text: &str) -> AppResult<Pasted
             message: w.message,
         })
         .collect();
-    let view = open_unsaved(state, session, game)?;
+    let view = open_unsaved(state, window, session, game)?;
     Ok(PastedGameDto::Game { view: Box::new(view), games: pasted.games, warnings })
 }
 
@@ -181,11 +219,12 @@ fn paste(state: &AppState, session: Option<u32>, text: &str) -> AppResult<Pasted
 /// problems, as an import would.
 #[tauri::command]
 pub async fn paste_game(
+    webview: Webview,
     state: State<'_, AppState>,
     session: Option<u32>,
     text: String,
 ) -> AppResult<PastedGameDto> {
-    paste(&state, session, &text)
+    paste(&state, Some(webview.label()), session, &text)
 }
 
 #[tauri::command]
@@ -422,10 +461,20 @@ pub async fn redo(state: State<'_, AppState>, session: u32) -> AppResult<GameVie
 }
 
 /// Saves the session's game: `replace` overwrites the game it was loaded
-/// from; `new` appends it to `handle` (default: the source database).
+/// from (a deleted one stays deleted); `new` appends it to `handle`
+/// (default: the source database).
 #[tauri::command]
 pub async fn save_game(
     state: State<'_, AppState>,
+    session: u32,
+    mode: SaveModeDto,
+    handle: Option<u32>,
+) -> AppResult<GameViewDto> {
+    save(&state, session, mode, handle)
+}
+
+pub(crate) fn save(
+    state: &AppState,
     session: u32,
     mode: SaveModeDto,
     handle: Option<u32>,
@@ -496,7 +545,7 @@ mod tests {
     fn pastes_the_first_of_several_games_into_a_clean_session() {
         let state = AppState::default();
         let id = state.add_session(Session::new(GameEditor::new(Game::default()), Some((1, 7))));
-        let (view, games, warnings) = pasted(paste(&state, Some(id), TWO_GAMES).unwrap());
+        let (view, games, warnings) = pasted(paste(&state, None, Some(id), TWO_GAMES).unwrap());
         assert_eq!((view.session, games), (id, 2), "the clean session shows the first game");
         assert!(warnings.is_empty());
         assert_eq!(view.headers.white, "Anand");
@@ -511,23 +560,39 @@ mod tests {
         let mut editor = GameEditor::new(Game::default());
         editor.set_headers(Headers { event: "Edited".into(), ..Headers::default() });
         let id = state.add_session(Session::new(editor, None));
-        let (view, _, _) = pasted(paste(&state, Some(id), "1. c4 e5 *").unwrap());
+        let (view, _, _) = pasted(paste(&state, None, Some(id), "1. c4 e5 *").unwrap());
         assert_ne!(view.session, id, "a new session");
         assert_eq!(main_line(&state, view.session), ["c4", "e5"]);
         let event = state.with_session(id, |s| Ok(s.editor.game().headers.event.clone())).unwrap();
         assert_eq!(event, "Edited");
         // No session, or one that's gone: a new session too.
-        let (other, _, _) = pasted(paste(&state, None, "1. c4 *").unwrap());
+        let (other, _, _) = pasted(paste(&state, None, None, "1. c4 *").unwrap());
         assert!(other.session != id && other.session != view.session);
-        let (gone, _, _) = pasted(paste(&state, Some(999), "1. c4 *").unwrap());
+        let (gone, _, _) = pasted(paste(&state, None, Some(999), "1. c4 *").unwrap());
         assert_ne!(gone.session, 999);
+    }
+
+    /// A window's sessions are its tabs: they go when it closes or loads
+    /// its page again, also one a paste filled in place (R5-1).
+    #[test]
+    fn a_windows_sessions_go_with_it() {
+        let state = AppState::default();
+        let window = |id| state.with_session(id, |s| Ok(s.window.clone())).ok().flatten();
+        let one = pasted(paste(&state, Some("editor-1"), None, "1. e4 *").unwrap()).0.session;
+        let two = pasted(paste(&state, Some("editor-2"), None, "1. d4 *").unwrap()).0.session;
+        let again = pasted(paste(&state, Some("editor-1"), Some(one), "1. c4 *").unwrap()).0.session;
+        assert_eq!(again, one, "filled in place");
+        assert_eq!((window(one).as_deref(), window(two).as_deref()), (Some("editor-1"), Some("editor-2")));
+        state.drop_window_sessions("editor-1");
+        assert!(state.with_session(one, |_| Ok(())).is_err(), "gone with its window");
+        assert_eq!(window(two).as_deref(), Some("editor-2"));
     }
 
     #[test]
     fn lists_the_problems_of_the_pasted_game() {
         let state = AppState::default();
         let text = "[White \"Tal\"]\n[Black \"Botvinnik\"]\n\n1. e4 e5 2. Ke3 Nc6 *";
-        let (view, games, warnings) = pasted(paste(&state, None, text).unwrap());
+        let (view, games, warnings) = pasted(paste(&state, None, None, text).unwrap());
         assert_eq!(games, 1);
         assert_eq!(main_line(&state, view.session), ["e4", "e5"], "the line stops at the illegal move");
         assert_eq!(warnings.len(), 1);
@@ -541,13 +606,13 @@ mod tests {
         let fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
         let tag = format!("[FEN \"{fen}\"]");
         for text in ["", "   \n", "hello world", fen, "1-0", "[Event \"?\"]\n\n*", &tag] {
-            match paste(&state, None, text).unwrap() {
+            match paste(&state, None, None, text).unwrap() {
                 PastedGameDto::NoGame { reason: None } => {}
                 other => panic!("{text:?}: expected no game, got {other:?}"),
             }
         }
         // A game that can't be read says why.
-        match paste(&state, None, "[Variant \"Crazyhouse\"]\n\n1. e4 *").unwrap() {
+        match paste(&state, None, None, "[Variant \"Crazyhouse\"]\n\n1. e4 *").unwrap() {
             PastedGameDto::NoGame { reason: Some(r) } => assert!(r.contains("Crazyhouse"), "{r}"),
             other => panic!("expected the reason, got {other:?}"),
         }
@@ -557,13 +622,13 @@ mod tests {
     fn tags_alone_or_a_set_up_position_make_a_game() {
         let state = AppState::default();
         let text = "[White \"Polgar\"]\n[FEN \"8/8/4k3/8/8/4K3/8/8 w - - 0 1\"]\n\n*";
-        let (view, games, _) = pasted(paste(&state, None, text).unwrap());
+        let (view, games, _) = pasted(paste(&state, None, None, text).unwrap());
         assert_eq!(games, 1);
         assert_eq!(view.headers.white, "Polgar");
         assert_eq!(view.fen, "8/8/4k3/8/8/4K3/8/8 w - - 0 1");
         // A game that can't be read before one that can: that one opens.
         let text = format!("[Variant \"Atomic\"]\n\n1. e4 *\n\n{TWO_GAMES}");
-        let (view, games, _) = pasted(paste(&state, None, &text).unwrap());
+        let (view, games, _) = pasted(paste(&state, None, None, &text).unwrap());
         assert_eq!((games, view.headers.white.as_str()), (2, "Anand"));
     }
 }

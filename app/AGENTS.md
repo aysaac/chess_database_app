@@ -119,6 +119,12 @@ running app, see [`scripts/smoke/README.md`](../scripts/smoke/README.md).
   closes goes in `windowClose.ts` (one close handler per window, set up in
   `main.ts`; a shell adds its checks with `beforeClose`). Tauri waits for
   that handler, so keep what it awaits short and bounded.
+- **A session (a tab's game) belongs to its window.** A command that adds
+  one takes the `Webview` and passes its label (`Session::in_window`);
+  `lib.rs` drops a window's sessions when it closes or loads its page
+  again, since the page closes none as it goes. A session left over counts
+  as a game open in a tab, and Delete in Find duplicates (DB-08) leaves
+  that game's group.
 
 ### WebKit and the clipboard
 - **WebKit only writes the clipboard during a user gesture**, and the

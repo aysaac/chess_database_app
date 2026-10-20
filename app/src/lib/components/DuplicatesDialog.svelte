@@ -3,7 +3,8 @@
   // killer"): choose what counts as a copy, search the open database in the
   // background, then mark the copies as deleted (restorable until the
   // database is compacted) or show them in the game list. Before its copies
-  // are deleted, a kept game takes the headers it lacks from them (R4-1).
+  // are deleted, a kept game takes the headers it lacks from them (R4-1); a
+  // group whose kept game is open in a tab is left as it is (R5-1).
   import { onMount } from "svelte";
   import { formatCount, resultLabel } from "../format";
   import { db } from "../stores/db.svelte";
@@ -53,9 +54,9 @@
     file twice or merging two sources leaves. Each group keeps its best copy (the longest, then the
     one with the most variations, comments and symbols, then clock times and evals, then the most
     complete headers); the others can be marked as deleted. The kept game first takes the ratings,
-    round and board, ECO code, date, event, site and result it lacks from them. A copy with
-    annotations or clock times of its own, or a header that disagrees with another copy's, is never
-    one of them.
+    round and board, ECO code, date, event, site and result it lacks from them. A copy stays if it
+    has annotations or clock times of its own, or would fill in one of those headers differently
+    from another copy.
   </p>
   <fieldset disabled={!!working}>
     <legend>What counts as a copy</legend>
@@ -111,13 +112,37 @@
       </p>
     {:else if found}
       <p class="summary">
-        <strong>{count(found.toRemove, "copy", "copies")}</strong>
-        {found.applied ? "marked as deleted" : "to delete"}, in {count(
-          found.groups,
-          "group",
-          "groups",
-        )}
+        {#if found.openGroups}
+          <strong
+            >{formatCount(found.toRemove - found.openCopies)} of {count(
+              found.toRemove,
+              "copy",
+              "copies",
+            )}</strong
+          >
+          marked as deleted, in {count(found.groups, "group", "groups")}
+        {:else}
+          <strong>{count(found.toRemove, "copy", "copies")}</strong>
+          {found.applied ? "marked as deleted" : "to delete"}, in {count(
+            found.groups,
+            "group",
+            "groups",
+          )}
+        {/if}
       </p>
+      {#if found.openGroups && !working}
+        <p class="warn">
+          {#if found.openGroups === 1}
+            1 group was left as it is, as its kept game is open in a tab (maybe in another window):
+            saving that tab would undo what the game takes from its copies. Close the tab, then
+            delete again.
+          {:else}
+            {formatCount(found.openGroups)} groups were left as they are, as their kept games are open
+            in tabs (maybe in other windows): saving those tabs would undo what the games take from
+            their copies. Close the tabs, then delete again.
+          {/if}
+        </p>
+      {/if}
       <p class="soft">
         {#if found.fuzzy}
           {count(found.exactGroups, "group", "groups")} of exact copies, {formatCount(
@@ -178,8 +203,8 @@
     {:else if !working && report?.filled}
       <p class="done">
         {count(report.filled, "kept game", "kept games")} still {report.filled === 1 ? "has" : "have"}
-        what {report.filled === 1 ? "it" : "they"} took from copies restored since: Restore takes it
-        out.
+        the headers {report.filled === 1 ? "it" : "they"} filled in from copies restored since. Undo
+        filled-in headers gives {report.filled === 1 ? "it its" : "them their"} own back.
       </p>
     {/if}
   </div>
@@ -203,7 +228,7 @@
             title="Fill in what the kept games lack from their copies, then mark the copies as deleted; you can restore them until you compact the database"
             disabled={elsewhere}
             onclick={() => duplicates.remove()}
-            >Delete {count(found.toRemove, "copy", "copies")}</button
+            >Delete {count(found.openGroups ? found.openCopies : found.toRemove, "copy", "copies")}</button
           >
         {/if}
       {/if}
@@ -212,7 +237,11 @@
           >Restore {count(report.deleted, "copy", "copies")}</button
         >
       {:else if report?.filled}
-        <button disabled={elsewhere} onclick={() => duplicates.restore()}>Restore kept games</button>
+        <button
+          title="Give the kept games their own headers back, as before their copies were deleted (unless you changed them since)"
+          disabled={elsewhere}
+          onclick={() => duplicates.restore()}>Undo filled-in headers</button
+        >
       {/if}
       <button class:primary={!found?.groups} disabled={!db.info || elsewhere} onclick={find}
         >{report ? "Find again" : "Find duplicates"}</button
