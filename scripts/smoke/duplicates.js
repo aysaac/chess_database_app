@@ -5,8 +5,10 @@
 // after a reload (it isn't saved), and from PR #16's review: a report the
 // database changed under refused (A: the kept game deleted in the list), an
 // action on a report another search replaced refused (B: as from a second
-// window), Find again keeping Restore (C); then deleting the copies (the kept
-// game 0 first takes its copy's board: round 1 becomes 1.3, R4-1), Escape,
+// window), Find again keeping Restore (C); then deleting the copies with the
+// kept game 0 open in a tab (its group is left as it is, and the dialog and
+// the job say so, R5-1), closing the tab and deleting the rest (game 0 first
+// takes its copy's board: round 1 becomes 1.3, R4-1), Escape,
 // restoring them (round 1 again), the report going stale after a compaction,
 // finding again, and the dialog in light mode. Deleting and restoring are
 // jobs.
@@ -182,8 +184,25 @@
       await shot("d08-replaced");
 
       await find(true, "6 copies to delete, in 4 groups");
+      // R5-1: the kept game 0 open in a tab. Its group is left as it is:
+      // saving the tab would undo what it takes from its copies.
+      await game.open(handle, 0);
+      const tab = game.activeSession;
+      expect(game.active?.view.source?.game === 0, "game 0 open in a tab");
       button("Delete 6 copies").click();
+      await until(() => db.info.deleted === 4 && button("Delete 2 copies"), "4 of 6 copies deleted: " + summary());
+      expect(warn().includes("1 group was left as it is, as its kept game is open in a tab"), "says why: " + warn());
+      expect(summary().includes("4 of 6 copies marked as deleted, in 4 groups"), "the report: " + summary());
+      await until(() => notices.current?.text.includes("1 group left as it is, as its kept game is open in a tab"),
+        "the job says so: " + notices.current?.text);
+      expect(same(await deletedIds(), [5, 6, 11, 12]), "the other groups' copies deleted");
+      expect((await roundOf(0)) === "1", "game 0 not filled in, got " + (await roundOf(0)));
+      await shot("d09a-open-in-a-tab");
+      await game.closeTab(tab);
+      expect(!game.tabs.some((t) => t.view.source?.game === 0), "its tab closed");
+      button("Delete 2 copies").click();
       await until(() => db.info.deleted === 6 && button("Restore 6 copies"), "6 copies marked as deleted");
+      expect(!warn(), "nothing left: " + warn());
       expect(done().includes("Marked 6 copies as deleted, after filling in what 1 kept game lacked from them"),
         "says what it did: " + done());
       expect(summary().includes("6 copies marked as deleted, in 4 groups"), "the report: " + summary());

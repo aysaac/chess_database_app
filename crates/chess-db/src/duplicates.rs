@@ -594,6 +594,14 @@ fn fuzzy_match(a: &Line, b: &Line, names: &Names) -> bool {
 /// the result, which must agree where two games have them; then, from
 /// [`OWN`] on, the ECO code, event and site, of which the kept game's own
 /// stand (another source may name them differently). 0 is unknown.
+///
+/// The annotator isn't one of them, though the header search looks for it
+/// (R5-6): it says who annotated a copy, and a copy with annotations of its
+/// own is never deleted. A plain copy that names one loses it with its
+/// other tags (merging them isn't done yet); neither TWIC imported as
+/// another source nor Mega Database 2019 has a group where the kept game
+/// lacks an annotator a copy has. The players' names aren't either: the
+/// kept game's own spelling stands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct Fields([u32; 11]);
 
@@ -658,8 +666,11 @@ impl Fill {
     /// Takes what a copy has that the kept game lacks, if the copy agrees
     /// with the kept game (ratings, round, board, date, result) and with
     /// the copies taken before on what they filled in; else takes nothing,
-    /// and deleting the copy would lose a value. The outcome doesn't depend
-    /// on the order the copies are taken in.
+    /// and deleting the copy would lose a value. Copies that can all be
+    /// taken fill in the same in any order. Of two that disagree, the one
+    /// taken first stands and the other is refused (R5-2): which one depends
+    /// on the order, so a caller that wants none of that leaves the whole
+    /// group when one is refused, as [`plan_fill`] does.
     fn take(&mut self, copy: &Fields) -> bool {
         let mut now = self.now;
         for (i, (slot, &value)) in now.0.iter_mut().zip(&copy.0).enumerate() {
@@ -1290,7 +1301,8 @@ fn plan_write(
 /// where a kept game lacks nothing. Returns the kept games filled in, and
 /// for each group whether its copies can go (not if they disagree on a
 /// field the kept game lacks, or the kept game is deleted: only a change
-/// since the search can bring either).
+/// since the search can bring either). Fails, writing nothing, if two
+/// groups have the same kept game (a report never has).
 pub fn fill_kept_games(
     db: &mut Database,
     groups: &[DuplicateGroup],
@@ -1305,6 +1317,14 @@ type CopiesRead = Option<Vec<(GameId, IndexRecord)>>;
 /// [`fill_kept_games`], with the records of each group's copies as read
 /// before the fill, where they can go.
 fn fill(db: &mut Database, groups: &[DuplicateGroup]) -> Result<(Vec<Filled>, Vec<CopiesRead>), DbError> {
+    // Each group's fill is planned from the kept game's record as it is, so
+    // a second group with the same kept game would write over the first's
+    // (R5-3). A report never has two; refuse them before writing anything.
+    let mut keeps: Vec<GameId> = groups.iter().map(|g| g.keep).collect();
+    keeps.sort_unstable();
+    if let Some(w) = keeps.windows(2).find(|w| w[0] == w[1]) {
+        return Err(DbError::Invalid(format!("game {} is the kept game of two groups", w[0])));
+    }
     let mut copies = Vec::with_capacity(groups.len());
     let mut writes: Vec<(GameId, Option<Vec<u8>>, IndexRecord)> = Vec::new();
     let mut before: Vec<IndexRecord> = Vec::new();
@@ -1332,7 +1352,8 @@ fn fill(db: &mut Database, groups: &[DuplicateGroup]) -> Result<(Vec<Filled>, Ve
 /// its index record with it. The copies stay restorable
 /// ([`Database::set_deleted_many`]) and the fills undoable ([`unfill`])
 /// until a compaction. Run it under one lock of the database, on a report
-/// it still holds for.
+/// it still holds for. Fails, writing nothing, if two groups have the same
+/// kept game (a report never has).
 pub fn delete_copies(db: &mut Database, groups: &[DuplicateGroup]) -> Result<DeletedCopies, DbError> {
     let (filled, copies) = fill(db, groups)?;
     // The copies' records as the fill read them (it deletes a million
@@ -1356,12 +1377,18 @@ pub fn delete_copies(db: &mut Database, groups: &[DuplicateGroup]) -> Result<Del
 /// Undoes fills of [`delete_copies`] (in the order they were made), newest
 /// first, each only where the kept game is unchanged since: one edited
 /// since keeps what it took, and the edit. Restore the copies first, so
-/// that a deleted copy never has fields its kept game lacks. Returns how
-/// many it undid.
-pub fn unfill(db: &mut Database, filled: &[Filled]) -> Result<u32, DbError> {
+/// that a deleted copy never has fields its kept game lacks. Returns the
+/// games it undid a fill of, ascending, each once (two deletes can fill
+/// one game).
+pub fn unfill(db: &mut Database, filled: &[Filled]) -> Result<Vec<GameId>, DbError> {
     let reverts: Vec<(GameId, IndexRecord, IndexRecord)> =
         filled.iter().rev().map(|f| (f.game, f.after, f.before)).collect();
-    Ok(db.revert_records(&reverts)?.into_iter().filter(|&done| done).count() as u32)
+    let done = db.revert_records(&reverts)?;
+    let mut games: Vec<GameId> =
+        reverts.iter().zip(done).filter(|(_, done)| *done).map(|((game, _, _), _)| *game).collect();
+    games.sort_unstable();
+    games.dedup();
+    Ok(games)
 }
 
 #[cfg(test)]

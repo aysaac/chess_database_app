@@ -218,6 +218,12 @@ pub struct DuplicatesDto {
     pub to_remove: u32,
     /// They were marked as deleted.
     pub applied: bool,
+    /// Groups the last delete left as they are because their kept game was
+    /// open in a tab (in any window): saving it would write over what it
+    /// took from its copies (R5-1). The others were marked.
+    pub open_groups: u32,
+    /// The copies of those groups.
+    pub open_copies: u32,
     /// Copies marked as deleted from this or an earlier report of the
     /// database (since it was opened, until it's compacted), which Restore
     /// brings back.
