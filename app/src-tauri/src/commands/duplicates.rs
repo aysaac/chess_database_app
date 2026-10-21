@@ -684,8 +684,8 @@ mod tests {
 
     use super::*;
     use crate::commands::game;
-    use crate::dto::SaveModeDto;
-    use crate::state::DbUse;
+    use crate::dto::{GameViewDto, SaveModeDto};
+    use crate::state::{DbUse, Page};
 
     /// A database in the list with `pgn` imported `times` times.
     fn listed(state: &AppState, dir: &Path, pgn: &str, times: usize) -> u32 {
@@ -992,7 +992,7 @@ mod tests {
         };
         let before = records(&[0, 1, 2]);
         let scan = search(&state, handle, true);
-        let tab = game::open(&state, Some("editor-2"), handle, 0, None).unwrap().session;
+        let tab = game::open(&state, Some(Page::new("editor-2", 0)), handle, 0, None).unwrap().session;
 
         let done = deleting(&state, handle, scan).unwrap();
         let open = Open { groups: 1, copies: 2 };
@@ -1041,6 +1041,65 @@ mod tests {
         assert_eq!((row.round.as_str(), row.annotator.as_str()), ("1", "Me"));
     }
 
+    /// R6-1: a game opened for a page that's gone by the time it gets the
+    /// database's lock (another window compacting it holds the lock while
+    /// the page's window reloads, then closes) gets no tab, and neither
+    /// does the copy of the call Tauri sends again after the reload: such a
+    /// tab, open nowhere, would keep its group from being deleted. The page
+    /// after the reload opens games as before.
+    #[test]
+    fn a_game_opened_for_a_page_thats_gone_gets_no_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let handle = listed(&state, dir.path(), "duplicates.pgn", 1);
+        let db = state.db(handle).unwrap();
+        let scan = search(&state, handle, true);
+        let window = "editor-1";
+        // `open_game` for `page` while the lock is held, the page going
+        // meanwhile; what it returned once the lock was let go.
+        let open_while_the_page_goes = |page: &Page| {
+            let held = db.lock().unwrap();
+            std::thread::scope(|s| {
+                let opening = s.spawn(|| game::open(&state, Some(page.clone()), handle, 0, None));
+                // Waiting for the lock by now (or not started: either way).
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                assert!(!opening.is_finished(), "open waits for the database");
+                state.drop_window_sessions(window);
+                drop(held);
+                opening.join().unwrap()
+            })
+        };
+        let refused = |opened: AppResult<GameViewDto>| {
+            let err = opened.map(|v| v.session).unwrap_err();
+            assert_eq!(err.code, crate::error::ErrorCode::NotFound);
+            assert!(err.message.contains("loaded its page again or closed"), "{}", err.message);
+            assert_eq!(state.window_sessions(window), 0, "no tab for a page that's gone");
+            assert!(state.open_games(&db).is_empty());
+        };
+
+        // The window reloads.
+        let first = Page::new(window, state.page_number(window));
+        refused(open_while_the_page_goes(&first));
+        // Tauri sends the call again over postMessage, which can get here
+        // after the new page started.
+        refused(game::open(&state, Some(first.clone()), handle, 0, None));
+
+        // The new page opens game 0, then opens it again while its window closes.
+        let second = Page::new(window, state.page_number(window));
+        assert_ne!(second, first);
+        game::open(&state, Some(second.clone()), handle, 0, None).unwrap();
+        assert_eq!((state.window_sessions(window), state.open_games(&db)), (1, vec![0]));
+        refused(open_while_the_page_goes(&second));
+        refused(game::open(&state, Some(second), handle, 0, None));
+        refused(game::open(&state, Some(first), handle, 0, None));
+
+        // No tab is left, so Delete leaves no group.
+        let done = deleting(&state, handle, scan).unwrap();
+        assert_eq!(done, Deleted { marked: 4, filled: 1, ..Deleted::default() });
+        let now = report(&state, handle).unwrap().unwrap();
+        assert_eq!((now.applied, now.open_groups), (true, 0));
+    }
+
     /// R5-1, the other way round: a copy open in a tab is deleted. Saving
     /// the tab after writes into the deleted copy, which stays deleted
     /// (`Database::replace` keeps the flag), and leaves its kept game as
@@ -1054,7 +1113,7 @@ mod tests {
         let db = state.db(handle).unwrap();
         let scan = search(&state, handle, true);
         // Game 2 is the copy with the board (round 1.3).
-        let tab = game::open(&state, Some("editor-2"), handle, 2, None).unwrap().session;
+        let tab = game::open(&state, Some(Page::new("editor-2", 0)), handle, 2, None).unwrap().session;
         assert_eq!(
             deleting(&state, handle, scan).unwrap(),
             Deleted { marked: 4, filled: 1, ..Deleted::default() }
