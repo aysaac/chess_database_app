@@ -43,6 +43,19 @@ import type { UiPrefChangeDto } from "./bindings/UiPrefChangeDto";
 import type { UiPrefsDto } from "./bindings/UiPrefsDto";
 import type { VariationPolicyDto } from "./bindings/VariationPolicyDto";
 
+// The number of the page this window shows (R6-1), asked once (again after
+// a failed ask). The commands that open a tab send it: Rust adds no tab for
+// a page that's gone by the time the command gets to it, as when the window
+// reloaded or closed while an open_game waited for its database.
+let page: Promise<number> | null = null;
+function pageNumber(): Promise<number> {
+  page ??= invoke<number>("page_number").catch((e: unknown) => {
+    page = null;
+    throw e;
+  });
+  return page;
+}
+
 export const api = {
   createDb: (path: string) => invoke<DbInfoDto>("create_db", { path }),
   openDb: (path: string) => invoke<DbInfoDto>("open_db", { path }),
@@ -117,9 +130,10 @@ export const api = {
   gameLine: (handle: number, game: number, session: number) =>
     invoke<GameLineDto>("game_line", { handle, game, session }),
 
-  openGame: (handle: number, game: number, ply: number | null = null) =>
-    invoke<GameViewDto>("open_game", { handle, game, ply }),
-  newGame: (fen: string | null = null) => invoke<GameViewDto>("new_game", { fen }),
+  openGame: async (handle: number, game: number, ply: number | null = null) =>
+    invoke<GameViewDto>("open_game", { page: await pageNumber(), handle, game, ply }),
+  newGame: async (fen: string | null = null) =>
+    invoke<GameViewDto>("new_game", { page: await pageNumber(), fen }),
   closeSession: (session: number) => invoke<void>("close_session", { session }),
   checkFen: (fen: string) => invoke<FenCheckDto>("check_fen", { fen }),
   gotoPosition: (session: number | null, text: string) =>
@@ -155,8 +169,8 @@ export const api = {
   saveGame: (session: number, mode: SaveModeDto, handle: number | null = null) =>
     invoke<GameViewDto>("save_game", { session, mode, handle }),
   gamePgn: (session: number) => invoke<string>("game_pgn", { session }),
-  pasteGame: (session: number | null, text: string) =>
-    invoke<PastedGameDto>("paste_game", { session, text }),
+  pasteGame: async (session: number | null, text: string) =>
+    invoke<PastedGameDto>("paste_game", { page: await pageNumber(), session, text }),
   clipboardText: () => invoke<string | null>("clipboard_text"),
   copyText: (text: string) => invoke<void>("copy_text", { text }),
   copyBoardImage: (session: number, image: BoardImageDto, format: ImageFormatDto) =>

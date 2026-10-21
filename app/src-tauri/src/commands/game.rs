@@ -12,27 +12,29 @@ use crate::dto::{
     PastedGameDto, PlayResultDto, SaveModeDto, ShapeDto, StepDto, VariationPolicyDto,
 };
 use crate::error::{AppError, AppResult, ErrorCode};
-use crate::state::{AppState, Session};
+use crate::state::{AppState, Page, Session};
 use crate::view::game_view;
 
-/// Opens a game in a new session (a tab of the calling window), at the
-/// start or, with `ply`, that many moves into its main line (the Reference
-/// tab opens games where they reach the position, OPEN-14).
+/// Opens a game in a new session (a tab of the calling window's page
+/// `page`, from `page_number`), at the start or, with `ply`, that many moves
+/// into its main line (the Reference tab opens games where they reach the
+/// position, OPEN-14).
 #[tauri::command]
 pub async fn open_game(
     webview: Webview,
     state: State<'_, AppState>,
+    page: u64,
     handle: u32,
     game: u32,
     ply: Option<u32>,
 ) -> AppResult<GameViewDto> {
-    open(&state, Some(webview.label()), handle, game, ply)
+    open(&state, Some(Page::new(webview.label(), page)), handle, game, ply)
 }
 
-/// [`open_game`] for the window labelled `window`.
+/// [`open_game`] for `page`.
 pub(crate) fn open(
     state: &AppState,
-    window: Option<&str>,
+    page: Option<Page>,
     handle: u32,
     game: u32,
     ply: Option<u32>,
@@ -52,15 +54,18 @@ pub(crate) fn open(
                 break;
             }
         }
-        state.add_session(Session::new(editor, Some((handle, game))).in_window(window))
+        state.add_session(Session::new(editor, Some((handle, game))).in_page(page))?
     };
     state.with_session(id, |s| Ok(game_view(id, s, true)))
 }
 
+/// Starts a new game, from `fen` if given, in a new session: a tab of the
+/// calling window's page `page` (from `page_number`).
 #[tauri::command]
 pub async fn new_game(
     webview: Webview,
     state: State<'_, AppState>,
+    page: u64,
     fen: Option<String>,
 ) -> AppResult<GameViewDto> {
     let setup = match fen.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
@@ -71,7 +76,8 @@ pub async fn new_game(
         None => None,
     };
     let game = Game::new(Default::default(), setup);
-    let id = state.add_session(Session::new(GameEditor::new(game), None).in_window(Some(webview.label())));
+    let page = Page::new(webview.label(), page);
+    let id = state.add_session(Session::new(GameEditor::new(game), None).in_page(Some(page)))?;
     state.with_session(id, |s| Ok(game_view(id, s, true)))
 }
 
@@ -156,12 +162,11 @@ fn read_pasted(text: &str) -> AppResult<Pasted> {
 }
 
 /// Shows `game` as a new unsaved game in `session`, unless that has unsaved
-/// changes (or is gone): then in a new session, a tab of the window
-/// labelled `window`. That's the rule opening a game from the list and
-/// QOL-10 follow.
+/// changes (or is gone): then in a new session, a tab of `page`. That's the
+/// rule opening a game from the list and QOL-10 follow.
 fn open_unsaved(
     state: &AppState,
-    window: Option<&str>,
+    page: Option<Page>,
     session: Option<u32>,
     game: Game,
 ) -> AppResult<GameViewDto> {
@@ -172,9 +177,10 @@ fn open_unsaved(
                 return Ok(None);
             }
             let editor = editor.take().expect("the editor is only taken here");
-            // Still the same tab.
-            let window = s.window.take();
-            *s = Session { window, ..Session::new(editor, None) };
+            // Still the same tab. Its page is the caller's: a page that's
+            // gone has no sessions left (`drop_window_sessions`).
+            let page = s.page.take();
+            *s = Session { page, ..Session::new(editor, None) };
             Ok(Some(game_view(id, s, true)))
         });
         match replaced {
@@ -185,16 +191,11 @@ fn open_unsaved(
         }
     }
     let editor = editor.expect("the session kept its game, so the editor is unused");
-    let id = state.add_session(Session::new(editor, None).in_window(window));
+    let id = state.add_session(Session::new(editor, None).in_page(page))?;
     state.with_session(id, |s| Ok(game_view(id, s, true)))
 }
 
-fn paste(
-    state: &AppState,
-    window: Option<&str>,
-    session: Option<u32>,
-    text: &str,
-) -> AppResult<PastedGameDto> {
+fn paste(state: &AppState, page: Option<Page>, session: Option<u32>, text: &str) -> AppResult<PastedGameDto> {
     let pasted = read_pasted(text)?;
     let Some((index, game, warnings)) = pasted.first else {
         return Ok(PastedGameDto::NoGame { reason: pasted.skipped });
@@ -209,22 +210,23 @@ fn paste(
             message: w.message,
         })
         .collect();
-    let view = open_unsaved(state, window, session, game)?;
+    let view = open_unsaved(state, page, session, game)?;
     Ok(PastedGameDto::Game { view: Box::new(view), games: pasted.games, warnings })
 }
 
 /// Opens the first PGN game in pasted `text` (IO-08 "paste game") as a new
 /// unsaved game: in `session` unless it has unsaved changes, else in a new
-/// session. Says how many games the text has and lists the opened game's
-/// problems, as an import would.
+/// session (a tab of the calling window's page `page`). Says how many games
+/// the text has and lists the opened game's problems, as an import would.
 #[tauri::command]
 pub async fn paste_game(
     webview: Webview,
     state: State<'_, AppState>,
+    page: u64,
     session: Option<u32>,
     text: String,
 ) -> AppResult<PastedGameDto> {
-    paste(&state, Some(webview.label()), session, &text)
+    paste(&state, Some(Page::new(webview.label(), page)), session, &text)
 }
 
 #[tauri::command]
@@ -544,7 +546,7 @@ mod tests {
     #[test]
     fn pastes_the_first_of_several_games_into_a_clean_session() {
         let state = AppState::default();
-        let id = state.add_session(Session::new(GameEditor::new(Game::default()), Some((1, 7))));
+        let id = state.add_session(Session::new(GameEditor::new(Game::default()), Some((1, 7)))).unwrap();
         let (view, games, warnings) = pasted(paste(&state, None, Some(id), TWO_GAMES).unwrap());
         assert_eq!((view.session, games), (id, 2), "the clean session shows the first game");
         assert!(warnings.is_empty());
@@ -559,7 +561,7 @@ mod tests {
         let state = AppState::default();
         let mut editor = GameEditor::new(Game::default());
         editor.set_headers(Headers { event: "Edited".into(), ..Headers::default() });
-        let id = state.add_session(Session::new(editor, None));
+        let id = state.add_session(Session::new(editor, None)).unwrap();
         let (view, _, _) = pasted(paste(&state, None, Some(id), "1. c4 e5 *").unwrap());
         assert_ne!(view.session, id, "a new session");
         assert_eq!(main_line(&state, view.session), ["c4", "e5"]);
@@ -573,19 +575,33 @@ mod tests {
     }
 
     /// A window's sessions are its tabs: they go when it closes or loads
-    /// its page again, also one a paste filled in place (R5-1).
+    /// its page again, also one a paste filled in place (R5-1). A paste
+    /// (or a new game) for a page that's gone gets no tab (R6-1).
     #[test]
     fn a_windows_sessions_go_with_it() {
         let state = AppState::default();
-        let window = |id| state.with_session(id, |s| Ok(s.window.clone())).ok().flatten();
-        let one = pasted(paste(&state, Some("editor-1"), None, "1. e4 *").unwrap()).0.session;
-        let two = pasted(paste(&state, Some("editor-2"), None, "1. d4 *").unwrap()).0.session;
-        let again = pasted(paste(&state, Some("editor-1"), Some(one), "1. c4 *").unwrap()).0.session;
+        let page = |window| Some(Page::new(window, state.page_number(window)));
+        let window = |id| state.with_session(id, |s| Ok(s.page.clone())).ok().flatten().map(|p| p.window);
+        let one = pasted(paste(&state, page("editor-1"), None, "1. e4 *").unwrap()).0.session;
+        let two = pasted(paste(&state, page("editor-2"), None, "1. d4 *").unwrap()).0.session;
+        let again = pasted(paste(&state, page("editor-1"), Some(one), "1. c4 *").unwrap()).0.session;
         assert_eq!(again, one, "filled in place");
         assert_eq!((window(one).as_deref(), window(two).as_deref()), (Some("editor-1"), Some("editor-2")));
+        let gone = page("editor-1");
         state.drop_window_sessions("editor-1");
         assert!(state.with_session(one, |_| Ok(())).is_err(), "gone with its window");
         assert_eq!(window(two).as_deref(), Some("editor-2"));
+
+        // Its old page pastes into the tab it had, or a new one: refused.
+        for session in [Some(one), None] {
+            let err = paste(&state, gone.clone(), session, "1. f4 *").unwrap_err();
+            assert_eq!(err.code, ErrorCode::NotFound, "{}", err.message);
+        }
+        assert_eq!(state.window_sessions("editor-1"), 0);
+        // Its new page gets tabs.
+        let three = pasted(paste(&state, page("editor-1"), None, "1. f4 *").unwrap()).0.session;
+        assert_eq!(window(three).as_deref(), Some("editor-1"));
+        assert_eq!((state.window_sessions("editor-1"), state.window_sessions("editor-2")), (1, 1));
     }
 
     #[test]

@@ -119,12 +119,18 @@ running app, see [`scripts/smoke/README.md`](../scripts/smoke/README.md).
   closes goes in `windowClose.ts` (one close handler per window, set up in
   `main.ts`; a shell adds its checks with `beforeClose`). Tauri waits for
   that handler, so keep what it awaits short and bounded.
-- **A session (a tab's game) belongs to its window.** A command that adds
-  one takes the `Webview` and passes its label (`Session::in_window`);
-  `lib.rs` drops a window's sessions when it closes or loads its page
-  again, since the page closes none as it goes. A session left over counts
-  as a game open in a tab, and Delete in Find duplicates (DB-08) leaves
-  that game's group.
+- **A session (a tab's game) belongs to its window's page.** A command
+  that adds one takes the `Webview` and the page's number, which `api.ts`
+  asks for once (`page_number`) and sends along (`Session::in_page`).
+  `lib.rs` drops a window's sessions and moves its page number on when it
+  closes or loads its page again, since the page closes none as it goes,
+  and `add_session` refuses a session for an older number. A command can
+  outlive its page: an `open_game` waiting for a database another window
+  compacts, or the copy Tauri sends again over postMessage when a reload
+  cuts the first try short ("IPC custom protocol failed"). A session left
+  over counts as a game open in a tab, and Delete in Find duplicates
+  (DB-08) leaves that game's group. wry reports `PageLoadEvent::Started`
+  once the new page commits, so a page only ever learns its own number.
 
 ### WebKit and the clipboard
 - **WebKit only writes the clipboard during a user gesture**, and the
