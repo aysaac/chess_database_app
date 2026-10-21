@@ -84,12 +84,14 @@ pub fn run() {
         .on_page_load(|webview, payload| match payload.event() {
             // A page loading again (a reload) starts with no tabs: the
             // sessions of the one before go (they'd count as games open in
-            // a tab, R5-1).
+            // a tab, R5-1), and so does any still on its way for it (R6-1).
+            // wry sends Started once the new page commits (on Linux,
+            // Windows and macOS), so the page before has stopped running.
             PageLoadEvent::Started => webview.state::<AppState>().drop_window_sessions(webview.label()),
             PageLoadEvent::Finished => run_smoke_script(webview),
         })
         .on_window_event(|window, event| {
-            // Its tabs went with it.
+            // Its tabs went with it, and any still on its way.
             if let tauri::WindowEvent::Destroyed = event {
                 window.state::<AppState>().drop_window_sessions(window.label());
             }
@@ -123,6 +125,7 @@ pub fn run() {
             commands::window::open_editor_window,
             commands::window::take_editor_target,
             commands::window::list_windows,
+            commands::window::page_number,
             commands::db::close_db,
             commands::db::reference_db,
             commands::db::set_reference_db,

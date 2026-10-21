@@ -10,7 +10,7 @@ use chess_jobs::{JobId, JobManager};
 use crate::commands::duplicates::DbDuplicates;
 use crate::dto::{ImportReportDto, LinesDto};
 use crate::engines::Analysis;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, ErrorCode};
 use crate::settings::{DbView, FilterStep, SavedFilter, Settings};
 
 pub type SharedDb = Arc<Mutex<Database>>;
@@ -168,20 +168,52 @@ pub struct Session {
     pub source: Option<(u32, GameId)>,
     /// Editor revision whose notation the frontend already has.
     pub sent_revision: Option<u64>,
-    /// The label of the window whose tab it is: its sessions go when it
-    /// closes or loads its page again (`drop_window_sessions`), as its tabs
-    /// do. None outside a window (tests).
-    pub window: Option<String>,
+    /// The page whose tab it is: its sessions go when its window closes or
+    /// loads its page again (`drop_window_sessions`), as its tabs do. None
+    /// outside a window (tests).
+    pub page: Option<Page>,
 }
 
 impl Session {
     pub fn new(editor: GameEditor, source: Option<(u32, GameId)>) -> Session {
-        Session { editor, source, sent_revision: None, window: None }
+        Session { editor, source, sent_revision: None, page: None }
     }
 
-    /// This session, as a tab of the window labelled `window`.
-    pub fn in_window(self, window: Option<&str>) -> Session {
-        Session { window: window.map(str::to_owned), ..self }
+    /// This session, as a tab of `page`.
+    pub fn in_page(self, page: Option<Page>) -> Session {
+        Session { page, ..self }
+    }
+}
+
+/// A page a window shows: the window's label and the page's number there
+/// (`AppState::page_number`). Each time a window loads its page, and when
+/// it closes, a new number starts (R6-1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page {
+    pub window: String,
+    pub number: u64,
+}
+
+impl Page {
+    pub fn new(window: &str, number: u64) -> Page {
+        Page { window: window.to_owned(), number }
+    }
+}
+
+/// The sessions, by id, and each window's page number: they change
+/// together, under one lock, so a session is never added for a page once
+/// the next one started.
+#[derive(Default)]
+struct Sessions {
+    by_id: HashMap<u32, Session>,
+    /// The number of the page each window shows (by label): how many times
+    /// it loaded its page or closed. 0 until the first load.
+    pages: HashMap<String, u64>,
+}
+
+impl Sessions {
+    fn page_number(&self, window: &str) -> u64 {
+        self.pages.get(window).copied().unwrap_or(0)
     }
 }
 
@@ -202,7 +234,7 @@ pub struct AppState {
     /// Bumped (under the `filters` lock) whenever a list filter is set or
     /// cleared, so a filter being restored doesn't replace a newer one.
     filter_generation: AtomicU64,
-    sessions: Mutex<HashMap<u32, Session>>,
+    sessions: Mutex<Sessions>,
     next_session: AtomicU32,
     pub jobs: JobManager,
     /// Lock order: `index_builds` before a database.
@@ -465,27 +497,67 @@ impl AppState {
         self.dbs.lock().expect("dbs lock").iter().find(|(_, o)| o.reference).map(|(&h, _)| h)
     }
 
-    /// Adds a session. The newest session is the one on screen, so a running
-    /// analysis switches to it.
-    pub fn add_session(&self, session: Session) -> u32 {
-        let id = self.next_session.fetch_add(1, Ordering::Relaxed) + 1;
-        self.sessions.lock().expect("sessions lock").insert(id, session);
+    /// Adds a session, unless its page is gone. The newest session is the
+    /// one on screen, so a running analysis switches to it.
+    ///
+    /// A page is gone once its window loaded its page again or closed
+    /// (`drop_window_sessions`), and nothing would ever close a tab added
+    /// for it (R6-1). That happens to an `open_game` that waits for its
+    /// database's lock (another window compacting it) while its window
+    /// reloads or closes, and to the copy of it Tauri sends again when the
+    /// reload cuts its first try short. Each carries the number its page
+    /// had (`page_number`), so either is refused, whenever it gets here.
+    pub fn add_session(&self, session: Session) -> AppResult<u32> {
+        let id = {
+            let mut sessions = self.sessions.lock().expect("sessions lock");
+            if let Some(page) = &session.page
+                && sessions.page_number(&page.window) != page.number
+            {
+                return Err(AppError::new(
+                    ErrorCode::NotFound,
+                    format!("window {} loaded its page again or closed: the tab is gone", page.window),
+                ));
+            }
+            let id = self.next_session.fetch_add(1, Ordering::Relaxed) + 1;
+            sessions.by_id.insert(id, session);
+            id
+        };
         if let Some(a) = self.analysis.lock().expect("analysis lock").as_mut() {
             a.attach(id);
         }
-        id
+        Ok(id)
     }
 
     pub fn remove_session(&self, id: u32) {
-        self.sessions.lock().expect("sessions lock").remove(&id);
+        self.sessions.lock().expect("sessions lock").by_id.remove(&id);
     }
 
-    /// Drops the sessions of the window labelled `window`: it closed, or
-    /// loaded its page again, and its tabs went with it. Its page closes no
-    /// session as it goes (app/AGENTS.md), and one left over would keep
-    /// counting as a game open in a tab (`open_games`).
+    /// The number of the page the window labelled `window` shows now. Its
+    /// page asks once (`api.ts`) and sends it with the commands that open a
+    /// tab, as `add_session` wants. wry reports a page loading once it
+    /// commits, when the page before has stopped running, so a page can
+    /// only learn its own number.
+    pub fn page_number(&self, window: &str) -> u64 {
+        self.sessions.lock().expect("sessions lock").page_number(window)
+    }
+
+    /// The page the window labelled `window` showed is gone: the window
+    /// closed, or loaded its page again (`lib.rs`). Its tabs went with it,
+    /// so its sessions are dropped: its page closes none as it goes
+    /// (app/AGENTS.md), and one left over would keep counting as a game
+    /// open in a tab (`open_games`). The window's page number moves on, so
+    /// a session still on its way for that page is refused (R6-1).
     pub fn drop_window_sessions(&self, window: &str) {
-        self.sessions.lock().expect("sessions lock").retain(|_, s| s.window.as_deref() != Some(window));
+        let mut sessions = self.sessions.lock().expect("sessions lock");
+        *sessions.pages.entry(window.to_owned()).or_default() += 1;
+        sessions.by_id.retain(|_, s| s.page.as_ref().is_none_or(|p| p.window != window));
+    }
+
+    /// How many sessions the window labelled `window` has, of any page.
+    #[cfg(test)]
+    pub fn window_sessions(&self, window: &str) -> usize {
+        let sessions = self.sessions.lock().expect("sessions lock");
+        sessions.by_id.values().filter(|s| s.page.as_ref().is_some_and(|p| p.window == window)).count()
     }
 
     /// The games of `db` open in a session (a tab of any window), ascending,
@@ -501,6 +573,7 @@ impl AppState {
         };
         let sessions = self.sessions.lock().expect("sessions lock");
         let mut games: Vec<GameId> = sessions
+            .by_id
             .values()
             .filter_map(|s| s.source)
             .filter(|(h, _)| handles.contains(h))
@@ -520,7 +593,7 @@ impl AppState {
                 w.game = w.game.and_then(|id| mapping.get(id as usize).copied().flatten());
             }
         }
-        for session in self.sessions.lock().expect("sessions lock").values_mut() {
+        for session in self.sessions.lock().expect("sessions lock").by_id.values_mut() {
             if let Some((h, id)) = session.source
                 && h == handle
             {
@@ -533,7 +606,8 @@ impl AppState {
     /// running analysis of this session picks up a changed position.
     pub fn with_session<T>(&self, id: u32, f: impl FnOnce(&mut Session) -> AppResult<T>) -> AppResult<T> {
         let mut sessions = self.sessions.lock().expect("sessions lock");
-        let session = sessions.get_mut(&id).ok_or_else(|| AppError::not_found(format!("session {id}")))?;
+        let session =
+            sessions.by_id.get_mut(&id).ok_or_else(|| AppError::not_found(format!("session {id}")))?;
         let out = f(session)?;
         if let Some(a) = self.analysis.lock().expect("analysis lock").as_mut() {
             a.follow(id, session);

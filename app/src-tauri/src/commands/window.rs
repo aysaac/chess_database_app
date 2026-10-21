@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, Webview, WebviewUrl, WebviewWindowBuilder};
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -15,6 +15,14 @@ use crate::state::AppState;
 #[tauri::command]
 pub async fn list_windows(app: AppHandle) -> AppResult<Vec<String>> {
     Ok(app.webview_windows().keys().cloned().collect())
+}
+
+/// The number of the page the calling window shows (R6-1). The commands
+/// that open a tab (`open_game`, `new_game`, `paste_game`) take it back, so
+/// a tab isn't added for a page that's gone by the time they get to it.
+#[tauri::command]
+pub async fn page_number(webview: Webview, state: tauri::State<'_, AppState>) -> AppResult<u64> {
+    Ok(state.page_number(webview.label()))
 }
 
 /// Opens a new editor window, for `path` if given or a blank "New game"

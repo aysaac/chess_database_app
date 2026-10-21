@@ -326,7 +326,7 @@ mod tests {
             let pos = editor.game().position_at(editor.cursor());
             editor.play(position::parse_uci(&pos, u).unwrap(), None);
         }
-        let session = state.add_session(Session::new(editor, None));
+        let session = state.add_session(Session::new(editor, None)).unwrap();
         (dir, state, handle, session)
     }
 
