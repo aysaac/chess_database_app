@@ -507,7 +507,7 @@ mod tests {
     fn app_with(config: EngineConfig) -> (Arc<AppState>, u32) {
         let state = AppState::default();
         state.settings.lock().unwrap().engines.push(config);
-        let session = state.add_session(session_at(SCHOLAR));
+        let session = state.add_session(session_at(SCHOLAR)).unwrap();
         (Arc::new(state), session)
     }
 
@@ -617,7 +617,7 @@ mod tests {
         assert!(failed[0].error.as_deref().is_some_and(|e| e.contains("exit")), "{:?}", failed[0].error);
         assert!(status(&state).running && !status(&state).threat);
         // A new game: the analysis follows it, and so does the failure.
-        let other = state.add_session(session_at(START));
+        let other = state.add_session(session_at(START)).unwrap();
         state.with_session(other, |_| Ok(())).unwrap();
         let told = threats_within(&rx, Duration::from_millis(300));
         assert_eq!(told.len(), 1, "{told:?}");
