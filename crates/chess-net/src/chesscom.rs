@@ -3,6 +3,9 @@
 //! as JSON (each with its PGN). Usernames go in lowercase; requests one at
 //! a time.
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
+
 use serde::Deserialize;
 
 use crate::http::{Client, read_json, status_error};
@@ -10,9 +13,9 @@ use crate::keys::key_of_url;
 use crate::time::{month_of, month_start_ms};
 use crate::{Fetch, Fetched, NetError, Player, Site, Speed};
 
-/// A month's JSON can be big for a bullet player (thousands of games, each
-/// PGN with clock times).
-const MONTH_LIMIT: u64 = 512 << 20;
+/// A month's JSON can be big for a bullet player: thousands of games, each
+/// PGN with clock times, a few MB a thousand games.
+const MONTH_LIMIT: u64 = 256 << 20;
 
 #[derive(Deserialize)]
 struct Profile {
@@ -58,7 +61,7 @@ pub(crate) fn player(client: &Client, name: &str, stop: &dyn Fn() -> bool) -> Re
         404 | 410 => return Err(no_such_player(name)),
         _ => return Err(status_error(Site::ChessCom, &resp)),
     }
-    let p: Profile = read_json(Site::ChessCom, &mut resp, 1 << 20)?;
+    let p: Profile = read_json(Site::ChessCom, &mut resp, 1 << 20, &Arc::new(AtomicI64::new(0)))?;
     let shown =
         p.url.as_deref().and_then(|u| u.rsplit('/').next()).filter(|n| n.eq_ignore_ascii_case(&p.username));
     Ok(Player {
@@ -104,7 +107,7 @@ pub(crate) fn fetch(
         404 | 410 => return Err(no_such_player(&what.username)),
         _ => return Err(status_error(Site::ChessCom, &resp)),
     }
-    let archives: Archives = read_json(Site::ChessCom, &mut resp, 4 << 20)?;
+    let archives: Archives = read_json(Site::ChessCom, &mut resp, 4 << 20, &what.alive)?;
     let mut months: Vec<(i64, u32)> = archives.archives.iter().filter_map(|u| month_of_url(u)).collect();
     months.sort_unstable();
     months.dedup();
@@ -126,7 +129,7 @@ pub(crate) fn fetch(
             }
             _ => return Err(status_error(Site::ChessCom, &resp)),
         }
-        let mut month: Month = read_json(Site::ChessCom, &mut resp, MONTH_LIMIT)?;
+        let mut month: Month = read_json(Site::ChessCom, &mut resp, MONTH_LIMIT, &what.alive)?;
         month.games.sort_by_key(|g| g.end_time);
         for g in month.games {
             let at = g.end_time.saturating_mul(1000);

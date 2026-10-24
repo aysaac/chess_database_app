@@ -3,17 +3,21 @@
 //! evals and the opening's name included). Lichess sends about 20 games a
 //! second to a client that isn't logged in.
 
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Read};
+use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 
 use serde::Deserialize;
 
-use crate::http::{Client, read_json, status_error};
+use crate::http::{Alive, Client, io_reason, read_json, status_error};
 use crate::keys::lichess_key;
 use crate::{Fetch, Fetched, NetError, Player, Site, Speed};
 
-/// Times the stream is asked for again, from the last game, after the
-/// connection broke off.
+/// Times in a row the stream is asked for again, from the last game, after
+/// the connection broke off without a new game since the last time.
 const RESUMES: u32 = 3;
+/// The longest line (one game) taken; a game's PGN is a few kB.
+const MAX_LINE: u64 = 16 << 20;
 /// Lichess's lowest `since` (2013-01-01).
 const FIRST_GAME_MS: i64 = 1_356_998_400_070;
 
@@ -46,7 +50,7 @@ pub(crate) fn player(client: &Client, name: &str, stop: &dyn Fn() -> bool) -> Re
         404 => return Err(NetError::NoSuchPlayer { site: Site::Lichess, name: name.to_owned() }),
         _ => return Err(status_error(Site::Lichess, &resp)),
     }
-    let user: User = read_json(Site::Lichess, &mut resp, 1 << 20)?;
+    let user: User = read_json(Site::Lichess, &mut resp, 1 << 20, &Arc::new(AtomicI64::new(0)))?;
     Ok(Player {
         site: Site::Lichess,
         username: user.username,
@@ -74,6 +78,21 @@ fn perf_types(speeds: &[Speed]) -> String {
     names.join(",")
 }
 
+/// One line of the stream, without its end; `None` at the end of it.
+fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<Option<()>> {
+    line.clear();
+    let n = reader.by_ref().take(MAX_LINE).read_until(b'\n', line)?;
+    if n == 0 {
+        return Ok(None);
+    }
+    if line.last() == Some(&b'\n') {
+        line.pop();
+    } else if n as u64 == MAX_LINE {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "a game over 16 MB"));
+    }
+    Ok(Some(()))
+}
+
 /// Sends the player's games to `send`, oldest first, until it returns false.
 pub(crate) fn fetch(
     client: &Client,
@@ -82,6 +101,7 @@ pub(crate) fn fetch(
     stop: &dyn Fn() -> bool,
 ) -> Result<(), NetError> {
     let url = format!("{}/api/games/user/{}", client.lichess, what.username);
+    let bad = |reason: String| NetError::BadData { site: Site::Lichess, reason };
     let mut since = what.since.filter(|&s| s >= FIRST_GAME_MS);
     let mut resumes = 0;
     loop {
@@ -105,34 +125,37 @@ pub(crate) fn fetch(
             404 => return Err(NetError::NoSuchPlayer { site: Site::Lichess, name: what.username.clone() }),
             _ => return Err(status_error(Site::Lichess, &resp)),
         }
-        let lines = BufReader::with_capacity(1 << 16, resp.into_body().into_reader()).lines();
-        let mut broke_off = None;
-        for line in lines {
-            let line = match line {
-                Ok(l) => l,
-                Err(e) => {
-                    broke_off = Some(e);
-                    break;
-                }
-            };
-            if line.trim().is_empty() {
+        let body = Alive { inner: resp.into_body().into_reader(), at: what.alive.clone() };
+        let mut reader = BufReader::with_capacity(1 << 16, body);
+        let mut line = Vec::new();
+        let from = since;
+        let broke_off = loop {
+            match read_line(&mut reader, &mut line) {
+                Ok(None) => return Ok(()),
+                Ok(Some(())) => {}
+                Err(e) if e.kind() == io::ErrorKind::InvalidData => return Err(bad(io_reason(&e))),
+                Err(e) => break e,
+            }
+            if line.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }
-            let game: Game = serde_json::from_str(&line)
-                .map_err(|e| NetError::BadData { site: Site::Lichess, reason: e.to_string() })?;
+            let game: Game = serde_json::from_slice(&line).map_err(|e| bad(e.to_string()))?;
             since = Some(game.created_at);
             let (Some(pgn), Some(key)) = (game.pgn, lichess_key(&game.id)) else { continue };
             if !send(Fetched::Game { key, at: game.created_at, pgn }) {
                 return Ok(());
             }
+        };
+        // A break after new games starts the count again.
+        if since != from {
+            resumes = 0;
         }
-        let Some(e) = broke_off else { return Ok(()) };
         if resumes == RESUMES || stop() {
-            return Err(NetError::Unreachable { site: Site::Lichess, reason: e.to_string() });
+            return Err(NetError::Unreachable { site: Site::Lichess, reason: io_reason(&broke_off) });
         }
         // From the last game again: it's skipped as already downloaded.
         resumes += 1;
-        log::warn!("Lichess: the games of {} broke off ({e}); asking again", what.username);
+        log::warn!("Lichess: the games of {} broke off ({broke_off}); asking again", what.username);
     }
 }
 

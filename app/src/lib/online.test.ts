@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   dbName,
   lichessTime,
+  localMidnight,
   parseSpeeds,
   requestSpeeds,
   sentence,
@@ -80,4 +81,13 @@ test("how long Lichess takes", () => {
   assert.equal(lichessTime(1200), "about a minute");
   assert.equal(lichessTime(10_455), "about 9 minutes");
   assert.equal(lichessTime(500_000), "about 7 hours");
+});
+
+test("a first day starts at midnight where the user is", () => {
+  const t = localMidnight("2026-10-01");
+  const d = new Date(t);
+  assert.deepEqual(
+    [d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()],
+    [2026, 9, 1, 0, 0],
+  );
 });

@@ -1,8 +1,8 @@
 //! Online game sources (NET-01): a player's games on Lichess or Chess.com,
 //! downloaded straight into a database. A game the database has already
 //! (told by its page, see [`keys`]) is skipped, so downloading a player's
-//! games again only adds the new ones; "new games only" also starts from
-//! the newest one there.
+//! games again only adds the new ones. The summary says how far a download
+//! got ([`DownloadSummary::covered`]), so the next one can start there.
 //!
 //! The games are fetched on a thread of their own and handed over one by
 //! one as PGN to `chess_db::import_reader`, so they're committed in batches
@@ -18,20 +18,18 @@ pub mod time;
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::io::{self, Read};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, sync_channel};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chess_db::{Database, DbError, ImportSummary, Progress, import_reader, scan_tags};
 
 pub use http::Client;
-use keys::{GameKey, key_of_url, lichess_key, site_of};
+use keys::{GameKey, key_of_url, lichess_key};
 
 /// How often a waiting download looks whether it was cancelled.
 const POLL: Duration = Duration::from_millis(200);
-/// A server that sends nothing for this long has stopped.
-const STALL: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Site {
@@ -67,9 +65,6 @@ pub enum Period {
     /// Games from this time on (ms since the epoch): those started then or
     /// later on Lichess, those that ended then or later on Chess.com.
     Since(i64),
-    /// Games from the newest one of the player's games from the site that
-    /// the database has; all of them if it has none.
-    NewOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,7 +101,7 @@ pub enum NetError {
     Unreachable { site: Site, reason: String },
     #[error("{} answered with an error (HTTP {code}). Try again later", site.name())]
     Status { site: Site, code: u16 },
-    #[error("{} sent something that isn't what it sends for games ({reason})", site.name())]
+    #[error("{} sent an answer that can't be read ({reason}). Try again later", site.name())]
     BadData { site: Site, reason: String },
     #[error("{} stopped sending games", .0.name())]
     Stalled(Site),
@@ -124,9 +119,15 @@ pub struct DownloadSummary {
     pub import: ImportSummary,
     /// Games left out as the database had them already.
     pub already: u64,
-    /// Where the download started: the date asked for, or the newest game
-    /// the database had (new games only).
+    /// Where the download started (`Period::Since`).
     pub since: Option<i64>,
+    /// How far the download got (ms since the epoch): every game it was
+    /// asked for that started (Lichess) or ended (Chess.com) before then is
+    /// in the database. When it went through to the end, the time it
+    /// started; `None` when it got nowhere. Lichess sends no game still
+    /// being played, so one that was then is only fetched by a download
+    /// from before it started.
+    pub covered: Option<i64>,
     /// Why the download ended before the last game, when it did; the games
     /// before are in the database.
     pub stopped: Option<NetError>,
@@ -139,6 +140,9 @@ pub(crate) struct Fetch {
     pub speeds: Vec<Speed>,
     pub rated_only: bool,
     pub since: Option<i64>,
+    /// When the last bytes came (ms since the epoch): a download is stalled
+    /// when nothing comes for a while, not when a game takes long.
+    pub alive: Arc<AtomicI64>,
 }
 
 /// What a site's fetcher hands over.
@@ -190,32 +194,21 @@ impl Progress for Part<'_> {
     }
 }
 
-/// Tags that say which online game a game is, and when it started.
-const TAGS: [&str; 4] = ["Link", "GameId", "UTCDate", "UTCTime"];
+/// Tags that say which online game a game is.
+const TAGS: [&str; 2] = ["Link", "GameId"];
 
-/// The keys of the online games in the database, and when the newest game
-/// of `player` from its site started.
-fn known_games(
-    db: &Mutex<Database>,
-    player: &Player,
-    progress: &dyn Progress,
-) -> Result<(HashSet<GameKey>, Option<i64>), DbError> {
+/// The keys of the online games in the database (deleted ones too, until
+/// it's compacted).
+fn known_games(db: &Mutex<Database>, progress: &dyn Progress) -> Result<HashSet<GameKey>, DbError> {
     let mut keys = HashSet::new();
-    let mut newest: Option<i64> = None;
     scan_tags(db, &TAGS, progress, &mut |g| {
-        let [link, game_id, date, time] = &g.tags[..] else { return };
+        let [link, game_id] = &g.tags[..] else { return };
         let key = link.as_deref().and_then(key_of_url).or_else(|| key_of_url(&g.row.site)).or_else(|| {
             game_id.as_deref().filter(|_| g.row.site.contains("lichess.org")).and_then(lichess_key)
         });
-        let Some(key) = key else { return };
-        let theirs = |name: &str| name.eq_ignore_ascii_case(&player.username);
-        if site_of(&key) == Some(player.site) && (theirs(&g.row.white) || theirs(&g.row.black)) {
-            let started = time::date_time_ms(date.as_deref().unwrap_or(&g.row.date), time.as_deref());
-            newest = newest.max(started);
-        }
-        keys.insert(key);
+        keys.extend(key);
     })?;
-    Ok((keys, newest))
+    Ok(keys)
 }
 
 /// The downloaded games as one PGN text, for the importer: games the
@@ -224,7 +217,11 @@ fn known_games(
 struct Feed<'a> {
     rx: Receiver<Result<Fetched, NetError>>,
     site: Site,
+    /// The games the database had.
     known: HashSet<GameKey>,
+    /// The games this download handed over (a resumed stream sends one
+    /// again).
+    seen: HashSet<GameKey>,
     progress: &'a dyn Progress,
     /// How far the download got (ms), for the progress.
     reached: &'a Cell<i64>,
@@ -233,7 +230,10 @@ struct Feed<'a> {
     already: u64,
     stopped: Option<NetError>,
     ended: bool,
-    heard: Instant,
+    /// When anything last came (ms since the epoch), and how long nothing
+    /// may.
+    alive: Arc<AtomicI64>,
+    stall: Duration,
 }
 
 impl Feed<'_> {
@@ -245,10 +245,13 @@ impl Feed<'_> {
             }
             match self.rx.recv_timeout(POLL) {
                 Ok(Ok(Fetched::Game { key, at, pgn })) => {
-                    self.heard = Instant::now();
+                    self.alive.store(time::now_ms(), Ordering::Relaxed);
                     self.reached.set(self.reached.get().max(at));
-                    if !self.known.insert(key) {
+                    if self.known.contains(&key) {
                         self.already += 1;
+                        continue;
+                    }
+                    if !self.seen.insert(key) {
                         continue;
                     }
                     self.buf.clear();
@@ -258,7 +261,7 @@ impl Feed<'_> {
                     return true;
                 }
                 Ok(Ok(Fetched::Reached(at))) => {
-                    self.heard = Instant::now();
+                    self.alive.store(time::now_ms(), Ordering::Relaxed);
                     self.reached.set(self.reached.get().max(at));
                 }
                 Ok(Err(e)) => {
@@ -266,7 +269,8 @@ impl Feed<'_> {
                     self.ended = true;
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    if self.heard.elapsed() >= STALL {
+                    let quiet = time::now_ms() - self.alive.load(Ordering::Relaxed);
+                    if quiet >= self.stall.as_millis() as i64 {
                         self.stopped = Some(NetError::Stalled(self.site));
                         self.ended = true;
                     }
@@ -302,24 +306,29 @@ pub fn download_into(
 ) -> Result<DownloadSummary, NetError> {
     let stop = || progress.is_cancelled();
     let player = player(client, request.site, &request.username, &stop)?;
-    let (known, newest) = match known_games(db, &player, &Part { inner: progress, from: 0, span: 50 }) {
+    let known = match known_games(db, &Part { inner: progress, from: 0, span: 50 }) {
         Err(DbError::Cancelled) => return Err(NetError::Cancelled),
         other => other?,
     };
     let since = match request.period {
         Period::All => None,
         Period::Since(t) => Some(t),
-        Period::NewOnly => newest,
     };
+    let now = time::now_ms();
+    let alive = Arc::new(AtomicI64::new(now));
     let fetch = Fetch {
         username: player.username.clone(),
         speeds: request.speeds.clone(),
         rated_only: request.rated_only,
         since,
+        alive: alive.clone(),
     };
 
     // The fetcher's thread is left to finish on its own: it stops at its
-    // next game once nobody takes them, or when a wait ends at `stopped`.
+    // next game once nobody takes them, or when a 429 wait sees `stopped`.
+    // One stuck reading a server that stopped sending stays until the
+    // connection drops (ureq has no timeout between two reads), holding a
+    // thread and a socket; nothing waits for it.
     let (tx, rx) = sync_channel(64);
     let stopped = Arc::new(AtomicBool::new(false));
     let (site, thread_client, thread_stop) = (request.site, client.clone(), stopped.clone());
@@ -340,7 +349,6 @@ pub fn download_into(
 
     // Progress: how much of the time from the start to now is covered.
     let from = since.unwrap_or(player.joined);
-    let now = time::now_ms();
     let reached = Cell::new(from);
     let total = ((now - from) / 1000).max(1) as u64;
     let position = || (((reached.get() - from) / 1000).max(0) as u64).min(total);
@@ -348,6 +356,7 @@ pub fn download_into(
         rx,
         site: request.site,
         known,
+        seen: HashSet::new(),
         progress,
         reached: &reached,
         buf: Vec::new(),
@@ -355,7 +364,8 @@ pub fn download_into(
         already: 0,
         stopped: None,
         ended: false,
-        heard: Instant::now(),
+        alive,
+        stall: client.stall,
     };
     let import =
         import_reader(db, &mut feed, total, &position, &Part { inner: progress, from: 50, span: 950 });
@@ -369,13 +379,22 @@ pub fn download_into(
         // Nothing came before the failure: it's the download's.
         return Err(e);
     }
+    let cancelled = progress.is_cancelled();
+    let covered = if feed.stopped.is_none() && !cancelled {
+        Some(now)
+    } else {
+        // Up to the last game handed over (they come oldest first), or the
+        // last month done.
+        Some(reached.get().min(now)).filter(|&t| t > from)
+    };
     Ok(DownloadSummary {
         player,
         import,
         already: feed.already,
         since,
+        covered,
         stopped: feed.stopped,
-        cancelled: progress.is_cancelled(),
+        cancelled,
     })
 }
 

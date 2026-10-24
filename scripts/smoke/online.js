@@ -17,7 +17,7 @@
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   while (!window.__chessdb) await wait(100);
-  const { db, game, api, invoke, online } = window.__chessdb;
+  const { db, game, api, invoke, online, jobs } = window.__chessdb;
   game.confirmDiscard = async () => true;
   const log = (m) => invoke("dev_log", { message: String(m) });
   const shot = async (name) => {
@@ -85,6 +85,21 @@
     expect(!db.info, "no database made for a player who doesn't exist");
     await shot("02-no-such-player");
 
+    // Closing the dialog while the player is looked up: nothing is made.
+    online.username = "DrNykterstein";
+    online.target = OUT + "/Closed during lookup.chessdb";
+    online.error = "";
+    button("Download").click();
+    await wait(50);
+    expect(online.busy && online.job === null, "looking up");
+    expect(!button("Stop download").disabled, "Stop works while looking up");
+    button("Close").click();
+    await until(() => !dialog(), "closed while looking up");
+    await wait(4000);
+    expect(!db.info && !jobs.running.length, "no database and no download after closing during the lookup");
+    fromEmpty.click();
+    await until(() => dialog(), "the dialog again");
+
     // Lichess, into a new database (in the run's folder, not Documents).
     online.username = "DrNykterstein";
     online.period = "since";
@@ -114,8 +129,12 @@
     expect(online.username === "DrNykterstein" && online.site === "lichess", "the player remembered");
     expect(online.into === "open" && online.period === "newOnly", "new games only into the open database");
     await download("Lichess, new games only", 60_000);
+    expect(/New ones only: from where the last download/.test(dialog().textContent), "the new-ones choice says what it counts");
     expect(online.result?.state === "done", "done again: " + JSON.stringify(online.result));
-    expect(/in the database already/.test(online.result.message), "the newest skipped: " + online.result.message);
+    expect(
+      /^No new games of DrNykterstein on Lichess|^Downloaded \d+ new/.test(online.result.message),
+      "from where the first download got to: " + online.result.message,
+    );
     expect(db.info.games >= first, "no game lost");
     const after = await rows();
     expect(new Set(after.map((r) => r.site)).size === after.length, "no game twice");
@@ -155,6 +174,11 @@
     await until(() => online.progress && online.progress.done > 60, "the download under way", 60_000);
     await until(() => dialog().querySelector("progress"), "a progress bar");
     await shot("06-downloading");
+    // One download at a time, whatever starts the second.
+    const second = await api
+      .downloadGames(db.info.handle, { site: "chessCom", username: "hikaru", speeds: [], ratedOnly: false, period: "all", since: null })
+      .then(() => "started", (e) => e.message);
+    expect(/Another download is running/.test(second), "a second download refused: " + second);
     button("Stop download").click();
     await until(() => !online.busy, "stopped", 30_000);
     await log("stopped: " + status());

@@ -9,10 +9,18 @@ use crate::Site;
 /// `chess.com:<live|daily>/<number>`.
 pub type GameKey = String;
 
+/// Lichess pages whose names have a game id's length (8 letters).
+const LICHESS_PAGES: [&str; 10] = [
+    "training", "analysis", "practice", "streamer", "tutorial", "features", "insights", "download",
+    "settings", "timeline",
+];
+
 pub fn lichess_key(id: &str) -> Option<GameKey> {
     // Game ids have 8 characters; a player's view of a game adds 4
-    // (`/abcdefghWXYZ`). Other pages (`/tournament`) have other lengths.
-    let ok = matches!(id.len(), 8 | 12) && id.bytes().all(|b| b.is_ascii_alphanumeric());
+    // (`/abcdefghWXYZ`). Most other pages (`/tournament`) have other lengths.
+    let ok = matches!(id.len(), 8 | 12)
+        && id.bytes().all(|b| b.is_ascii_alphanumeric())
+        && !LICHESS_PAGES.contains(&id);
     ok.then(|| format!("lichess:{}", &id[..8]))
 }
 
@@ -83,6 +91,8 @@ mod tests {
             "https://lichess.org/",
             "https://lichess.org/abc",
             "https://lichess.org/tournament",
+            "https://lichess.org/training/mix",
+            "https://lichess.org/analysis",
             "https://lichess.org/@/DrNykterstein",
             "https://www.chess.com/member/hikaru",
             "https://www.chess.com/game/live/12a",

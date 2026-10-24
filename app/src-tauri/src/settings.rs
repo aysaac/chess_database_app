@@ -9,12 +9,14 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::dto::{HeaderQueryDto, NameKindDto, SortSpecDto};
+use crate::dto::{HeaderQueryDto, NameKindDto, OnlineSiteDto, SortSpecDto, SpeedDto};
 
 const FILE: &str = "settings.json";
 const MAX_RECENT: usize = 12;
 /// Databases whose list view is remembered; the least recently used go.
 const MAX_VIEWS: usize = 50;
+/// Downloads remembered per database (NET-01), the most recent first.
+const MAX_MARKS: usize = 20;
 
 /// One step of a game-list filter (QOL-07): enough to make the filter again
 /// when the database is reopened, since game ids don't last (compaction
@@ -69,6 +71,74 @@ pub struct DbView {
     /// Widths in CSS pixels of the columns the user resized, by column id.
     pub columns: BTreeMap<String, u32>,
     pub filter: Option<SavedFilter>,
+    /// How far each download of a player's online games into it got
+    /// (NET-01), for "new ones only".
+    pub downloads: Vec<DownloadMark>,
+}
+
+/// How far a download of a player's games got (NET-01): every game of
+/// theirs from `site` of those time controls (rated only or not) that
+/// started (Lichess) or ended (Chess.com) before `reached` is in the
+/// database. Kept with the database's view, so a database moved or made
+/// again starts over (all games, those it has skipped).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadMark {
+    pub site: OnlineSiteDto,
+    /// In lowercase: both sites ignore case.
+    pub player: String,
+    /// Sorted; empty for all of them.
+    pub speeds: Vec<SpeedDto>,
+    pub rated_only: bool,
+    /// Ms since the epoch.
+    pub reached: i64,
+}
+
+impl DownloadMark {
+    pub fn new(
+        site: OnlineSiteDto,
+        player: &str,
+        speeds: &[SpeedDto],
+        rated_only: bool,
+        reached: i64,
+    ) -> Self {
+        let mut speeds = speeds.to_vec();
+        speeds.sort_unstable();
+        speeds.dedup();
+        DownloadMark { site, player: player.to_ascii_lowercase(), speeds, rated_only, reached }
+    }
+
+    fn same_games(&self, other: &DownloadMark) -> bool {
+        (self.site, &self.player, &self.speeds, self.rated_only)
+            == (other.site, &other.player, &other.speeds, other.rated_only)
+    }
+
+    /// Whether the games it counts take in all of `wanted`'s.
+    fn covers(&self, wanted: &DownloadMark) -> bool {
+        self.site == wanted.site
+            && self.player == wanted.player
+            && (self.speeds.is_empty()
+                || (!wanted.speeds.is_empty() && wanted.speeds.iter().all(|s| self.speeds.contains(s))))
+            && (!self.rated_only || wanted.rated_only)
+    }
+}
+
+impl DbView {
+    /// Where "new ones only" starts for the games `wanted` names (its
+    /// `reached` unused): how far the downloads that took them all in got.
+    pub fn download_mark(&self, wanted: &DownloadMark) -> Option<i64> {
+        self.downloads.iter().filter(|m| m.covers(wanted)).map(|m| m.reached).max()
+    }
+
+    /// Notes how far a download got; a mark only moves on.
+    pub fn note_download(&mut self, mark: DownloadMark) {
+        let reached = match self.downloads.iter().position(|m| m.same_games(&mark)) {
+            Some(i) => self.downloads.remove(i).reached.max(mark.reached),
+            None => mark.reached,
+        };
+        self.downloads.insert(0, DownloadMark { reached, ..mark });
+        self.downloads.truncate(MAX_MARKS);
+    }
 }
 
 /// A configured UCI engine.
@@ -446,5 +516,44 @@ mod tests {
         assert_eq!((views[0].filter.as_ref(), views[0].columns.get("white")), (None, Some(&120)));
         assert_eq!(views[1].filter, None);
         assert_eq!(views[2].filter.as_ref().map(|f| f.description.as_str()), Some("A position"));
+    }
+
+    /// NET-01: "new ones only" starts where a download of the same games,
+    /// or of more, got to; never from another player's games or other
+    /// time controls (review round 1).
+    #[test]
+    fn new_ones_start_where_the_same_games_got_to() {
+        use OnlineSiteDto::{ChessCom, Lichess};
+        use SpeedDto::{Blitz, Bullet};
+        let wanted = |site, player: &str, speeds: &[SpeedDto], rated| {
+            DownloadMark::new(site, player, speeds, rated, 0)
+        };
+        let mut view = DbView::default();
+        view.note_download(DownloadMark::new(Lichess, "Alice", &[Blitz], false, 100));
+        assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[Blitz], false)), Some(100), "any case");
+        assert_eq!(
+            view.download_mark(&wanted(Lichess, "alice", &[Blitz], true)),
+            Some(100),
+            "rated: fewer games"
+        );
+        assert_eq!(view.download_mark(&wanted(Lichess, "bob", &[Blitz], false)), None, "her opponent");
+        assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[Bullet], false)), None, "other games");
+        assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[], false)), None, "more games");
+        assert_eq!(view.download_mark(&wanted(ChessCom, "alice", &[Blitz], false)), None, "another site");
+
+        view.note_download(DownloadMark::new(Lichess, "alice", &[], true, 200));
+        assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[Bullet], true)), Some(200));
+        assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[Bullet], false)), None, "casual games too");
+        assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[Blitz], true)), Some(200), "the furthest");
+
+        // A mark only moves on, and the same games keep one mark.
+        view.note_download(DownloadMark::new(Lichess, "ALICE", &[Blitz, Blitz], false, 50));
+        assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[Blitz], false)), Some(100));
+        assert_eq!(view.downloads.len(), 2);
+        assert_eq!(view.downloads[0].reached, 100);
+
+        let json = serde_json::to_string(&view).unwrap();
+        assert_eq!(serde_json::from_str::<DbView>(&json).unwrap(), view);
+        assert_eq!(serde_json::from_str::<DbView>("{}").unwrap().downloads, [], "views saved before");
     }
 }

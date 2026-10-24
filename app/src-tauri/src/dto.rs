@@ -1479,7 +1479,7 @@ impl From<OnlineSiteDto> for chess_net::Site {
 
 /// Time controls to download (Chess.com has no classical games; its daily
 /// games are correspondence).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum SpeedDto {
@@ -1496,7 +1496,8 @@ pub enum SpeedDto {
 #[ts(export)]
 pub enum PeriodDto {
     All,
-    /// From the newest of the player's games the database has.
+    /// From where the last download of the same games into the database got
+    /// to (see `settings::DownloadMark`); all of them if there was none.
     NewOnly,
     /// From `since`.
     Since,
@@ -1513,21 +1514,22 @@ pub struct DownloadRequestDto {
     pub speeds: Vec<SpeedDto>,
     pub rated_only: bool,
     pub period: PeriodDto,
-    /// `YYYY-MM-DD`, for `since`.
-    pub since: Option<String>,
+    /// For `since`: the first day's start where the user is, in ms since
+    /// the epoch.
+    #[ts(type = "number | null")]
+    pub since: Option<i64>,
 }
 
 impl DownloadRequestDto {
-    pub fn to_request(&self) -> Result<chess_net::Request, AppError> {
+    /// The request for chess-net; `new_from` is where "new ones only"
+    /// starts, if an earlier download of the same games got anywhere.
+    pub fn to_request(&self, new_from: Option<i64>) -> Result<chess_net::Request, AppError> {
         use chess_net::{Period, Speed};
         let period = match self.period {
             PeriodDto::All => Period::All,
-            PeriodDto::NewOnly => Period::NewOnly,
+            PeriodDto::NewOnly => new_from.map_or(Period::All, Period::Since),
             PeriodDto::Since => {
-                let date = self.since.as_deref().unwrap_or("");
-                let ms = chess_net::time::date_ms(date)
-                    .ok_or_else(|| AppError::invalid(format!("\"{date}\" isn't a date (YYYY-MM-DD)")))?;
-                Period::Since(ms)
+                Period::Since(self.since.ok_or_else(|| AppError::invalid("pick the first day"))?)
             }
         };
         Ok(chess_net::Request {
