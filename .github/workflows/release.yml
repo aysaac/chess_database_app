@@ -22,6 +22,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # Cargo.toml's release profile keeps line tables for local profiling. The
+  # installers don't need them: they were ~110 MB of the 143 MB app binary.
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+
 jobs:
   build:
     name: ${{ matrix.target }}
