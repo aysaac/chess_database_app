@@ -198,8 +198,12 @@ pub(crate) fn read_json<T: serde::de::DeserializeOwned>(
 ) -> Result<T, NetError> {
     let mut bytes = Vec::new();
     let reader = resp.body_mut().with_config().limit(limit).reader();
-    Alive { inner: reader, at: alive.clone() }
-        .read_to_end(&mut bytes)
-        .map_err(|e| NetError::Unreachable { site, reason: io_reason(&e) })?;
+    Alive { inner: reader, at: alive.clone() }.read_to_end(&mut bytes).map_err(|e| {
+        let too_big = e.get_ref().and_then(|i| i.downcast_ref::<ureq::Error>());
+        match too_big {
+            Some(ureq::Error::BodyExceedsLimit(_)) => NetError::BadData { site, reason: io_reason(&e) },
+            _ => NetError::Unreachable { site, reason: io_reason(&e) },
+        }
+    })?;
     serde_json::from_slice(&bytes).map_err(|e| NetError::BadData { site, reason: e.to_string() })
 }

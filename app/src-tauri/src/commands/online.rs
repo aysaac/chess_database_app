@@ -101,7 +101,12 @@ pub async fn download_games(
     let name = chess_net::check_username(&request.username)?.to_owned();
     let db = state.db(handle)?;
     let wanted = DownloadMark::new(request.site, &name, &request.speeds, request.rated_only, 0);
-    let new_from = state.db_view(handle).ok().and_then(|v| v.download_mark(&wanted));
+    // By path: the database can be closed, or opened again under another
+    // handle, before the download ends.
+    let path = state.list_path(handle);
+    let new_from = path.as_ref().and_then(|p| {
+        state.settings.lock().expect("settings lock").db_view(p).and_then(|v| v.download_mark(&wanted))
+    });
     let first = request.period == PeriodDto::NewOnly && new_from.is_none();
     let req = request.to_request(new_from)?;
     let label = format!("Downloading {name}'s {} games", req.site.name());
@@ -126,11 +131,9 @@ pub async fn download_games(
         let state = app.state::<AppState>();
         // How far it got (a cancel or a failure partway too), for the next
         // "new ones only".
-        if let Some(reached) = s.covered
-            && let Err(e) =
-                state.update_db_view(handle, |v| v.note_download(DownloadMark { reached, ..wanted }))
-        {
-            log::warn!("couldn't note how far the download got: {}", e.message);
+        if let (Some(reached), Some(path)) = (s.covered, &path) {
+            state
+                .update_settings(|st| st.db_view_mut(path).note_download(DownloadMark { reached, ..wanted }));
         }
         if s.import.warning_count > 0 {
             let what = format!("{}'s games from {}", s.player.username, s.player.site.name());

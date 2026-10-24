@@ -121,12 +121,13 @@ pub struct DownloadSummary {
     pub already: u64,
     /// Where the download started (`Period::Since`).
     pub since: Option<i64>,
-    /// How far the download got (ms since the epoch): every game it was
-    /// asked for that started (Lichess) or ended (Chess.com) before then is
-    /// in the database. When it went through to the end, the time it
-    /// started; `None` when it got nowhere. Lichess sends no game still
-    /// being played, so one that was then is only fetched by a download
-    /// from before it started.
+    /// How far the download got: when the newest game the server sent
+    /// started (Lichess) or ended (Chess.com), in ms since the epoch; `None`
+    /// when it sent none. The games come oldest first and every one sent is
+    /// in the database (a cancel ends them between two games), so the next
+    /// download of the same games can start there; the server's own times
+    /// keep a game it didn't have yet (Chess.com's archives lag) or one
+    /// still being played (Lichess sends none) for that one.
     pub covered: Option<i64>,
     /// Why the download ended before the last game, when it did; the games
     /// before are in the database.
@@ -174,6 +175,21 @@ pub fn player(
     match site {
         Site::Lichess => lichess::player(client, name, stop),
         Site::ChessCom => chesscom::player(client, name, stop),
+    }
+}
+
+/// The import's progress: the job's, never cancelled. On a cancel the feed
+/// ends the input between two games instead, so the reader takes in the
+/// games it read ahead (up to 16 kB), and every game sent is in the
+/// database, as `covered` says.
+struct Uncancelled<'a>(Part<'a>);
+
+impl Progress for Uncancelled<'_> {
+    fn report(&self, done: u64, total: u64) {
+        self.0.report(done, total);
+    }
+    fn is_cancelled(&self) -> bool {
+        false
     }
 }
 
@@ -225,6 +241,8 @@ struct Feed<'a> {
     progress: &'a dyn Progress,
     /// How far the download got (ms), for the progress.
     reached: &'a Cell<i64>,
+    /// When the newest game sent started or ended (ms).
+    newest: Option<i64>,
     buf: Vec<u8>,
     pos: usize,
     already: u64,
@@ -247,11 +265,14 @@ impl Feed<'_> {
                 Ok(Ok(Fetched::Game { key, at, pgn })) => {
                     self.alive.store(time::now_ms(), Ordering::Relaxed);
                     self.reached.set(self.reached.get().max(at));
-                    if self.known.contains(&key) {
-                        self.already += 1;
+                    self.newest = self.newest.max(Some(at));
+                    // A game sent again (a resumed stream) is skipped and
+                    // counted once.
+                    if !self.seen.insert(key.clone()) {
                         continue;
                     }
-                    if !self.seen.insert(key) {
+                    if self.known.contains(&key) {
+                        self.already += 1;
                         continue;
                     }
                     self.buf.clear();
@@ -359,6 +380,7 @@ pub fn download_into(
         seen: HashSet::new(),
         progress,
         reached: &reached,
+        newest: None,
         buf: Vec::new(),
         pos: 0,
         already: 0,
@@ -367,8 +389,13 @@ pub fn download_into(
         alive,
         stall: client.stall,
     };
-    let import =
-        import_reader(db, &mut feed, total, &position, &Part { inner: progress, from: 50, span: 950 });
+    let import = import_reader(
+        db,
+        &mut feed,
+        total,
+        &position,
+        &Uncancelled(Part { inner: progress, from: 50, span: 950 }),
+    );
     stopped.store(true, Ordering::Relaxed);
     let import = import?;
     if import.imported == 0
@@ -380,13 +407,7 @@ pub fn download_into(
         return Err(e);
     }
     let cancelled = progress.is_cancelled();
-    let covered = if feed.stopped.is_none() && !cancelled {
-        Some(now)
-    } else {
-        // Up to the last game handed over (they come oldest first), or the
-        // last month done.
-        Some(reached.get().min(now)).filter(|&t| t > from)
-    };
+    let covered = feed.newest;
     Ok(DownloadSummary {
         player,
         import,

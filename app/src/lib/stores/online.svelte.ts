@@ -161,6 +161,8 @@ class OnlineStore {
           return;
         }
       }
+      // Stopped while the database was made.
+      if (run !== this.#run) return;
       const handle = db.info?.handle;
       const done = await db.download(
         {
@@ -171,9 +173,13 @@ class OnlineStore {
           period: this.period,
           since: this.period === "since" ? localMidnight(this.since.trim()) : null,
         },
-        (id) => (this.job = id),
+        (id) => {
+          // Stopped while the download was asked for: it stops at once.
+          if (run === this.#run) this.job = id;
+          else void jobs.cancel(id);
+        },
       );
-      if (!done) return;
+      if (!done || run !== this.#run) return;
       const here = db.info?.handle === handle ? db.info : null;
       const state = done.state === "running" ? "done" : done.state;
       this.result = {

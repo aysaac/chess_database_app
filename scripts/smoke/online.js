@@ -175,9 +175,14 @@
     await until(() => dialog().querySelector("progress"), "a progress bar");
     await shot("06-downloading");
     // One download at a time, whatever starts the second.
+    // A player who doesn't exist: should the guard ever let it through,
+    // nothing is downloaded.
     const second = await api
-      .downloadGames(db.info.handle, { site: "chessCom", username: "hikaru", speeds: [], ratedOnly: false, period: "all", since: null })
-      .then(() => "started", (e) => e.message);
+      .downloadGames(db.info.handle, { site: "lichess", username: "no_such_user_zz9q", speeds: [], ratedOnly: false, period: "all", since: null })
+      .then(
+        (id) => (jobs.cancel(id), "started"),
+        (e) => e.message,
+      );
     expect(/Another download is running/.test(second), "a second download refused: " + second);
     button("Stop download").click();
     await until(() => !online.busy, "stopped", 30_000);

@@ -406,7 +406,7 @@ impl AppState {
     }
 
     /// The canonical path of `handle` while it's shown in the game list.
-    fn list_path(&self, handle: u32) -> Option<PathBuf> {
+    pub(crate) fn list_path(&self, handle: u32) -> Option<PathBuf> {
         self.dbs.lock().expect("dbs lock").get(&handle).filter(|o| o.listed).map(|o| o.path.clone())
     }
 

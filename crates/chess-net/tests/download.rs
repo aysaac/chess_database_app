@@ -179,11 +179,14 @@ fn lichess_games_then_only_the_new_ones() {
     let client = Client::with_servers(&server.url, &server.url);
     let (_dir, db) = new_db();
 
-    let started = chess_net::time::now_ms();
     let s = download_into(&client, &db, &request(Site::Lichess, Period::All), &NoProgress).unwrap();
     assert_eq!((s.import.imported, s.already, s.since, s.cancelled), (3, 0, None, false));
-    let covered = s.covered.expect("a download that went through covers up to its start");
-    assert!(covered >= started && covered <= chess_net::time::now_ms(), "{covered}");
+    let covered = s.covered.expect("up to the newest game sent");
+    assert_eq!(
+        covered,
+        date_time_ms("2026.10.02", Some("09:15:20")).unwrap() + 345,
+        "the server's time, not ours"
+    );
     assert!(s.stopped.is_none());
     assert_eq!(s.player.username, "DrNykterstein");
     assert_eq!(
@@ -204,10 +207,10 @@ fn lichess_games_then_only_the_new_ones() {
     let perf = query_value(games_query.split_once('?').unwrap().1, "perfType").unwrap();
     assert_eq!(perf.replace("%2C", ","), "ultraBullet,bullet,blitz,rapid,classical,correspondence");
 
-    // Again from where it got to: only the new game.
+    // Again from where it got to: the newest game again (skipped) and the new one.
     let s =
         download_into(&client, &db, &request(Site::Lichess, Period::Since(covered)), &NoProgress).unwrap();
-    assert_eq!((s.import.imported, s.already, s.since), (1, 0, Some(covered)));
+    assert_eq!((s.import.imported, s.already, s.since), (1, 1, Some(covered)));
     let q = server.requests().last().unwrap().clone();
     assert_eq!(query_value(&q, "since"), Some(covered.to_string().as_str()), "{q}");
     assert_eq!(games(&db).len(), 4);
@@ -510,6 +513,29 @@ impl Progress for CancelAfter {
     fn is_cancelled(&self) -> bool {
         Instant::now() >= self.at
     }
+}
+
+#[test]
+fn a_cancel_keeps_every_game_it_counts_as_covered() {
+    // 60 games coming over 6 s, cancelled after 3: the games the reader
+    // had read ahead go in too, so all those up to `covered` are there.
+    let start = date_time_ms("2026-09-01", None).unwrap();
+    let body: String = (0..60)
+        .map(|i| lichess_line_at(&format!("AAAAAA{i:02}"), "DrNykterstein", "Alice", start + i * 60_000))
+        .collect();
+    let server = Server::start(move |path, _| match path {
+        "/api/user/drnykterstein" => profile("DrNykterstein"),
+        _ => Reply::Slow(body.clone(), Duration::from_secs(6)),
+    });
+    let client = Client::with_servers(&server.url, &server.url);
+    let (_dir, db) = new_db();
+    let progress = CancelAfter { at: Instant::now() + Duration::from_secs(3) };
+    let s = download_into(&client, &db, &request(Site::Lichess, Period::All), &progress).unwrap();
+    assert!(s.cancelled && s.import.imported > 0 && s.import.imported < 60, "{s:?}");
+    let covered = s.covered.unwrap();
+    let up_to = (covered - start) / 60_000 + 1;
+    assert_eq!(s.import.imported as i64, up_to, "every game up to {covered} is in the database");
+    assert_eq!(games(&db).len() as u64, s.import.imported);
 }
 
 #[test]
