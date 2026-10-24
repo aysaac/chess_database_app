@@ -11,6 +11,7 @@
   import { game } from "../stores/game.svelte";
   import { notices } from "../stores/notify.svelte";
   import { onboarding } from "../stores/onboarding.svelte";
+  import { online } from "../stores/online.svelte";
   import CopyGamesDialog from "./CopyGamesDialog.svelte";
   import FilterBar from "./FilterBar.svelte";
 
@@ -591,6 +592,7 @@
         </div>
         <div>
           <button onclick={() => onboarding.show("import")}>Import PGN files into a new database…</button>
+          <button onclick={() => (online.dialog = true)}>Download games from Lichess or Chess.com…</button>
           <button title={onboarding.samplePath || undefined} onclick={() => db.openSample()}>Open the sample games</button>
         </div>
         {#if db.recent.some((r) => r.exists)}
@@ -609,8 +611,14 @@
       </div>
     {:else if total === 0}
       <div class="empty">
-        <p>{db.info.name} has no games yet. Import a PGN file or a ChessBase database to add some.</p>
-        <div><button class="primary" onclick={() => db.importDialog()}>Import games</button></div>
+        <p>
+          {db.info.name} has no games yet. Import a PGN file or a ChessBase database, or download a
+          player's games from Lichess or Chess.com.
+        </p>
+        <div>
+          <button class="primary" onclick={() => db.importDialog()}>Import games</button>
+          <button onclick={() => (online.dialog = true)}>Download games…</button>
+        </div>
       </div>
     {/if}
   </div>

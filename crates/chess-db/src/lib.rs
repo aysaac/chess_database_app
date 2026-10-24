@@ -18,6 +18,7 @@ pub mod record;
 pub mod reference;
 mod search;
 mod sort;
+mod tags;
 
 use std::path::PathBuf;
 
@@ -43,6 +44,7 @@ pub use reference::{
 };
 pub use search::{EloMode, GameSet, HeaderQuery, ResultFilter, fold, games_with_name, search_headers};
 pub use sort::{SortKey, SortSpec, build_sort, page_ids, sorted_subset};
+pub use tags::{TaggedGame, scan_tags};
 
 /// Zero-based index of a game in its database.
 pub type GameId = u32;

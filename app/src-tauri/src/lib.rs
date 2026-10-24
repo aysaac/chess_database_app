@@ -212,6 +212,8 @@ pub fn run() {
             commands::onboarding::finish_welcome,
             commands::onboarding::open_sample_db,
             commands::onboarding::suggest_db_path,
+            commands::online::online_player,
+            commands::online::download_games,
             dev_log,
         ])
         .run(tauri::generate_context!())

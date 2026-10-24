@@ -318,7 +318,7 @@ Two sides of one program:
 
 | ID | Feature | Src | Tier | Depends on | Notes |
 |---|---|---|---|---|---|
-| NET-01 | Download games by username from Lichess / Chess.com APIs, incremental sync | CB | P2 | IO-01 | CB18 has a built-in Chess.com API |
+| NET-01 | Download games by username from Lichess / Chess.com APIs, incremental sync | CB | P2 | IO-01 | CB18 has a built-in Chess.com API. Done (2026-10-23): Download games… in the ribbon's Database group and in the empty game list. A player's games, oldest first with clock times (and Lichess's evals), into a new database named after them or into the open one, by time control (Chess.com has no classical), rated only, all of them, from a date, or new ones only (from the newest of the player's games the database has). Games the database has already, told by their page, are skipped, so downloading again adds only the new ones and finishes one that stopped. Variants are left out. A job (`chess_net::download_into`), Cancel at once. Not yet: a Lichess token (3× faster for one's own games), the library window, updating on a schedule; with new ones only, a Lichess correspondence game still being played at the last download comes only with "All of them" |
 | NET-02 | Search huge online DBs (Lichess explorer; CB online DB of ~10M games) | CB | P3 | NET-01 | |
 | NET-03 | Cloud DBs / sync across devices (CB "My Games", "My Moves") | CB | P4 | DB-01 | Needs a server |
 | NET-04 | Live broadcasts viewer (Lichess broadcast API; CB Playchess/live DB) | CB+FR | P4 | NET-01 | |
