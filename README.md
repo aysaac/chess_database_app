@@ -10,6 +10,13 @@ check, an opening tree and position search, header search and filters.
 What's planned beyond it is in [docs/feature-catalog.md](docs/feature-catalog.md);
 the status of each feature is in the [Feature Status doc](https://claude.ai/artifact/SfWucTSjakLh9oNSWSNQrV#93fdfc30-cba2).
 
+## Download
+
+Installers for Windows, macOS and Linux are on the
+[Releases page](https://github.com/aysaac/chess_database_app/releases/latest),
+with Stockfish included. They aren't code-signed yet; the release notes say
+how to get past the warning on first launch.
+
 ## What you can do
 
 - Create or open a database (a `.chessdb` folder) and import PGN files. Imports
@@ -34,8 +41,8 @@ the status of each feature is in the [Feature Status doc](https://claude.ai/arti
 - Save changes with Ctrl+S, or save a copy with Ctrl+Shift+S. Export the
   database (or the filtered games) to PGN, or copy the current game as PGN
   or the position as FEN.
-- Analyze with Stockfish (Ctrl+Shift+A; run `scripts/fetch-stockfish.sh`
-  once), run a blunder check, browse the opening tree, filter and search the
+- Analyze with Stockfish (Ctrl+Shift+A; the installers include it, and from
+  source you run `scripts/fetch-stockfish.sh` once), run a blunder check, browse the opening tree, filter and search the
   list, open several games in tabs, and set up positions.
 
 ## Development
@@ -50,6 +57,8 @@ npm install
 npm run tauri dev        # run the app with hot reload
 npm run tauri build      # release bundle
 ```
+
+Releases are built by CI from version tags: see [docs/releasing.md](docs/releasing.md).
 
 Checks:
 

@@ -26,6 +26,7 @@ about; read it when your task gets there:
 | Work on the Windows PC | [`docs/windows-testing.md`](docs/windows-testing.md): code fixes and checks, with how to verify each |
 | Pick or scope a feature | [`docs/feature-catalog.md`](docs/feature-catalog.md): every ChessBase/Fritz feature with IDs (`DB-01`, `ENG-02`…), tiers P0–P5 and dependencies. **Features are referred to by these IDs**. Their status is in the Feature Status doc (above) |
 | Add a dependency or make a stack decision | [`docs/stack.md`](docs/stack.md) |
+| Cut a release, or change the installers or the release workflow | [`docs/releasing.md`](docs/releasing.md) |
 
 ## Where things are
 
