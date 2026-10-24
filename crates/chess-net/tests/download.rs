@@ -97,7 +97,7 @@ fn serve(mut stream: TcpStream, log: &Mutex<Vec<String>>, route: &Route) {
     };
     let head = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(&body[..send]);
+    let _ = stream.write_all(&body[..send.min(body.len())]);
 }
 
 fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -162,7 +162,8 @@ fn lichess_games_then_only_the_new_ones() {
     let server = Server::start(move |path, query| match path {
         "/api/user/drnykterstein" => profile("DrNykterstein"),
         "/api/games/user/DrNykterstein" => {
-            let since: Option<i64> = query_value(query, "since").map(|s| s.parse().unwrap());
+            // Lichess's `since` (with `perfType`) leaves out a game created at it.
+            let since: Option<i64> = query_value(query, "since").map(|s| s.parse::<i64>().unwrap() + 1);
             let mut body = String::new();
             for (id, w, b, d, t) in &GAMES {
                 if since.is_none_or(|s| date_time_ms(d, Some(t)).unwrap() + 345 >= s) {
@@ -212,7 +213,7 @@ fn lichess_games_then_only_the_new_ones() {
         download_into(&client, &db, &request(Site::Lichess, Period::Since(covered)), &NoProgress).unwrap();
     assert_eq!((s.import.imported, s.already, s.since), (1, 1, Some(covered)));
     let q = server.requests().last().unwrap().clone();
-    assert_eq!(query_value(&q, "since"), Some(covered.to_string().as_str()), "{q}");
+    assert_eq!(query_value(&q, "since"), Some((covered - 1).to_string().as_str()), "1 ms before: {q}");
     assert_eq!(games(&db).len(), 4);
     assert_eq!(games(&db)[3].0, "Dave");
 
@@ -242,7 +243,7 @@ fn lichess_filters_and_dates() {
         Some("blitz,correspondence".into())
     );
     assert_eq!(query_value(&q, "rated"), Some("true"));
-    assert_eq!(query_value(&q, "since"), Some(since.to_string().as_str()));
+    assert_eq!(query_value(&q, "since"), Some((since - 1).to_string().as_str()));
 }
 
 fn chess_com_game(
@@ -401,7 +402,7 @@ fn a_stream_that_breaks_off_goes_on_from_the_last_game() {
                 Reply::CutOff(body, two + 40)
             } else {
                 let since = date_time_ms(GAMES[1].3, Some(GAMES[1].4)).unwrap() + 345;
-                assert_eq!(query_value(query, "since"), Some(since.to_string().as_str()), "{query}");
+                assert_eq!(query_value(query, "since"), Some((since - 1).to_string().as_str()), "{query}");
                 Reply::Ok(200, body)
             }
         }
@@ -434,7 +435,7 @@ fn every_break_after_new_games_is_resumed() {
         "/api/user/drnykterstein" => profile("DrNykterstein"),
         _ => {
             let call = c.fetch_add(1, Ordering::SeqCst);
-            let since: i64 = query_value(query, "since").map_or(0, |s| s.parse().unwrap());
+            let since: i64 = query_value(query, "since").map_or(0, |s| s.parse::<i64>().unwrap() + 1);
             let from = lines
                 .iter()
                 .position(|l| {

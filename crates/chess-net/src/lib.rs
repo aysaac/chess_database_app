@@ -125,9 +125,11 @@ pub struct DownloadSummary {
     /// started (Lichess) or ended (Chess.com), in ms since the epoch; `None`
     /// when it sent none. The games come oldest first and every one sent is
     /// in the database (a cancel ends them between two games), so the next
-    /// download of the same games can start there; the server's own times
-    /// keep a game it didn't have yet (Chess.com's archives lag) or one
-    /// still being played (Lichess sends none) for that one.
+    /// download of the same games can start there. The server's own times
+    /// keep a game ending after that newest one for next time even when
+    /// Chess.com's archive didn't have it yet; a game still being played
+    /// (Lichess sends none) comes only if it started after the newest one
+    /// sent (not a correspondence game started before).
     pub covered: Option<i64>,
     /// Why the download ended before the last game, when it did; the games
     /// before are in the database.

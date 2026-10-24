@@ -117,7 +117,9 @@ pub(crate) fn fetch(
             query.push(("rated", "true".to_owned()));
         }
         if let Some(s) = since {
-            query.push(("since", s.to_string()));
+            // With `perfType`, Lichess leaves out a game created at `since`
+            // itself: 1 ms before keeps it (and games sharing that ms).
+            query.push(("since", (s - 1).to_string()));
         }
         let resp = client.get(Site::Lichess, &url, &query, "application/x-ndjson", stop)?;
         match resp.status().as_u16() {
@@ -153,7 +155,7 @@ pub(crate) fn fetch(
         if resumes == RESUMES || stop() {
             return Err(NetError::Unreachable { site: Site::Lichess, reason: io_reason(&broke_off) });
         }
-        // From the last game again: it's skipped as already downloaded.
+        // From the last game again: it's skipped as sent already.
         resumes += 1;
         log::warn!("Lichess: the games of {} broke off ({broke_off}); asking again", what.username);
     }
