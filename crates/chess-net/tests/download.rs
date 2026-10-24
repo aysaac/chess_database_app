@@ -16,6 +16,8 @@ use serde_json::json;
 /// that many bytes (the connection then closes), or one that stops sending.
 enum Reply {
     Ok(u16, String),
+    Bytes(Vec<u8>),
+    Slow(String, Duration),
     CutOff(String, usize),
     Hang(String),
 }
@@ -65,9 +67,24 @@ fn serve(mut stream: TcpStream, log: &Mutex<Vec<String>>, route: &Route) {
     let (status, body, send) = match route(path, query) {
         Reply::Ok(status, body) => {
             let n = body.len();
-            (status, body, n)
+            (status, body.into_bytes(), n)
         }
-        Reply::CutOff(body, n) => (200, body, n),
+        Reply::Bytes(body) => {
+            let n = body.len();
+            (200, body, n)
+        }
+        Reply::CutOff(body, n) => (200, body.into_bytes(), n),
+        Reply::Slow(body, over) => {
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len())
+                .unwrap();
+            let pieces = 30;
+            for chunk in body.as_bytes().chunks(body.len().div_ceil(pieces)) {
+                stream.write_all(chunk).unwrap();
+                stream.flush().unwrap();
+                std::thread::sleep(over / pieces as u32);
+            }
+            return;
+        }
         Reply::Hang(body) => {
             let n = body.len();
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", n + 100_000)
@@ -80,7 +97,7 @@ fn serve(mut stream: TcpStream, log: &Mutex<Vec<String>>, route: &Route) {
     };
     let head = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(&body.as_bytes()[..send]);
+    let _ = stream.write_all(&body[..send]);
 }
 
 fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -100,6 +117,15 @@ fn lichess_pgn(id: &str, white: &str, black: &str, date: &str, time: &str) -> St
 fn lichess_line(id: &str, white: &str, black: &str, date: &str, time: &str) -> String {
     let at = date_time_ms(date, Some(time)).unwrap() + 345;
     let pgn = lichess_pgn(id, white, black, date, time);
+    format!("{}\n", json!({ "id": id, "createdAt": at, "rated": true, "perf": "blitz", "pgn": pgn }))
+}
+
+/// The same for a game started at `at` (ms).
+fn lichess_line_at(id: &str, white: &str, black: &str, at: i64) -> String {
+    let day = chess_net::time::ymd(at).replace('-', ".");
+    let secs = at.rem_euclid(86_400_000) / 1000;
+    let time = format!("{:02}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60);
+    let pgn = lichess_pgn(id, white, black, &day, &time);
     format!("{}\n", json!({ "id": id, "createdAt": at, "rated": true, "perf": "blitz", "pgn": pgn }))
 }
 
@@ -131,24 +157,21 @@ const GAMES: [(&str, &str, &str, &str, &str); 3] = [
 
 #[test]
 fn lichess_games_then_only_the_new_ones() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let c = calls.clone();
+    // Like Lichess: the games started at `since` or later, and one played
+    // since the first download.
     let server = Server::start(move |path, query| match path {
         "/api/user/drnykterstein" => profile("DrNykterstein"),
         "/api/games/user/DrNykterstein" => {
+            let since: Option<i64> = query_value(query, "since").map(|s| s.parse().unwrap());
             let mut body = String::new();
-            // The first time all of them; then those since the newest (it
-            // too: `since` takes games started at that second); then all
-            // four.
-            let call = c.fetch_add(1, Ordering::SeqCst);
-            let first = if call == 1 { 2 } else { 0 };
-            for (id, w, b, d, t) in &GAMES[first..] {
-                body += &lichess_line(id, w, b, d, t);
+            for (id, w, b, d, t) in &GAMES {
+                if since.is_none_or(|s| date_time_ms(d, Some(t)).unwrap() + 345 >= s) {
+                    body += &lichess_line(id, w, b, d, t);
+                }
             }
-            if call > 0 {
-                body += &lichess_line("AAAAAAA4", "Dave", "DrNykterstein", "2026.10.20", "18:00:00");
+            if let Some(s) = since {
+                body += &lichess_line_at("AAAAAAA4", "Dave", "DrNykterstein", s + 1000);
             }
-            assert_eq!(query.contains("since="), call == 1, "{query}");
             Reply::Ok(200, body)
         }
         _ => Reply::Ok(404, "<html>".into()),
@@ -156,8 +179,11 @@ fn lichess_games_then_only_the_new_ones() {
     let client = Client::with_servers(&server.url, &server.url);
     let (_dir, db) = new_db();
 
+    let started = chess_net::time::now_ms();
     let s = download_into(&client, &db, &request(Site::Lichess, Period::All), &NoProgress).unwrap();
     assert_eq!((s.import.imported, s.already, s.since, s.cancelled), (3, 0, None, false));
+    let covered = s.covered.expect("a download that went through covers up to its start");
+    assert!(covered >= started && covered <= chess_net::time::now_ms(), "{covered}");
     assert!(s.stopped.is_none());
     assert_eq!(s.player.username, "DrNykterstein");
     assert_eq!(
@@ -178,18 +204,18 @@ fn lichess_games_then_only_the_new_ones() {
     let perf = query_value(games_query.split_once('?').unwrap().1, "perfType").unwrap();
     assert_eq!(perf.replace("%2C", ","), "ultraBullet,bullet,blitz,rapid,classical,correspondence");
 
-    // Again, new games only: from the newest game's start, which isn't added twice.
-    let s = download_into(&client, &db, &request(Site::Lichess, Period::NewOnly), &NoProgress).unwrap();
-    let newest = date_time_ms("2026.10.02", Some("09:15:20")).unwrap();
-    assert_eq!((s.import.imported, s.already, s.since), (1, 1, Some(newest)));
+    // Again from where it got to: only the new game.
+    let s =
+        download_into(&client, &db, &request(Site::Lichess, Period::Since(covered)), &NoProgress).unwrap();
+    assert_eq!((s.import.imported, s.already, s.since), (1, 0, Some(covered)));
     let q = server.requests().last().unwrap().clone();
-    assert_eq!(query_value(&q, "since"), Some(newest.to_string().as_str()), "{q}");
+    assert_eq!(query_value(&q, "since"), Some(covered.to_string().as_str()), "{q}");
     assert_eq!(games(&db).len(), 4);
     assert_eq!(games(&db)[3].0, "Dave");
 
     // Everything again: nothing new.
     let s = download_into(&client, &db, &request(Site::Lichess, Period::All), &NoProgress).unwrap();
-    assert_eq!((s.import.imported, s.already), (0, 4));
+    assert_eq!((s.import.imported, s.already), (0, 3));
 }
 
 #[test]
@@ -252,7 +278,7 @@ fn chess_com_months_filters_and_new_ones() {
             }
             "/pub/player/drnykterstein/games/2026/08" => Reply::Ok(410, String::new()),
             "/pub/player/drnykterstein/games/2026/09" => {
-                assert!(!later, "a month before the newest game isn't asked for again");
+                assert!(!later, "a month before the start isn't asked for");
                 Reply::Ok(200, json!({ "games": [
                     // Newest last in the month, as Chess.com sends them; sorted anyway.
                     chess_com_game(3, "Bob", "DrNykterstein", "2026.09.20", "chess", "blitz", true),
@@ -290,10 +316,10 @@ fn chess_com_months_filters_and_new_ones() {
     assert!(server.requests().iter().all(|r| !r.contains("DrNykterstein")), "usernames in lowercase");
 
     second.store(true, Ordering::SeqCst);
-    r.period = Period::NewOnly;
+    let since = date_time_ms("2026-10-01", None).unwrap();
+    r.period = Period::Since(since);
     let s = download_into(&client, &db, &r, &NoProgress).unwrap();
-    assert_eq!((s.import.imported, s.already), (1, 1));
-    assert_eq!(s.since, date_time_ms("2026.10.05", Some("19:55:00")));
+    assert_eq!((s.import.imported, s.already, s.since), (1, 1, Some(since)));
     assert_eq!(games(&db).len(), 4);
 }
 
@@ -349,7 +375,7 @@ fn too_many_requests_waits_and_asks_again() {
     // A lookup the user waits for gives up at once.
     let server = Server::start(|_, _| Reply::Ok(429, String::new()));
     let client = Client::with_servers(&server.url, &server.url);
-    let e = chess_net::player(&client.without_retries(), Site::Lichess, "someone", &|| false).unwrap_err();
+    let e = chess_net::player(&client.for_lookup(), Site::Lichess, "someone", &|| false).unwrap_err();
     assert!(matches!(e, NetError::RateLimited(Site::Lichess)), "{e}");
     assert_eq!(server.requests().len(), 1);
 }
@@ -381,8 +407,98 @@ fn a_stream_that_breaks_off_goes_on_from_the_last_game() {
     let (_dir, db) = new_db();
     let s = download_into(&client, &db, &request(Site::Lichess, Period::All), &NoProgress).unwrap();
     assert!(s.stopped.is_none(), "{:?}", s.stopped);
-    assert_eq!((s.import.imported, s.already), (3, 1));
+    assert_eq!((s.import.imported, s.already), (3, 0), "the game sent again isn't counted as there");
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn every_break_after_new_games_is_resumed() {
+    // Each request sends one game more, then breaks off: 6 breaks.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let c = calls.clone();
+    let lines: Vec<String> = (0..7)
+        .map(|i| {
+            lichess_line(
+                &format!("AAAAAAB{i}"),
+                "DrNykterstein",
+                "Alice",
+                "2026.09.01",
+                &format!("10:0{i}:00"),
+            )
+        })
+        .collect();
+    let server = Server::start(move |path, query| match path {
+        "/api/user/drnykterstein" => profile("DrNykterstein"),
+        _ => {
+            let call = c.fetch_add(1, Ordering::SeqCst);
+            let since: i64 = query_value(query, "since").map_or(0, |s| s.parse().unwrap());
+            let from = lines
+                .iter()
+                .position(|l| {
+                    serde_json::from_str::<serde_json::Value>(l).unwrap()["createdAt"].as_i64() >= Some(since)
+                })
+                .unwrap();
+            let body: String = lines[from..].concat();
+            let upto: usize = lines[from..(from + 2).min(7)].iter().map(String::len).sum();
+            if call < 6 { Reply::CutOff(body, upto + 10) } else { Reply::Ok(200, body) }
+        }
+    });
+    let client = Client::with_servers(&server.url, &server.url);
+    let (_dir, db) = new_db();
+    let s = download_into(&client, &db, &request(Site::Lichess, Period::All), &NoProgress).unwrap();
+    assert!(s.stopped.is_none(), "{:?}", s.stopped);
+    assert_eq!(s.import.imported, 7);
+}
+
+#[test]
+fn a_stream_that_isnt_text_is_bad_data_at_once() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let c = calls.clone();
+    let server = Server::start(move |path, _| match path {
+        "/api/user/drnykterstein" => profile("DrNykterstein"),
+        _ => {
+            c.fetch_add(1, Ordering::SeqCst);
+            Reply::Bytes(b"{\"id\":\"AAAAAAA1\",\"createdAt\":1,\"pgn\":\"\xff\"}\n".to_vec())
+        }
+    });
+    let client = Client::with_servers(&server.url, &server.url);
+    let (_dir, db) = new_db();
+    let e = download_into(&client, &db, &request(Site::Lichess, Period::All), &NoProgress).unwrap_err();
+    assert!(matches!(e, NetError::BadData { site: Site::Lichess, .. }), "{e}");
+    assert!(e.to_string().ends_with("Try again later"), "{e}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "not asked again as if the connection broke");
+}
+
+#[test]
+fn a_slow_but_steady_answer_isnt_stalled() {
+    // A month that takes 3 s to come, a few bytes at a time, with a stall
+    // timeout of 1 s.
+    let month = json!({ "games": [chess_com_game(7, "DrNykterstein", "Carol", "2026.10.05", "chess", "blitz", true)] })
+        .to_string();
+    let server = Server::start(move |path, _| match path {
+        "/pub/player/drnykterstein" => Reply::Ok(200, json!({ "username": "drnykterstein" }).to_string()),
+        "/pub/player/drnykterstein/games/archives" => {
+            Reply::Ok(200, json!({ "archives": ["x/games/2026/10"] }).to_string())
+        }
+        _ => Reply::Slow(month.clone(), Duration::from_secs(3)),
+    });
+    let client = Client::with_servers(&server.url, &server.url).with_stall_timeout(Duration::from_secs(1));
+    let (_dir, db) = new_db();
+    let s = download_into(&client, &db, &request(Site::ChessCom, Period::All), &NoProgress).unwrap();
+    assert!(s.stopped.is_none(), "{:?}", s.stopped);
+    assert_eq!(s.import.imported, 1);
+}
+
+#[test]
+fn a_lookup_gives_up_after_its_timeout() {
+    let server = Server::start(|_, _| Reply::Hang("{".into()));
+    let client =
+        Client::with_servers(&server.url, &server.url).with_lookup_timeout(Duration::from_millis(500));
+    let started = Instant::now();
+    let e = chess_net::player(&client.for_lookup(), Site::Lichess, "someone", &|| false).unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    assert!(matches!(e, NetError::Unreachable { .. }), "{e}");
+    assert!(!e.to_string().contains("io:"), "{e}");
 }
 
 struct CancelAfter {

@@ -79,7 +79,7 @@ scripts/offscreen.sh COMMAND [ARGS...]
 cargo run -p chess-diagram --example render -- out.png [FEN] [SIZE] [black]   # or out.svg
 
 # A player's online games into a database (NET-01), as the app does: real servers
-cargo run -p chess-net --example download -- lichess|chess.com USERNAME out.chessdb [YYYY-MM-DD|new]
+cargo run -p chess-net --example download -- lichess|chess.com USERNAME out.chessdb [YYYY-MM-DD]
 ```
 
 ## The user's machine

@@ -244,6 +244,10 @@ pub struct AppState {
     /// Where the app keeps its own data, such as the sample database (QOL-08).
     data_dir: OnceLock<PathBuf>,
     pub analysis: Mutex<Option<Analysis>>,
+    /// The download of online games running (NET-01), by its label: one at a
+    /// time, so two can't add the same games to a database twice, and each
+    /// server gets one request at a time.
+    pub download: Mutex<Option<String>>,
     /// The last import into each database (by handle), while it had warnings.
     pub import_reports: Mutex<HashMap<u32, ImportReportDto>>,
     /// The searches for duplicate games (DB-08) in each database in the

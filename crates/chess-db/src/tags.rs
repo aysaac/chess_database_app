@@ -17,8 +17,8 @@ pub struct TaggedGame {
 }
 
 /// Gives `each` every game's row (deleted games too) and the values of the
-/// extra tags `names`, in id order. Games whose blob can't be read are left
-/// out (and logged).
+/// extra tags `names`, in id order. Games whose blob can't be decoded are
+/// left out (and logged); failing to read the file ends the scan.
 pub fn scan_tags(
     db: &Mutex<Database>,
     names: &[&str],

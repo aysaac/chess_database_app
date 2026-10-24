@@ -7,6 +7,7 @@ import type { PeriodDto } from "../bindings/PeriodDto";
 import type { SpeedDto } from "../bindings/SpeedDto";
 import {
   dbName,
+  localMidnight,
   parseSpeeds,
   requestSpeeds,
   SITE_NAMES,
@@ -109,6 +110,10 @@ class OnlineStore {
   }
 
   /** Looks the player up, makes the database if asked, and downloads. */
+  /** Bumped by each start and by `stop` while looking up: a lookup that
+   * returns after either does nothing more. */
+  #run = 0;
+
   async start() {
     if (this.busy) return;
     const name = this.username.trim();
@@ -123,6 +128,7 @@ class OnlineStore {
       return;
     }
     const site = this.site;
+    const run = ++this.#run;
     this.busy = true;
     this.error = "";
     this.result = null;
@@ -132,9 +138,11 @@ class OnlineStore {
       try {
         player = await api.onlinePlayer(site, name);
       } catch (e) {
-        this.error = errorMessage(e);
+        if (run === this.#run) this.error = errorMessage(e);
         return;
       }
+      // Stopped, or the dialog closed, while looking up: nothing starts.
+      if (run !== this.#run) return;
       this.player = player;
       prefs.set("onlineSite", site);
       prefs.set("onlineUsername", player.username);
@@ -161,7 +169,7 @@ class OnlineStore {
           speeds: speeds ?? [],
           ratedOnly: this.ratedOnly,
           period: this.period,
-          since: this.period === "since" ? this.since.trim() : null,
+          since: this.period === "since" ? localMidnight(this.since.trim()) : null,
         },
         (id) => (this.job = id),
       );
@@ -180,13 +188,20 @@ class OnlineStore {
         games: here?.games ?? 0,
       };
     } finally {
-      this.busy = false;
-      this.job = null;
+      if (run === this.#run) {
+        this.busy = false;
+        this.job = null;
+      }
     }
   }
 
-  cancel() {
+  /** Stops the download, or the lookup before it (nothing is made then). */
+  stop() {
     if (this.job !== null) void jobs.cancel(this.job);
+    else if (this.busy) {
+      this.#run++;
+      this.busy = false;
+    }
   }
 }
 

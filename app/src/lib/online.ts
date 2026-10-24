@@ -65,6 +65,12 @@ export function sinceProblem(date: string, today: string): string | null {
   return null;
 }
 
+/** The start of a day (`YYYY-MM-DD`, checked by `sinceProblem`) where the user is, in ms. */
+export function localMidnight(date: string): number {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y, m - 1, d).getTime();
+}
+
 /** The new database's name: `DrNykterstein (Lichess)`. */
 export function dbName(username: string, site: OnlineSiteDto): string {
   return `${username.trim() || "Online games"} (${SITE_NAMES[site]})`;

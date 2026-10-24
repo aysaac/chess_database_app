@@ -21,6 +21,12 @@
 
   let { onClose }: { onClose: () => void } = $props();
 
+  /** A download goes on with the dialog closed; a lookup doesn't. */
+  function close() {
+    if (online.busy && online.job === null) online.stop();
+    onClose();
+  }
+
   let username: HTMLInputElement;
 
   onMount(() => {
@@ -47,7 +53,7 @@
   }
 </script>
 
-<Modal title="Download games from Lichess or Chess.com" {onClose} width="560px">
+<Modal title="Download games from Lichess or Chess.com" onClose={close} width="560px">
   <!-- The store checks the fields: WebKit's own checks stop the submit at an
        empty date field (it shows today's date as a hint) and focus it. -->
   <form id="download-games" novalidate onsubmit={submit}>
@@ -120,8 +126,8 @@
               checked={online.period === "newOnly"}
               onchange={() => (online.period = "newOnly")}
             />
-            New ones only: from the newest of the player's games in {db.info?.name ??
-              "the database"}
+            New ones only: from where the last download of these games into {db.info?.name ??
+              "the database"} got to (all of them the first time)
           </label>
         {/if}
         <label class="check">
@@ -234,10 +240,10 @@
 
   {#snippet actions()}
     {#if online.busy}
-      <button disabled={online.job === null} onclick={() => online.cancel()}>Stop download</button>
-      <button onclick={onClose}>Close</button>
+      <button onclick={() => online.stop()}>Stop download</button>
+      <button onclick={close}>Close</button>
     {:else}
-      <button onclick={onClose}>Close</button>
+      <button onclick={close}>Close</button>
       <button class="primary" type="submit" form="download-games">Download</button>
     {/if}
   {/snippet}

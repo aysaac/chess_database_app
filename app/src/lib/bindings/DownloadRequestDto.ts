@@ -12,6 +12,7 @@ export type DownloadRequestDto = { site: OnlineSiteDto, username: string,
  */
 speeds: Array<SpeedDto>, ratedOnly: boolean, period: PeriodDto, 
 /**
- * `YYYY-MM-DD`, for `since`.
+ * For `since`: the first day's start where the user is, in ms since
+ * the epoch.
  */
-since: string | null, };
+since: number | null, };
