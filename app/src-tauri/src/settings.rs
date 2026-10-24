@@ -76,18 +76,20 @@ pub struct DbView {
     pub downloads: Vec<DownloadMark>,
 }
 
-/// How far a download of a player's games got (NET-01): every game of
-/// theirs from `site` of those time controls (rated only or not) that
-/// started (Lichess) or ended (Chess.com) before `reached` is in the
-/// database. Kept with the database's view, so a database moved or made
-/// again starts over (all games, those it has skipped).
+/// How far downloads of a player's games got (NET-01): `reached` is when
+/// the newest game of theirs from `site`, of those time controls (rated
+/// only or not), that a download into the database brought started
+/// (Lichess) or ended (Chess.com). "New ones only" starts there, so games
+/// before it that no download asked for (one from a date) don't come with
+/// it. Kept with the database's view, so a database moved or made again
+/// starts over (all games, those it has skipped).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadMark {
     pub site: OnlineSiteDto,
     /// In lowercase: both sites ignore case.
     pub player: String,
-    /// Sorted; empty for all of them.
+    /// Sorted; empty for all of the site's.
     pub speeds: Vec<SpeedDto>,
     pub rated_only: bool,
     /// Ms since the epoch.
@@ -102,9 +104,18 @@ impl DownloadMark {
         rated_only: bool,
         reached: i64,
     ) -> Self {
+        use SpeedDto::*;
         let mut speeds = speeds.to_vec();
         speeds.sort_unstable();
         speeds.dedup();
+        let all: &[SpeedDto] = match site {
+            OnlineSiteDto::Lichess => &[Bullet, Blitz, Rapid, Classical, Correspondence],
+            // Chess.com's rapid takes in classical games.
+            OnlineSiteDto::ChessCom => &[Bullet, Blitz, Rapid, Correspondence],
+        };
+        if all.iter().all(|s| speeds.contains(s)) {
+            speeds.clear();
+        }
         DownloadMark { site, player: player.to_ascii_lowercase(), speeds, rated_only, reached }
     }
 
@@ -540,6 +551,11 @@ mod tests {
         assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[Bullet], false)), None, "other games");
         assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[], false)), None, "more games");
         assert_eq!(view.download_mark(&wanted(ChessCom, "alice", &[Blitz], false)), None, "another site");
+        use SpeedDto::{Classical, Correspondence, Rapid};
+        let every = [Bullet, Blitz, Rapid, Classical, Correspondence];
+        assert_eq!(wanted(Lichess, "a", &every, false).speeds, [], "all of them, named");
+        assert_eq!(wanted(ChessCom, "a", &every[..4], false).speeds, [Bullet, Blitz, Rapid, Classical]);
+        assert_eq!(wanted(ChessCom, "a", &[Bullet, Blitz, Rapid, Correspondence], false).speeds, []);
 
         view.note_download(DownloadMark::new(Lichess, "alice", &[], true, 200));
         assert_eq!(view.download_mark(&wanted(Lichess, "alice", &[Bullet], true)), Some(200));
