@@ -16,6 +16,8 @@ pub enum ErrorCode {
     Corrupt,
     /// An engine failed to start or stopped responding.
     Engine,
+    /// An online server (NET-01) couldn't be reached or failed.
+    Network,
     Internal,
 }
 
@@ -77,6 +79,24 @@ impl From<chess_diagram::DiagramError> for AppError {
                 ErrorCode::InvalidInput
             }
             chess_diagram::DiagramError::Render(_) => ErrorCode::Internal,
+        };
+        AppError::new(code, e.to_string())
+    }
+}
+
+impl From<chess_net::NetError> for AppError {
+    fn from(e: chess_net::NetError) -> AppError {
+        use chess_net::NetError;
+        let code = match e {
+            NetError::Db(e) => return AppError::from(e),
+            NetError::BadUsername(_) => ErrorCode::InvalidInput,
+            NetError::NoSuchPlayer { .. } => ErrorCode::NotFound,
+            NetError::Cancelled => ErrorCode::Internal,
+            NetError::RateLimited(_)
+            | NetError::Unreachable { .. }
+            | NetError::Status { .. }
+            | NetError::BadData { .. }
+            | NetError::Stalled(_) => ErrorCode::Network,
         };
         AppError::new(code, e.to_string())
     }

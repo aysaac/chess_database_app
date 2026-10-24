@@ -4,6 +4,7 @@ import { api, isAppError } from "../api";
 import type { CopyModeDto } from "../bindings/CopyModeDto";
 import type { DbInfoDto } from "../bindings/DbInfoDto";
 import type { DbViewDto } from "../bindings/DbViewDto";
+import type { DownloadRequestDto } from "../bindings/DownloadRequestDto";
 import type { GameRowDto } from "../bindings/GameRowDto";
 import type { HeaderQueryDto } from "../bindings/HeaderQueryDto";
 import type { ImportReportDto } from "../bindings/ImportReportDto";
@@ -501,11 +502,32 @@ class DbStore {
    * imported (false if cancelled or failed).
    */
   async importFrom(path: string): Promise<boolean> {
-    if (!this.info) return false;
+    const done = await this.#addGames((handle) =>
+      /\.cbh$/i.test(path) ? api.importCb(handle, path) : api.importPgn(handle, path),
+    );
+    return done?.state === "done";
+  }
+
+  /**
+   * Downloads a player's games from Lichess or Chess.com (NET-01) into the
+   * open database; resolves with the job's final status (null if it
+   * couldn't start). `started` gets the job's id.
+   */
+  download(request: DownloadRequestDto, started?: (job: number) => void): Promise<JobDto | null> {
+    return this.#addGames((handle) => api.downloadGames(handle, request), started);
+  }
+
+  /** Runs a job that adds games to the open database, the list growing as it goes. */
+  async #addGames(
+    start: (handle: number) => Promise<number>,
+    started?: (job: number) => void,
+  ): Promise<JobDto | null> {
+    if (!this.info) return null;
     const handle = this.info.handle;
     try {
       this.importReport = null;
-      const id = await (/\.cbh$/i.test(path) ? api.importCb(handle, path) : api.importPgn(handle, path));
+      const id = await start(handle);
+      started?.(id);
       this.#importJobs.add(id);
       const done = await jobs.waitFor(id);
       this.#importJobs.delete(id);
@@ -513,10 +535,10 @@ class DbStore {
       await this.refresh();
       if (this.sort.key !== "id") await this.setSort(this.sort, true);
       void this.ensureIndex();
-      return done.state === "done";
+      return done;
     } catch (e) {
       notices.error(e);
-      return false;
+      return null;
     }
   }
 

@@ -16,7 +16,7 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke\run.ps1 [scripts\smoke\la
 
 Debug builds only. `app/src-tauri/src/lib.rs` evaluates the file in
 `CHESSDB_SMOKE` after page load. `app/src/main.ts` exposes
-`window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, library, appearance, api, invoke }`
+`window.__chessdb = { db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, library, appearance, online, api, invoke }`
 once the window's shell is mounted.
 The driver calls the stores exactly as the UI does and reports through the
 `dev_log` command as `[smoke] …` lines.
@@ -47,6 +47,7 @@ Each driver's header comment says what it covers in full.
 | `dock.js` | UI-04: every panel tab dragged to each side and into other groups with synthetic pointer events, next to the nearest group, reordering a strip, Escape and a release elsewhere cancelling, the tab menu from a right-click, Shift+F10 and the context-menu key, empty groups and sides going, the dividers by keys, pointer and double-click and their limits, View ▸ Reset layout, and the `layout` pref read back after reloads, also from a version 1 layout with `listShare`, an incomplete one and an unreadable one. |
 | `library.js` | DB-07: the library window (cards with counts, the preview, its mini board, resizing it, the bottom layout), Open spawning an editor window, favourites and the preview layout and size surviving a reload, the theme applying to the library itself, and preferences changed in one window reaching the other both ways (the orientation, a per-window one, staying put), and a change made just before a window closes being saved (the editor's, then the library's, checked from another window). Runs in every window, which take turns through a `smokeStep` pref. |
 | `collapse.js` | UI-04: minimizing the Game list group to the status bar and restoring it, after a reload too. Opens an editor window from the library and runs there. |
+| `online.js` | NET-01 against the real Lichess and Chess.com (needs the internet; a few hundred games): the empty list's download button, no username and a player who doesn't exist (no database made), a player's Lichess games since a date into a new database with their clock times, the ribbon's Download games… for the open database with new games only (none twice), rated Chess.com games of two time controls (no Classical there), and Stop download partway, the games that came staying. |
 | `cbh.js` | IO-03: Import games in the ribbon, a `.cbh` whose files are missing, and, with the databases that ship with ChessBase linked into `testdata/large/cbh-samples/`, Openings' four-language comments shown in one language and Marathon's set-up positions. |
 
 `search.js`, `tree.js`, `view.js` and `reference.js` time the 1M-game

@@ -1459,6 +1459,126 @@ impl ImportReportDto {
     }
 }
 
+/// An online game server (NET-01).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum OnlineSiteDto {
+    Lichess,
+    ChessCom,
+}
+
+impl From<OnlineSiteDto> for chess_net::Site {
+    fn from(s: OnlineSiteDto) -> chess_net::Site {
+        match s {
+            OnlineSiteDto::Lichess => chess_net::Site::Lichess,
+            OnlineSiteDto::ChessCom => chess_net::Site::ChessCom,
+        }
+    }
+}
+
+/// Time controls to download (Chess.com has no classical games; its daily
+/// games are correspondence).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SpeedDto {
+    Bullet,
+    Blitz,
+    Rapid,
+    Classical,
+    Correspondence,
+}
+
+/// Which of the player's games to download.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PeriodDto {
+    All,
+    /// From the newest of the player's games the database has.
+    NewOnly,
+    /// From `since`.
+    Since,
+}
+
+/// What "Download games" asks for (NET-01).
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DownloadRequestDto {
+    pub site: OnlineSiteDto,
+    pub username: String,
+    /// Empty: all of them.
+    pub speeds: Vec<SpeedDto>,
+    pub rated_only: bool,
+    pub period: PeriodDto,
+    /// `YYYY-MM-DD`, for `since`.
+    pub since: Option<String>,
+}
+
+impl DownloadRequestDto {
+    pub fn to_request(&self) -> Result<chess_net::Request, AppError> {
+        use chess_net::{Period, Speed};
+        let period = match self.period {
+            PeriodDto::All => Period::All,
+            PeriodDto::NewOnly => Period::NewOnly,
+            PeriodDto::Since => {
+                let date = self.since.as_deref().unwrap_or("");
+                let ms = chess_net::time::date_ms(date)
+                    .ok_or_else(|| AppError::invalid(format!("\"{date}\" isn't a date (YYYY-MM-DD)")))?;
+                Period::Since(ms)
+            }
+        };
+        Ok(chess_net::Request {
+            site: self.site.into(),
+            username: self.username.clone(),
+            speeds: self
+                .speeds
+                .iter()
+                .map(|s| match s {
+                    SpeedDto::Bullet => Speed::Bullet,
+                    SpeedDto::Blitz => Speed::Blitz,
+                    SpeedDto::Rapid => Speed::Rapid,
+                    SpeedDto::Classical => Speed::Classical,
+                    SpeedDto::Correspondence => Speed::Correspondence,
+                })
+                .collect(),
+            rated_only: self.rated_only,
+            period,
+        })
+    }
+}
+
+/// A player on an online server.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OnlinePlayerDto {
+    pub site: OnlineSiteDto,
+    /// The name as the site writes it.
+    pub username: String,
+    /// Games played, all kinds (Lichess only).
+    #[ts(type = "number | null")]
+    pub games: Option<u64>,
+    /// When the account was made, `YYYY-MM-DD`.
+    pub joined: String,
+}
+
+impl From<&chess_net::Player> for OnlinePlayerDto {
+    fn from(p: &chess_net::Player) -> OnlinePlayerDto {
+        OnlinePlayerDto {
+            site: match p.site {
+                chess_net::Site::Lichess => OnlineSiteDto::Lichess,
+                chess_net::Site::ChessCom => OnlineSiteDto::ChessCom,
+            },
+            username: p.username.clone(),
+            games: p.games,
+            joined: chess_net::time::ymd(p.joined),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

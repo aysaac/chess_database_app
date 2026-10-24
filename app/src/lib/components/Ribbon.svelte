@@ -12,10 +12,12 @@
   import { analysis } from "../stores/analysis.svelte";
   import { db } from "../stores/db.svelte";
   import { game } from "../stores/game.svelte";
+  import { online } from "../stores/online.svelte";
   import { panels } from "../stores/panels.svelte";
   import { tree } from "../stores/tree.svelte";
   import BlunderCheckDialog from "./BlunderCheckDialog.svelte";
   import BoardImageMenu from "./BoardImageMenu.svelte";
+  import DownloadGamesDialog from "./DownloadGamesDialog.svelte";
   import DuplicatesDialog from "./DuplicatesDialog.svelte";
   import EngineDialog from "./EngineDialog.svelte";
   import FenDialog from "./FenDialog.svelte";
@@ -285,6 +287,13 @@
       onclick={() => db.importDialog()}
     />
     <RibbonButton
+      icon="cloud-download"
+      label="Download games…"
+      title="Download a player's games from Lichess or Chess.com, into a new database or the open one"
+      {compact}
+      onclick={() => (online.dialog = true)}
+    />
+    <RibbonButton
       icon="file-up"
       label="Export PGN"
       title="Save the games of the list (filtered or all) as a PGN file"
@@ -388,6 +397,10 @@
 
 {#if duplicatesDialog}
   <DuplicatesDialog onClose={() => (duplicatesDialog = false)} />
+{/if}
+
+{#if online.dialog}
+  <DownloadGamesDialog onClose={() => (online.dialog = false)} />
 {/if}
 
 <style>

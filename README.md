@@ -15,6 +15,9 @@ the status of each feature is in the [Feature Status doc](https://claude.ai/arti
 - Create or open a database (a `.chessdb` folder) and import PGN files. Imports
   run in the background with progress and a Cancel button, and the list grows
   while they run.
+- Download a player's games from Lichess or Chess.com ("Download games…" in
+  the ribbon), into a new database or the open one, by time control, rated
+  only and from a date. Downloading again adds only the new games.
 - Sort the game list by any column (click the header; click again to reverse).
   Scroll with the mouse or the arrow, Page Up/Down and Home/End keys. Enter
   opens the selected game; Delete marks it as deleted (or restores it).

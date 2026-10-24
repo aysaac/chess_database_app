@@ -19,6 +19,7 @@ chess-jobs.workspace = true
 chess-db.workspace = true
 chess-engine.workspace = true
 chess-diagram.workspace = true
+chess-net.workspace = true
 dunce = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"

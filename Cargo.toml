@@ -6,6 +6,7 @@ members = [
     "crates/chess-db",
     "crates/chess-engine",
     "crates/chess-diagram",
+    "crates/chess-net",
     "app/src-tauri",
 ]
 
@@ -21,6 +22,7 @@ chess-jobs = { path = "crates/chess-jobs" }
 chess-db = { path = "crates/chess-db" }
 chess-engine = { path = "crates/chess-engine" }
 chess-diagram = { path = "crates/chess-diagram" }
+chess-net = { path = "crates/chess-net" }
 
 shakmaty = "0.30"
 pgn-reader = "0.29"

@@ -10,6 +10,7 @@ import type { CopyModeDto } from "./bindings/CopyModeDto";
 import type { CrossTableDto } from "./bindings/CrossTableDto";
 import type { DbInfoDto } from "./bindings/DbInfoDto";
 import type { DbViewDto } from "./bindings/DbViewDto";
+import type { DownloadRequestDto } from "./bindings/DownloadRequestDto";
 import type { DuplicatesDto } from "./bindings/DuplicatesDto";
 import type { EngineDto } from "./bindings/EngineDto";
 import type { FenCheckDto } from "./bindings/FenCheckDto";
@@ -27,6 +28,8 @@ import type { ListSelectionDto } from "./bindings/ListSelectionDto";
 import type { NameKindDto } from "./bindings/NameKindDto";
 import type { NameListDto } from "./bindings/NameListDto";
 import type { OnboardingDto } from "./bindings/OnboardingDto";
+import type { OnlinePlayerDto } from "./bindings/OnlinePlayerDto";
+import type { OnlineSiteDto } from "./bindings/OnlineSiteDto";
 import type { PastedGameDto } from "./bindings/PastedGameDto";
 import type { PlayResultDto } from "./bindings/PlayResultDto";
 import type { RecentDbDto } from "./bindings/RecentDbDto";
@@ -210,6 +213,13 @@ export const api = {
   finishWelcome: () => invoke<void>("finish_welcome"),
   openSampleDb: () => invoke<DbInfoDto>("open_sample_db"),
   suggestDbPath: (name: string) => invoke<string>("suggest_db_path", { name }),
+
+  /** Looks a player up on Lichess or Chess.com (NET-01). */
+  onlinePlayer: (site: OnlineSiteDto, username: string) =>
+    invoke<OnlinePlayerDto>("online_player", { site, username }),
+  /** Downloads a player's games into the database as a job; games it has are left out. */
+  downloadGames: (handle: number, request: DownloadRequestDto) =>
+    invoke<number>("download_games", { handle, request }),
 };
 
 export function onAnalysis(cb: (update: AnalysisDto) => void): Promise<UnlistenFn> {

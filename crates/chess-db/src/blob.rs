@@ -314,6 +314,35 @@ pub fn date_round_eco(blob: &[u8]) -> Result<(String, String, String), DbError> 
     Ok((r.str()?, r.str()?, r.str()?))
 }
 
+/// The values of the extra tags `names` (matched ignoring case; the first
+/// one of a name counts), read without decoding the moves: downloading
+/// online games (NET-01) skips the ones a database has by their pages.
+pub fn extra_tags(blob: &[u8], names: &[&str]) -> Result<Vec<Option<String>>, DbError> {
+    let mut r = ByteReader::new(blob);
+    let version = r.u8()?;
+    if version != BLOB_VERSION {
+        return Err(DbError::Corrupt(format!("unknown blob version {version}")));
+    }
+    if r.u8()? & FLAG_SETUP != 0 {
+        skip_str(&mut r)?;
+    }
+    for _ in 0..3 {
+        skip_str(&mut r)?;
+    }
+    let mut values = vec![None; names.len()];
+    for _ in 0..extra_strings(&mut r)? / 2 {
+        let len = r.varint()? as usize;
+        let name = r.bytes(len)?;
+        let value = r.str()?;
+        if let Some(i) = names.iter().position(|n| n.as_bytes().eq_ignore_ascii_case(name))
+            && values[i].is_none()
+        {
+            values[i] = Some(value);
+        }
+    }
+    Ok(values)
+}
+
 /// `blob` with other Date, Round and ECO strings, and everything else (the
 /// set-up position, extra tags, moves and annotations) byte for byte the
 /// same: a kept duplicate taking them from its copies (DB-08).
@@ -825,6 +854,23 @@ mod tests {
             assert_eq!(with_date_round_eco(&new, "2024.??.??", "7", "").unwrap(), blob, "and back");
         }
         assert!(with_date_round_eco(&[9, 0], "", "", "").is_err());
+    }
+
+    /// NET-01: a game's page and start, read from its tags alone.
+    #[test]
+    fn reads_chosen_extra_tags() {
+        let pgn = "[SetUp \"1\"]\n[FEN \"8/8/8/4k3/8/8/4P3/4K3 w - - 0 1\"]\n[Date \"2026.10.23\"]\n\
+                   [link \"https://www.chess.com/game/live/1\"]\n[UTCTime \"16:19:50\"]\n\
+                   [Link \"https://www.chess.com/game/live/2\"]\n\n1. Kd2 Kd5 *";
+        let blob = encode_game(&read_pgn_str(pgn).remove(0));
+        let tags = extra_tags(&blob, &["Link", "GameId", "UTCTime"]).unwrap();
+        assert_eq!(
+            tags,
+            [Some("https://www.chess.com/game/live/1".into()), None, Some("16:19:50".into())],
+            "any case; the first one of a name"
+        );
+        assert_eq!(extra_tags(&blob, &[]).unwrap(), Vec::<Option<String>>::new());
+        assert!(extra_tags(&[9, 0], &["Link"]).is_err());
     }
 
     #[test]
