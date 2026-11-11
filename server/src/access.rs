@@ -66,6 +66,7 @@ mod tests {
             visibility,
             quota_bytes: None,
             created_at: 0,
+            id_epoch: 0,
         }
     }
 

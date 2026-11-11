@@ -87,6 +87,25 @@ fn a_private_database_is_its_owners_alone_not_even_the_admins() {
         assert!(!searched.contains(&db.as_str()) && searched.contains(&own.as_str()), "{who}: {all}");
         assert!(!all.to_string().contains("Prep"), "{who}: {all}");
     }
+    // Maintenance: deleting games, duplicates and compaction.
+    let dups = alice.post(&format!("/api/databases/{db}/duplicates"), json!({})).ok().json()["job"]
+        .as_u64()
+        .unwrap();
+    alice.wait_job(dups);
+    for (who, c) in [("bob", &bob), ("the admin", &admin)] {
+        for r in [
+            c.post(&format!("/api/databases/{db}/deleted"), json!({ "games": [0], "deleted": true })),
+            c.post(&format!("/api/databases/{db}/deleted"), json!({ "nonsense": 1 })),
+            c.post(&format!("/api/databases/{db}/duplicates"), json!({ "fuzzy": true })),
+            c.get(&format!("/api/databases/{db}/duplicates/{dups}")),
+            c.post(&format!("/api/databases/{db}/duplicates/{dups}/delete"), json!({})),
+            c.post(&format!("/api/databases/{db}/compact"), json!({})),
+            c.get(&format!("/api/jobs/{dups}")),
+        ] {
+            assert_eq!((r.status, r.code().as_str()), (404, "notFound"), "{who}: {}", r.body);
+        }
+    }
+    assert_eq!(alice.get(&format!("/api/databases/{db}/games?deleted=only")).ok().json()["total"], 0);
     // The admin's own import route is permission-checked the same way.
     std::fs::write(s.data_dir().join("import/more.pgn"), &pgn).unwrap();
     let r = admin.post(&format!("/api/databases/{db}/import-file"), json!({ "path": "more.pgn" }));

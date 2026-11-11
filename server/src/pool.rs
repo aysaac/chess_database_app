@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -128,11 +129,24 @@ pub struct OpenDb {
     /// The import or index job writing to the database: one at a time (two
     /// position index builds would share temporary files).
     pub writer: Mutex<Option<JobId>>,
+    /// A compaction holds the database's lock for its whole run: requests
+    /// answer "busy" meanwhile instead of waiting for it.
+    pub compacting: AtomicBool,
 }
 
 impl OpenDb {
     fn new(id: &str, db: Database) -> OpenDb {
-        OpenDb { id: id.to_owned(), db: Mutex::new(db), cache: Mutex::default(), writer: Mutex::new(None) }
+        OpenDb {
+            id: id.to_owned(),
+            db: Mutex::new(db),
+            cache: Mutex::default(),
+            writer: Mutex::new(None),
+            compacting: AtomicBool::new(false),
+        }
+    }
+
+    pub fn is_compacting(&self) -> bool {
+        self.compacting.load(Ordering::Acquire)
     }
 
     pub fn lock(&self) -> std::sync::MutexGuard<'_, Database> {
@@ -222,8 +236,11 @@ impl Pool {
 
     /// Games and size on disk, without opening the database if it isn't.
     pub fn stats(&self, id: &str) -> (u32, u64) {
-        if let Some(open) = self.get_open(id) {
-            let count = open.lock().count();
+        // Not while a long write (a compaction) holds it: from the files then.
+        if let Some(open) = self.get_open(id)
+            && let Ok(db) = open.db.try_lock()
+        {
+            let count = db.count();
             return (count, dir_size(&self.path(id)));
         }
         match Database::summary(&self.path(id)) {

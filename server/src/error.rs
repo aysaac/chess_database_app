@@ -61,6 +61,11 @@ impl ApiError {
         ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "tooLarge", message)
     }
 
+    /// 503 with `Retry-After`: the database is busy with a long write.
+    pub fn busy(message: impl Into<String>) -> ApiError {
+        ApiError { retry_after: Some(10), ..ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "busy", message) }
+    }
+
     pub fn too_many(retry_after: u64) -> ApiError {
         ApiError {
             retry_after: Some(retry_after),

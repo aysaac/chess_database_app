@@ -31,6 +31,7 @@ pub fn dto(state: &AppState, meta: DbMeta, access: Access) -> DatabaseDto {
         size_bytes,
         quota_bytes: meta.quota_bytes,
         created_at: meta.created_at,
+        id_epoch: meta.id_epoch,
         index: None,
     }
 }
@@ -91,7 +92,7 @@ pub async fn info(
 ) -> ApiResult<Json<DatabaseDto>> {
     blocking(move || {
         let (meta, access) = require(&state.store, &auth.user, &id, Access::Read)?;
-        let open = state.pool.get(&id)?;
+        let open = state.open_db(&id)?;
         let index = {
             let db = open.lock();
             let p = db.positions();

@@ -15,7 +15,83 @@ use crate::error::{ApiError, ApiResult};
 use crate::wire::{Role, ShareAccess, Visibility};
 
 /// Schema version, in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
+
+/// From version 1 to 2: game id epochs (compaction), e-mail addresses,
+/// ownership transfers, invites, password resets, jobs, the audit log,
+/// settings and the TWIC issues imported (NET-06).
+const MIGRATE_2: &str = "
+ALTER TABLE databases ADD COLUMN id_epoch INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN email TEXT;
+CREATE UNIQUE INDEX users_email ON users(email COLLATE NOCASE) WHERE email IS NOT NULL;
+CREATE TABLE transfers (
+    database_id TEXT PRIMARY KEY REFERENCES databases(id) ON DELETE CASCADE,
+    from_user INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    to_user INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX transfers_to ON transfers(to_user);
+CREATE TABLE invites (
+    id INTEGER PRIMARY KEY,
+    token_hash BLOB NOT NULL UNIQUE,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+    quota_bytes INTEGER,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER,
+    used_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE TABLE password_resets (
+    token_hash BLOB PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+CREATE INDEX password_resets_user ON password_resets(user_id);
+CREATE TABLE jobs (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    label TEXT NOT NULL,
+    database_id TEXT REFERENCES databases(id) ON DELETE CASCADE,
+    database_name TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    username TEXT NOT NULL,
+    state TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    message TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    report TEXT,
+    resume TEXT,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER
+);
+CREATE INDEX jobs_database ON jobs(database_id);
+CREATE TABLE audit (
+    id INTEGER PRIMARY KEY,
+    at INTEGER NOT NULL,
+    actor_id INTEGER,
+    actor TEXT,
+    action TEXT NOT NULL,
+    target_kind TEXT,
+    target_id TEXT,
+    target TEXT,
+    detail TEXT,
+    client TEXT
+);
+CREATE INDEX audit_at ON audit(at);
+CREATE TABLE settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE twic_issues (
+    issue INTEGER PRIMARY KEY,
+    database_id TEXT,
+    imported_at INTEGER NOT NULL,
+    games INTEGER NOT NULL
+);
+";
 
 const SCHEMA: &str = "
 CREATE TABLE users (
@@ -92,6 +168,9 @@ pub struct DbMeta {
     pub visibility: Visibility,
     pub quota_bytes: Option<u64>,
     pub created_at: i64,
+    /// Bumped by each compaction, which renumbers the games: a game id
+    /// read before one means another game after it.
+    pub id_epoch: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,7 +186,8 @@ pub struct Store {
 }
 
 const USER_COLUMNS: &str = "id, username, role, disabled, quota_bytes, created_at";
-const DB_COLUMNS: &str = "d.id, d.name, d.owner_id, u.username, d.visibility, d.quota_bytes, d.created_at";
+const DB_COLUMNS: &str =
+    "d.id, d.name, d.owner_id, u.username, d.visibility, d.quota_bytes, d.created_at, d.id_epoch";
 
 fn user_row(r: &Row<'_>) -> rusqlite::Result<User> {
     let role: String = r.get(2)?;
@@ -132,6 +212,7 @@ fn db_row(r: &Row<'_>) -> rusqlite::Result<DbMeta> {
         visibility: Visibility::parse(&visibility).unwrap_or(Visibility::Private),
         quota_bytes: r.get::<_, Option<i64>>(5)?.map(|q| q.max(0) as u64),
         created_at: r.get(6)?,
+        id_epoch: r.get::<_, i64>(7)?.max(0) as u64,
     })
 }
 
@@ -150,7 +231,13 @@ impl Store {
         match version {
             0 => {
                 conn.execute_batch(&format!(
-                    "BEGIN; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+                    "BEGIN; {SCHEMA} {MIGRATE_2} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+                ))?;
+            }
+            1 => {
+                log::info!("updating the metadata store to schema version {SCHEMA_VERSION}");
+                conn.execute_batch(&format!(
+                    "BEGIN; {MIGRATE_2} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
                 ))?;
             }
             SCHEMA_VERSION => {}
@@ -443,7 +530,7 @@ impl Store {
         ))?;
         let rows = stmt
             .query_map([user], |r| {
-                let access: Option<String> = r.get(7)?;
+                let access: Option<String> = r.get(8)?;
                 Ok((db_row(r)?, access.as_deref().and_then(ShareAccess::parse)))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -469,6 +556,12 @@ impl Store {
             "UPDATE databases SET visibility = ?1 WHERE id = ?2",
             params![visibility.as_str(), id],
         )?;
+        Ok(())
+    }
+
+    /// Notes a compaction: the games were renumbered.
+    pub fn bump_id_epoch(&self, id: &str) -> ApiResult<()> {
+        self.conn().execute("UPDATE databases SET id_epoch = id_epoch + 1 WHERE id = ?1", [id])?;
         Ok(())
     }
 
