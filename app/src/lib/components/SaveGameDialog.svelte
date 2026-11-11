@@ -27,7 +27,7 @@
   }
 </script>
 
-<Modal title="Save the game in a database" {onClose} width="520px">
+<Modal title="Save as new in a database" {onClose} width="520px">
   <div class="targets" bind:this={list}>
     {#each db.saveTargets as t (t.path)}
       <button class="target" title={t.path} onclick={() => saveIn(t.path)}>
