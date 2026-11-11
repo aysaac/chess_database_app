@@ -20,7 +20,7 @@ use axum::routing::{delete, get, patch, post, put};
 use crate::AppState;
 use crate::error::{ApiError, ApiResult};
 
-pub fn api() -> Router<Arc<AppState>> {
+pub fn api(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(account::health))
         .route("/setup", get(account::setup_status).post(account::setup))
@@ -74,6 +74,8 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/admin/disk", get(admin::disk))
         .route("/admin/audit", get(admin::audit))
         .route("/admin/import-files", get(admin::import_files))
+        // Counted by route template (after routing: only matched routes).
+        .route_layer(axum::middleware::from_fn_with_state(state, crate::metrics::record))
         .fallback(|| async { ApiError::not_found() })
 }
 

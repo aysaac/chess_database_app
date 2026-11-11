@@ -35,6 +35,43 @@ fn idle_databases_close_and_open_again_never_while_in_use() {
     assert!(s.state.pool.get_open(&db).is_some());
 }
 
+#[test]
+fn metrics_need_their_token_and_name_no_database_or_user() {
+    let off = TestServer::start();
+    assert_eq!(off.client().get("/metrics").status, 404, "off without a token");
+    let token = "a metrics token long enough";
+    let s = TestServer::with(|c| c.metrics_token = Some(token.into()));
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let db = alice.create_db("Secret prep of Alice", "private");
+    alice.import_fixture(&db, "reference.pgn");
+    alice.get(&format!("/api/databases/{db}/games?white=Carlsen")).ok();
+    alice.get(&format!("/api/databases/{db}/games/3")).ok();
+    assert_eq!(alice.get(&format!("/api/databases/{db}/games/999")).status, 404);
+    assert_eq!(s.client().get("/metrics").status, 401);
+    assert_eq!(s.client().with_bearer("wrong").get("/metrics").status, 401);
+    assert_eq!(alice.get("/metrics").status, 401, "a session isn't the token");
+    let r = s.client().with_bearer(token).get("/metrics").ok();
+    assert!(r.header("content-type").unwrap().starts_with("text/plain; version=0.0.4"));
+    let text = r.body;
+    for want in [
+        "chess_server_http_requests_total{route=\"/api/databases/{db}/games\",method=\"GET\",status=\"200\"} 1",
+        "chess_server_http_requests_total{route=\"/api/databases/{db}/games/{game}\",method=\"GET\",status=\"404\"} 1",
+        "chess_server_http_request_duration_seconds_bucket{route=\"/api/databases/{db}/games\",method=\"GET\",le=\"+Inf\"} 1",
+        "chess_server_open_databases 1",
+        "chess_server_jobs_running{kind=\"import\"} 0",
+        "chess_server_games 56",
+        "chess_server_databases 1",
+        "chess_server_users 2",
+        "# TYPE chess_server_http_request_duration_seconds histogram",
+    ] {
+        assert!(text.contains(want), "{want} in\n{text}");
+    }
+    for leak in [db.as_str(), "Secret", "alice", "Alice", "Carlsen"] {
+        assert!(!text.contains(leak), "{leak} in the metrics");
+    }
+}
+
 /// Requests until one is refused; the refusal.
 fn until_limited(mut request: impl FnMut() -> common::Res) -> (usize, common::Res) {
     for n in 0..100 {

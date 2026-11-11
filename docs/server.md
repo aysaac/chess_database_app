@@ -102,6 +102,7 @@ passes `/api` to a server on 8080.
 | `CHESS_SERVER_SMTP_USER`, `CHESS_SERVER_SMTP_PASSWORD` | none | Its login, if it needs one |
 | `CHESS_SERVER_SMTP_FROM` | (needed with a host) | The sender, e.g. `Chess server <chess@example.com>` |
 | `CHESS_SERVER_AUDIT_DAYS` | 365 | How long the audit log keeps entries |
+| `CHESS_SERVER_METRICS_TOKEN` | none | Turns `/metrics` on, for requests bearing it (16 characters or more) |
 | `CHESS_SERVER_IDLE_CLOSE_MINUTES` | 30 | Databases unused this long are closed (`0`: never) |
 | `CHESS_SERVER_RATE_LIMIT_PER_MINUTE` | 1200 | Requests a user may make a minute (a quarter of it at once); `0` turns it off |
 | `CHESS_SERVER_RATE_LIMIT_ANON_PER_MINUTE` | 300 | The same per client address, for requests without a login; `0` turns it off |
@@ -376,6 +377,26 @@ The admin's Audit log page shows them, with filters. Entries are kept
 (of uploads or imports): an entry says an import of an upload started into
 a database, not from what file; an export, not of which games. Database
 names and usernames are in it, as in the admin's other pages.
+
+## Metrics
+
+With `CHESS_SERVER_METRICS_TOKEN` set (16 characters or more), `GET
+/metrics` answers in Prometheus' text format to a request with
+`Authorization: Bearer <the token>` (401 otherwise; 404 when no token is
+set). It's outside `/api`, not rate-limited, and Caddy can keep it from
+the internet (or a scraper can reach the server's port directly):
+
+| Metric | |
+|---|---|
+| `chess_server_http_requests_total{route, method, status}` | API requests, by route template (`/api/databases/{db}/games`, never a path with an id) |
+| `chess_server_http_request_duration_seconds{route, method}` | Their latency (a histogram, 5 ms to 30 s) |
+| `chess_server_open_databases` | Databases open now |
+| `chess_server_jobs_running{kind}` | Jobs running, by kind |
+| `chess_server_metadata_store_bytes`, `chess_server_databases_bytes` | Sizes on disk |
+| `chess_server_games`, `chess_server_databases`, `chess_server_users` | How many there are |
+
+No label holds a database name or id, or a username. Written by hand: the
+format is a few lines of text, not worth a crate.
 
 ## Keeping a database in order
 
