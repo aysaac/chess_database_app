@@ -3,7 +3,12 @@
 
 mod common;
 
-use common::{PASSWORD, TestServer, fixture_bytes};
+use std::io::Read;
+use std::sync::{Arc, Barrier, mpsc};
+use std::time::{Duration, Instant};
+
+use chess_server::wire::Role;
+use common::{PASSWORD, TestServer, fixture_bytes, many_games};
 use serde_json::{Value, json};
 
 /// Every route that reads or writes a database's games, for `db`.
@@ -198,6 +203,74 @@ fn server_wide_databases_are_read_by_every_user_and_made_by_the_admin() {
     assert_eq!(bob.upload(&format!("/api/databases/{db}/import"), &fixture_bytes("setup.pgn")).status, 403);
 }
 
+/// Reads `first`, then waits for a word on `go` before reading `rest`.
+struct Gated {
+    first: Vec<u8>,
+    rest: Vec<u8>,
+    go: Option<mpsc::Receiver<()>>,
+}
+
+impl Read for Gated {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.first.is_empty()
+            && let Some(go) = self.go.take()
+        {
+            let _ = go.recv_timeout(Duration::from_secs(60));
+        }
+        let from = if self.first.is_empty() { &mut self.rest } else { &mut self.first };
+        let n = buf.len().min(from.len());
+        buf[..n].copy_from_slice(&from[..n]);
+        from.drain(..n);
+        Ok(n)
+    }
+}
+
+/// Uploads a PGN into `db` as `client`, doing `meanwhile` once the server
+/// is reading the body; the answer.
+fn upload_while(s: &TestServer, client: &common::Client, db: &str, meanwhile: impl FnOnce()) -> common::Res {
+    let mut pgn = many_games(2000);
+    let rest = pgn.split_off(pgn.len() / 2);
+    let (tx, go) = mpsc::channel();
+    let mut body = Gated { first: pgn, rest, go: Some(go) };
+    let (c, path) = (client.same(), format!("/api/databases/{db}/import"));
+    let upload = std::thread::spawn(move || c.upload_reader(&path, &mut body));
+    let tmp = s.data_dir().join("tmp");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !std::fs::read_dir(&tmp).unwrap().flatten().any(|e| e.metadata().is_ok_and(|m| m.len() > 0)) {
+        assert!(Instant::now() < deadline, "the upload never started");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    meanwhile();
+    tx.send(()).unwrap();
+    upload.join().unwrap()
+}
+
+#[test]
+fn access_is_checked_again_once_an_upload_is_in() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let bob = s.user(&admin, "bob");
+    let db = alice.create_db("Club", "shared");
+    let share = format!("/api/databases/{db}/shares/bob");
+    alice.put(&share, json!({ "access": "write" })).ok();
+    // The share is taken away while bob's upload streams in.
+    let r = upload_while(&s, &bob, &db, || {
+        alice.delete(&share).ok();
+    });
+    assert_eq!(r.status, 404, "{}", r.body);
+    // Bob is disabled while it streams in.
+    alice.put(&share, json!({ "access": "write" })).ok();
+    let id = user_id(&admin, "bob");
+    let r = upload_while(&s, &bob, &db, || {
+        admin.patch(&format!("/api/admin/users/{id}"), json!({ "disabled": true })).ok();
+    });
+    assert_eq!(r.status, 401, "{}", r.body);
+    assert_eq!(alice.get(&format!("/api/databases/{db}")).ok().json()["games"], 0, "nothing imported");
+    let left: Vec<_> = std::fs::read_dir(s.data_dir().join("tmp")).unwrap().collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
 #[test]
 fn a_disabled_users_sessions_and_tokens_stop_working() {
     let s = TestServer::start();
@@ -286,6 +359,49 @@ fn failed_logins_are_throttled() {
 }
 
 #[test]
+fn a_burst_of_logins_gets_no_more_guesses_than_the_limit() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    admin.post("/api/admin/users", json!({ "username": "bob", "password": PASSWORD })).ok();
+    let limit = s.state.config.login_attempts as usize;
+    // Right passwords don't count against the address.
+    for _ in 0..=limit {
+        s.client().login("admin", PASSWORD).ok();
+    }
+    let barrier = Arc::new(Barrier::new(20));
+    let guesses: Vec<_> = (0..20)
+        .map(|_| {
+            let (mut c, barrier) = (s.client(), barrier.clone());
+            std::thread::spawn(move || {
+                barrier.wait();
+                c.login("bob", "wrong password").status
+            })
+        })
+        .collect();
+    let statuses: Vec<u16> = guesses.into_iter().map(|g| g.join().unwrap()).collect();
+    assert_eq!(statuses.iter().filter(|&&st| st == 401).count(), limit, "guesses tried: {statuses:?}");
+    assert!(statuses.iter().all(|&st| st == 401 || st == 429), "{statuses:?}");
+    assert_eq!(s.client().login("bob", PASSWORD).status, 429);
+}
+
+#[test]
+fn guesses_of_the_current_password_are_throttled_like_logins() {
+    let s = TestServer::with(|c| c.login_attempts = 3);
+    let admin = s.admin();
+    let bob = s.user(&admin, "bob");
+    let change = |current: &str| {
+        let body = json!({ "currentPassword": current, "newPassword": "a new password" });
+        bob.post("/api/me/password", body).status
+    };
+    for _ in 0..3 {
+        assert_eq!(change("wrong password"), 403);
+    }
+    assert_eq!(change(PASSWORD), 429, "the right one waits too");
+    // They count against the account: logging in waits as well.
+    assert_eq!(s.client().login("bob", PASSWORD).status, 429);
+}
+
+#[test]
 fn the_setup_token_makes_the_first_admin_once() {
     let s = TestServer::start();
     let c = s.client();
@@ -349,6 +465,57 @@ fn admin_routes_are_the_admins_and_keep_an_admin() {
     bob.get("/api/admin/users").ok();
     bob.patch(&format!("/api/admin/users/{me}"), json!({ "role": "user" })).ok();
     assert_eq!(admin.get("/api/admin/users").status, 403);
+}
+
+#[test]
+fn the_cli_takes_the_same_usernames() {
+    let dir = tempfile::tempdir().unwrap();
+    let create = |name: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_chess-server"))
+            .arg("--data")
+            .arg(dir.path())
+            .args(["admin", "create", name])
+            .env("CHESS_SERVER_PASSWORD", PASSWORD)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("chess-server runs")
+    };
+    for bad in [".root", "-x", "a b"] {
+        let out = create(bad);
+        assert!(!out.status.success(), "{bad}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("starts with a letter or digit"), "{bad}: {err}");
+    }
+    assert!(create("root").status.success());
+}
+
+#[test]
+fn two_admins_demoting_each_other_at_once_leave_one() {
+    let s = TestServer::start();
+    let mut admins = vec![s.admin()];
+    let made = json!({ "username": "root", "password": PASSWORD, "role": "admin" });
+    admins[0].post("/api/admin/users", made).ok();
+    let mut root = s.client();
+    root.login("root", PASSWORD).ok();
+    admins.push(root);
+    let ids = [user_id(&admins[0], "admin"), user_id(&admins[0], "root")];
+    for round in 0..100 {
+        let barrier = Arc::new(Barrier::new(2));
+        let demotions: Vec<_> = (0..2)
+            .map(|i| {
+                let (c, barrier, other) = (admins[i].same(), barrier.clone(), ids[1 - i]);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    c.patch(&format!("/api/admin/users/{other}"), json!({ "role": "user" })).status
+                })
+            })
+            .collect();
+        let statuses: Vec<u16> = demotions.into_iter().map(|d| d.join().unwrap()).collect();
+        assert_eq!(s.state.store.active_admins().unwrap(), 1, "round {round}: {statuses:?}");
+        // The one left makes the other an admin again.
+        let left = usize::from(s.state.store.user(ids[1]).unwrap().unwrap().role == Role::Admin);
+        admins[left].patch(&format!("/api/admin/users/{}", ids[1 - left]), json!({ "role": "admin" })).ok();
+    }
 }
 
 #[test]

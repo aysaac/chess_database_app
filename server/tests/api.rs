@@ -3,7 +3,7 @@
 
 mod common;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use chess_core::pgn::write_game;
 use chess_core::position;
@@ -261,9 +261,28 @@ fn quotas_stop_imports() {
     let job = alice.wait_job(r.json()["job"].as_u64().unwrap());
     assert_eq!(job["state"], "failed", "{job}");
     assert!(job["error"].as_str().unwrap().contains("quota"), "{job}");
+    // Nor is their position index built past it, even by a tree.
+    let info = |db: &str| alice.get(&format!("/api/databases/{db}")).ok().json();
+    assert_eq!(info(&db)["index"]["upToDate"], false);
+    alice.get(&format!("/api/databases/{db}/tree")).ok();
+    let index_jobs = || {
+        let jobs = admin.get("/api/admin/jobs").ok().json();
+        jobs.as_array()
+            .unwrap()
+            .iter()
+            .filter(|j| j["kind"] == "index")
+            .map(|j| j["id"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert!(index_jobs().is_empty());
     let r = alice.upload(&format!("/api/databases/{db}/import"), &fixture_bytes("setup.pgn"));
     assert_eq!((r.status, r.code().as_str()), (507, "quotaExceeded"));
     admin.patch(&format!("/api/admin/databases/{db}"), json!({ "quotaBytes": null })).ok();
+    // With room, the next tree builds it.
+    alice.get(&format!("/api/databases/{db}/tree")).ok();
+    let job = alice.wait_job(index_jobs()[0].as_u64().unwrap());
+    assert_eq!(job["state"], "done", "{job}");
+    assert_eq!(info(&db)["index"]["upToDate"], true);
     // A user's quota covers all their databases.
     let id = admin
         .get("/api/admin/users")
@@ -282,6 +301,53 @@ fn quotas_stop_imports() {
     assert_eq!(r.status, 507);
     admin.patch(&format!("/api/admin/users/{id}"), json!({ "quotaBytes": null })).ok();
     alice.import_fixture(&other, "setup.pgn");
+}
+
+#[test]
+fn imports_at_once_share_their_owners_quota() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let info = |db: &str| alice.get(&format!("/api/databases/{db}")).ok().json();
+    let size = |db: &str| info(db)["sizeBytes"].as_u64().unwrap();
+    let pgn = Arc::new(common::many_games(20_000));
+    // What one import of it takes: games, then their index.
+    let probe = alice.create_db("Probe", "private");
+    let empty = size(&probe);
+    let started = std::time::Instant::now();
+    let r = alice.upload(&format!("/api/databases/{probe}/import"), &pgn);
+    assert_eq!(alice.wait_job(r.json()["job"].as_u64().unwrap())["state"], "done");
+    let grown = size(&probe) - empty;
+    let games = grown - info(&probe)["index"]["sizeBytes"].as_u64().unwrap();
+    eprintln!("one import: {grown} bytes ({games} without the index) in {:?}", started.elapsed());
+    alice.delete(&format!("/api/databases/{probe}?confirm=Probe")).ok();
+
+    // Room for the games of one and a half imports.
+    let (a, b) = (alice.create_db("A", "private"), alice.create_db("B", "private"));
+    let used = size(&a) + size(&b);
+    let users = admin.get("/api/admin/users").ok().json();
+    let id = users.as_array().unwrap().iter().find(|u| u["username"] == "alice").unwrap()["id"].clone();
+    admin.patch(&format!("/api/admin/users/{id}"), json!({ "quotaBytes": used + games * 3 / 2 })).ok();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let uploads: Vec<_> = [&a, &b]
+        .into_iter()
+        .map(|db| {
+            let (c, path, pgn, barrier) =
+                (alice.same(), format!("/api/databases/{db}/import"), pgn.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                barrier.wait();
+                let r = c.upload(&path, &pgn);
+                assert_eq!(r.status, 202, "{}", r.body);
+                r.json()["job"].as_u64().unwrap()
+            })
+        })
+        .collect();
+    let jobs: Vec<u64> = uploads.into_iter().map(|u| u.join().unwrap()).collect();
+    let ends: Vec<_> = jobs.into_iter().map(|j| alice.wait_job(j)).collect();
+    let stopped =
+        |j: &serde_json::Value| j["state"] == "failed" && j["error"].as_str().unwrap().contains("quota");
+    assert!(ends.iter().any(stopped), "one of them stops at the quota: {ends:?}");
+    assert!(size(&a) + size(&b) < used + 2 * grown, "not both imported and indexed");
 }
 
 #[test]

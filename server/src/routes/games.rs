@@ -12,7 +12,7 @@ use chess_core::shakmaty::Chess;
 use chess_db::reference::LINES_JOB_GAMES;
 use chess_db::{
     DbError, GameId, HeaderQuery, IndexPlan, NoProgress, build_sort, find_position, page_ids,
-    reference_lines, reference_overview, search_headers, sorted_subset, update_position_index,
+    reference_lines, reference_overview, search_headers, sorted_subset,
 };
 
 use crate::access::require;
@@ -20,6 +20,7 @@ use crate::auth::Auth;
 use crate::error::{ApiError, ApiResult};
 use crate::jobs::{thousands, to_job_error};
 use crate::pool::{LinesKey, OpenDb, writer_busy};
+use crate::routes::imports::{index_within_quota, room};
 use crate::store::{DbMeta, User};
 use crate::wire::{
     Access, FenQuery, GameDto, GamePage, GameRowDto, GamesQuery, HeadersDto, OpeningDto, ReferenceDto,
@@ -126,9 +127,10 @@ fn parse_fen(q: &FenQuery) -> ApiResult<Chess> {
 }
 
 /// Starts bringing the position index up to date when it isn't (after a
-/// cancelled import, or a crash in one), unless a job writes already.
-/// Blocking.
-pub fn ensure_index(state: &AppState, open: &Arc<OpenDb>, meta: &DbMeta, user: &User) {
+/// cancelled import, or a crash in one), unless a job writes already or
+/// there's no room for it: none at all, or no more than when the last build
+/// stopped at the quota. It counts toward the quota. Blocking.
+pub fn ensure_index(state: &Arc<AppState>, open: &Arc<OpenDb>, meta: &DbMeta, user: &User) {
     let mut writer = open.writer.lock().expect("writer lock");
     if writer_busy(&writer, &state.jobs.manager) {
         return;
@@ -140,10 +142,23 @@ pub fn ensure_index(state: &AppState, open: &Arc<OpenDb>, meta: &DbMeta, user: &
     if plan == IndexPlan::UpToDate {
         return;
     }
-    let o = open.clone();
+    let room = match room(state, meta) {
+        Ok(room) => room,
+        Err(e) => {
+            log::warn!("database {}: quota check: {}", meta.id, e.message);
+            return;
+        }
+    };
+    let stopped_at = open.cache.lock().expect("cache lock").index_stopped_at;
+    if let Some(room) = room
+        && (room == 0 || stopped_at.is_some_and(|at| room <= at))
+    {
+        return;
+    }
+    let (st, o, m) = (state.clone(), open.clone(), meta.clone());
     let job =
         state.jobs.spawn("index", "Indexing positions".into(), (&meta.id, &meta.name), user, move |ctx| {
-            let s = update_position_index(&o.db, ctx).map_err(to_job_error)?;
+            let s = index_within_quota(&st, &o, &m, ctx)?;
             Ok(format!("Indexed the positions of {} games", thousands(u64::from(s.games))))
         });
     *writer = Some(job);

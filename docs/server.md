@@ -137,11 +137,19 @@ compose file).
 - **API tokens** (`POST /api/tokens`) for scripts and, later, the desktop
   client: `Authorization: Bearer cdb_…`. Shown once; the store keeps a
   hash. They need no CSRF token (a browser doesn't send them on its own).
+  When a token was last used (`lastUsedAt`) is noted to the minute: it's
+  written when the stored time is a minute old or more, not at every
+  request.
 - **Failed logins** are throttled per account and per client address: after
   5 failures within 15 minutes, further attempts (even right ones) are
-  refused until the window passes (`429` with `Retry-After`). An unknown
-  username costs the same time as a wrong password. Someone can lock an
-  account out for 15 minutes this way; that's the trade-off.
+  refused until the window passes (`429` with `Retry-After`). An attempt
+  counts as a failure before its password is hashed and is taken back if
+  it was right, so concurrent attempts each count: a burst of them gets 5
+  guesses, not one per request. An unknown username costs the same time as
+  a wrong password. Someone can lock an account out for 15 minutes this
+  way; that's the trade-off. The current password asked by
+  `POST /api/me/password` is throttled the same way, against the same
+  account, so a stolen session or token can't guess it either.
 - **Disabling** a user stops their sessions and tokens at once (every
   request checks) and keeps their data; their server-wide databases stay
   readable. The admin can't disable or demote themselves, and there is
@@ -291,12 +299,24 @@ curl -H "Authorization: Bearer $TOKEN" --data-binary @twic1600.pgn \
   another answers 409.
 - An upload is streamed to `tmp/` and refused past the size limit (413),
   checked before reading (Content-Length) and while reading (chunked).
+  Who may import, the quota and the writer slot are checked before the
+  body is read and again once it's in: an uploader disabled meanwhile gets
+  401, one whose access went (a share removed, the database made private
+  or deleted) 404, and nothing is imported.
 - **Quotas**: per database and per user (all the databases they own
   together), set by the admin. An import is refused when there's no room
-  (507) and stops when the database outgrows it (checked every half
-  second): the games so far stay and the job fails with "reached its
-  quota". The size counts the position index, which the import builds
-  after, so a database can end up somewhat over.
+  (507) and stops when there's none left: the database's size, and the
+  owner's databases together as big as they are then, are checked every
+  half second, so imports running at once into one owner's databases share
+  the owner's quota. The games so far stay and the job fails with "reached
+  its quota".
+- The size counts the **position index**, and it's built under the same
+  check: an import stopped at the quota doesn't index its games, and an
+  index build that outgrows the quota stops (its temporary files go) and
+  isn't started again by a tree request until the database or its owner
+  has more room. The index is written in runs of about 64 MB, the last one
+  only when it's installed, so a database can end up over its quota by up
+  to that much, plus half a second of writing.
 - Jobs live in memory: a restart forgets finished jobs, and a running
   import stops between two batches (keeping what it committed).
 

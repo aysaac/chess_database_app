@@ -23,6 +23,19 @@ pub fn fixture_bytes(name: &str) -> Vec<u8> {
     std::fs::read(fixture(name)).expect("fixture")
 }
 
+/// A PGN of `n` games (a Ruy Lopez to move 10, each with its own round).
+pub fn many_games(n: usize) -> Vec<u8> {
+    let mut pgn = String::new();
+    for i in 0..n {
+        pgn.push_str(&format!(
+            "[Event \"Generated\"]\n[White \"White {i}\"]\n[Black \"Black {i}\"]\n[Round \"{i}\"]\n\
+             [Result \"1/2-1/2\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 \
+             7. Bb3 d6 8. c3 O-O 9. h3 Nb8 10. d4 Nbd7 1/2-1/2\n\n"
+        ));
+    }
+    pgn.into_bytes()
+}
+
 pub struct TestServer {
     pub base: String,
     pub dir: tempfile::TempDir,
@@ -252,9 +265,14 @@ impl Client {
 
     /// POSTs `bytes` chunked, without a Content-Length.
     pub fn upload_chunked(&self, path: &str, bytes: &[u8]) -> Res {
-        let req = self.headers(self.agent.post(self.url(path)), true).content_type("application/x-chess-pgn");
         let mut reader = bytes;
-        Client::finish(req.send(ureq::SendBody::from_reader(&mut reader)))
+        self.upload_reader(path, &mut reader)
+    }
+
+    /// POSTs what `reader` reads, chunked, as it reads it.
+    pub fn upload_reader(&self, path: &str, reader: &mut dyn std::io::Read) -> Res {
+        let req = self.headers(self.agent.post(self.url(path)), true).content_type("application/x-chess-pgn");
+        Client::finish(req.send(ureq::SendBody::from_reader(reader)))
     }
 
     /// Logs in; keeps the session cookie and the CSRF token.

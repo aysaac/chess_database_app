@@ -58,7 +58,11 @@ none).
   edit or import the app's: the desktop client will share them later.
   `admin/src/lib/types.ts` is written by hand; keep it in step.
 - Jobs that write a database (imports, index builds) take its writer slot
-  (`OpenDb::writer`): one at a time.
+  (`OpenDb::writer`): one at a time, and run under the quota check
+  (`imports::Guarded`, `imports::index_within_quota`).
+- **Every check of a user's password goes through
+  `account::verify_throttled`**, which counts the attempt before hashing,
+  so concurrent guesses can't get past the login throttle.
 - The admin UI runs under a strict Content-Security-Policy: no inline
   scripts or `style` attributes (classes only), nothing from other origins.
 - Tests bind 127.0.0.1 only (`tests/common::TestServer`), with a temporary

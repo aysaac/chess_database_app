@@ -166,8 +166,15 @@ impl Throttle {
     /// Refuses (with the seconds to wait) when a key had `limit` failures
     /// in the window.
     pub fn check(&self, keys: &[String]) -> ApiResult<()> {
-        let now = Instant::now();
-        let failures = self.failures.lock().expect("throttle lock");
+        self.refuse(&self.failures.lock().expect("throttle lock"), keys, Instant::now())
+    }
+
+    fn refuse(
+        &self,
+        failures: &HashMap<String, (u32, Instant)>,
+        keys: &[String],
+        now: Instant,
+    ) -> ApiResult<()> {
         for key in keys {
             if let Some(&(count, first)) = failures.get(key) {
                 let age = now.duration_since(first);
@@ -180,8 +187,10 @@ impl Throttle {
     }
 
     pub fn fail(&self, keys: &[String]) {
-        let now = Instant::now();
-        let mut failures = self.failures.lock().expect("throttle lock");
+        self.count(&mut self.failures.lock().expect("throttle lock"), keys, Instant::now());
+    }
+
+    fn count(&self, failures: &mut HashMap<String, (u32, Instant)>, keys: &[String], now: Instant) {
         if failures.len() >= THROTTLE_KEYS {
             failures.retain(|_, (_, first)| now.duration_since(*first) < self.window);
         }
@@ -191,6 +200,28 @@ impl Throttle {
                 *entry = (0, now);
             }
             entry.0 += 1;
+        }
+    }
+
+    /// [`check`](Self::check) and [`fail`](Self::fail) at once: the attempt
+    /// counts as a failure before it's tried, so attempts made at the same
+    /// time each count and a burst gets no more than `limit`.
+    /// [`undo`](Self::undo) takes it back when it turns out right.
+    pub fn attempt(&self, keys: &[String]) -> ApiResult<()> {
+        let now = Instant::now();
+        let mut failures = self.failures.lock().expect("throttle lock");
+        self.refuse(&failures, keys, now)?;
+        self.count(&mut failures, keys, now);
+        Ok(())
+    }
+
+    /// Takes back an [`attempt`](Self::attempt).
+    pub fn undo(&self, keys: &[String]) {
+        let mut failures = self.failures.lock().expect("throttle lock");
+        for key in keys {
+            if let Some(entry) = failures.get_mut(key) {
+                entry.0 = entry.0.saturating_sub(1);
+            }
         }
     }
 
@@ -220,6 +251,19 @@ mod tests {
         let t = Throttle::new(1, Duration::ZERO);
         t.fail(&keys);
         t.check(&keys).unwrap();
+    }
+
+    #[test]
+    fn attempts_count_before_they_are_tried() {
+        let t = Throttle::new(2, Duration::from_secs(60));
+        let keys = ["user:a".to_owned(), "ip:1".to_owned()];
+        t.attempt(&keys).unwrap();
+        t.attempt(&keys).unwrap();
+        assert_eq!(t.attempt(&keys).unwrap_err().status, 429, "two still being tried");
+        // A right one is taken back.
+        t.undo(&keys);
+        t.attempt(&keys).unwrap();
+        assert!(t.check(&keys).is_err());
     }
 
     #[test]

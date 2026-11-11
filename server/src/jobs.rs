@@ -36,7 +36,6 @@ impl Jobs {
         F: FnOnce(&JobContext) -> Result<String, JobError> + Send + 'static,
     {
         self.prune();
-        let id = self.manager.spawn(kind, label, work);
         let meta = JobMeta {
             db: db.0.to_owned(),
             db_name: db.1.to_owned(),
@@ -44,7 +43,11 @@ impl Jobs {
             username: user.username.clone(),
             started_at: now(),
         };
-        self.meta.lock().expect("jobs lock").insert(id, meta);
+        // Held while it starts, so `stop_all_for` (which lists jobs under
+        // this lock) can't miss a job starting at that moment.
+        let mut metas = self.meta.lock().expect("jobs lock");
+        let id = self.manager.spawn(kind, label, work);
+        metas.insert(id, meta);
         id
     }
 
