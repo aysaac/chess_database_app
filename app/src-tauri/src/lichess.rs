@@ -48,8 +48,8 @@ pub struct Lichess {
     /// Bumped to stop a login waiting for the browser.
     attempt: AtomicU64,
     /// The study looked up last (IO-10), for its import to ask Lichess only
-    /// whether it changed since.
-    pub looked_up: Mutex<Option<StudyPgn>>,
+    /// whether it changed since, and whether it took the login.
+    pub looked_up: Mutex<Option<(StudyPgn, bool)>>,
     /// What the last export to studies (NET-12) did.
     pub export_report: Mutex<Option<StudyExportReportDto>>,
 }

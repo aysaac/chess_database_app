@@ -76,6 +76,17 @@
 
   try {
     await log("start");
+    // The ribbon's new column (Import study…, Send to study…) still fits on one row,
+    // full width and narrow (groups then drop labels or collapse).
+    for (const width of [null, "900px"]) {
+      document.querySelector("#app").style.width = width ?? "";
+      await wait(600);
+      const bar = document.querySelector(".ribbon").getBoundingClientRect();
+      const groups = [...document.querySelectorAll(".ribbon > .groups > .group")].map((g) => g.getBoundingClientRect());
+      expect(groups.every((g) => g.right <= bar.right + 1 && g.top === groups[0].top), `the ribbon on one row at ${width ?? "full width"}`);
+    }
+    document.querySelector("#app").style.width = "";
+    await wait(600);
     const account = await api.lichessAccount();
     expect(!account.username, "nobody logged in at first: " + JSON.stringify(account));
 
