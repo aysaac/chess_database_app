@@ -70,6 +70,20 @@ export interface AuditPage {
   entries: AuditEntry[];
 }
 
+export interface Backup {
+  name: string;
+  sizeBytes: number;
+  databases: number;
+  createdAt: number;
+}
+
+export interface Backups {
+  configured: boolean;
+  everyHours: number | null;
+  keep: number;
+  backups: Backup[];
+}
+
 /** A database deleted with its owner (metadata only). */
 export interface OwnedDatabase {
   id: string;

@@ -30,6 +30,16 @@ pub fn once(state: &Arc<AppState>) {
         Ok(n) => log::info!("forgot {n} audit log entries older than {} days", state.config.audit_days),
         Err(e) => log::warn!("couldn't prune the audit log: {}", e.message),
     }
+    if let Some(every) = state.config.backup_every {
+        let due = crate::backup::last_made(state).is_none_or(|t| t.elapsed().is_ok_and(|age| age >= every));
+        if due {
+            match crate::backup::start(state, None, None) {
+                Ok(job) => log::info!("scheduled backup: job {job}"),
+                Err(e) if e.status.as_u16() == 409 => {}
+                Err(e) => log::warn!("couldn't start a scheduled backup: {}", e.message),
+            }
+        }
+    }
     if let Some(idle) = state.config.idle_close {
         for id in state.pool.close_idle(idle, &state.jobs.manager) {
             log::info!("closed database {id}: unused for {} minutes", idle.as_secs() / 60);

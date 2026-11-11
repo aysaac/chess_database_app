@@ -47,7 +47,8 @@ impl TestServer {
         TestServer::start_in(dir, |_| {})
     }
 
-    fn start_in(dir: tempfile::TempDir, change: impl FnOnce(&mut Config)) -> TestServer {
+    /// A server on the data directory `dir/data`.
+    pub fn start_in(dir: tempfile::TempDir, change: impl FnOnce(&mut Config)) -> TestServer {
         let mut config = Config::new(dir.path().join("data"));
         // Tests poll fast; a test of the limits sets them.
         config.rate_user = None;
@@ -292,6 +293,24 @@ impl Client {
             let v = r.json();
             if v["state"] != "running" {
                 return v;
+            }
+            assert!(Instant::now() < deadline, "job {job} still runs");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Polls a job through the admin's jobs view (for jobs of no database,
+    /// such as backups) until it ends; its last state.
+    pub fn wait_job_admin(&self, job: u64) -> String {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let all = self.get("/api/admin/jobs").ok().json();
+            let state = all.as_array().unwrap().iter().find(|j| j["id"] == job).expect("the job")["state"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            if state != "running" {
+                return state;
             }
             assert!(Instant::now() < deadline, "job {job} still runs");
             std::thread::sleep(Duration::from_millis(20));

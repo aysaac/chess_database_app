@@ -4,6 +4,7 @@
 import type {
   Account,
   AuditPage,
+  Backups,
   Invite,
   Link,
   OwnedDatabase,
@@ -140,6 +141,8 @@ export const api = {
   jobs: () => request<AdminJob[]>("GET", "/admin/jobs"),
   cancelJob: (id: number) => request<void>("POST", `/admin/jobs/${id}/cancel`),
   disk: () => request<Disk>("GET", "/admin/disk"),
+  backups: () => request<Backups>("GET", "/admin/backups"),
+  backUp: () => request<{ job: number }>("POST", "/admin/backups"),
   audit: (q: { action: string; who: string; from: number | null; to: number | null; offset: number; limit: number }) => {
     const params = new URLSearchParams({ offset: String(q.offset), limit: String(q.limit) });
     if (q.action) params.set("action", q.action);

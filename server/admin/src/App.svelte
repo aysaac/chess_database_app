@@ -4,6 +4,7 @@
   import type { Me, SetupStatus } from "./lib/types";
   import Account from "./pages/Account.svelte";
   import Audit from "./pages/Audit.svelte";
+  import BackupsPage from "./pages/Backups.svelte";
   import Databases from "./pages/Databases.svelte";
   import Disk from "./pages/Disk.svelte";
   import Forgot from "./pages/Forgot.svelte";
@@ -23,6 +24,7 @@
     { id: "import", label: "Import" },
     { id: "jobs", label: "Jobs" },
     { id: "disk", label: "Disk" },
+    { id: "backups", label: "Backups" },
     { id: "audit", label: "Audit log" },
     { id: "account", label: "Account" },
   ] as const;
@@ -182,6 +184,8 @@
       <Import />
     {:else if page === "jobs"}
       <Jobs />
+    {:else if page === "backups"}
+      <BackupsPage />
     {:else if page === "audit"}
       <Audit />
     {:else if page === "disk"}

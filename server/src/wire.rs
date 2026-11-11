@@ -248,6 +248,29 @@ pub struct AuditPage {
     pub entries: Vec<AuditEntryDto>,
 }
 
+/// A backup on the server's disk (metadata only: backups are never
+/// downloadable).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupDto {
+    pub name: String,
+    pub size_bytes: u64,
+    pub databases: u32,
+    pub created_at: i64,
+}
+
+/// `GET /api/admin/backups`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupsDto {
+    /// A backup folder is set (`CHESS_SERVER_BACKUP_DIR`).
+    pub configured: bool,
+    /// Hours between scheduled backups, if they're on.
+    pub every_hours: Option<u64>,
+    pub keep: u32,
+    pub backups: Vec<BackupDto>,
+}
+
 /// A database the admin is about to delete with its owner (metadata only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
