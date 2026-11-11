@@ -1,0 +1,79 @@
+[Event "Fixture study: Italian ideas"]
+[Site "lichess.org"]
+[Date "2026.11.01"]
+[White "Student"]
+[Black "Coach"]
+[Result "*"]
+[Annotator "https://lichess.org/@/FixtureCoach"]
+[Variant "Standard"]
+[ECO "C54"]
+[Opening "Italian Game: Classical Variation, Giuoco Pianissimo"]
+[StudyName "Fixture study"]
+[ChapterName "Italian ideas"]
+[ChapterURL "https://lichess.org/study/FxStudy1/ChapItal"]
+[Orientation "white"]
+[UTCDate "2026.11.01"]
+[UTCTime "10:15:00"]
+
+{ A comment over several lines, as Lichess writes them.
+
+[This line starts with a bracket] but it is still the comment, not a tag.
+} 1. e4 { [%clk 0:05:00] } 1... e5 { [%clk 0:05:00] } 2. Nf3 { [%cal Gg1f3,Rf3e5] [%clk 0:04:58] } 2... Nc6 3. Bc4 { The Italian. } { [%csl Gf7,Rc4] [%clk 0:04:55] } 3... Bc5 (3... Nf6 { The Two Knights. } 4. Ng5 d5 (4... Bc5 5. Bxf7+ Ke7 { The Traxler. }) 5. exd5 Na5 $1) 4. c3 $5 { [%cal Gc3d4,Gd2d4] } 4... Nf6 5. d4 exd4 6. cxd4 Bb4+ 7. Bd2 Bxd2+ 8. Nbxd2 d5 $14 9. exd5 Nxd5 10. Qb3 Nce7 11. O-O O-O 12. Rfe1 c6 { [%csl Gd4][%cal Ge1e7] White has the centre. } *
+
+
+[Event "Fixture study: King and pawn"]
+[Site "lichess.org"]
+[Result "*"]
+[Annotator "https://lichess.org/@/FixtureCoach"]
+[Variant "From Position"]
+[FEN "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1"]
+[SetUp "1"]
+[StudyName "Fixture study"]
+[ChapterName "King and pawn"]
+[ChapterURL "https://lichess.org/study/FxStudy1/ChapKing"]
+[Orientation "black"]
+[UTCDate "2026.11.01"]
+[UTCTime "10:20:00"]
+
+{ The opposition. [%csl Ge5,Re1] } 1. Kd2 Kd5 2. Kd3 Ke5 (2... Kc5 3. Ke4 { [%cal Ge4e5] }) 3. Ke3 Kd5 4. Kf4 Kd4 5. e4 { [%csl Ge4][%cal Ge4e5] } *
+
+
+[Event "Fixture study: Chapter 3"]
+[Site "lichess.org"]
+[Result "*"]
+[Variant "Standard"]
+[ECO "?"]
+[Opening "?"]
+[StudyName "Fixture study"]
+[ChapterName "Chapter 3"]
+[ChapterURL "https://lichess.org/study/FxStudy1/ChapEmty"]
+[Orientation "white"]
+[UTCDate "2026.11.01"]
+[UTCTime "10:25:00"]
+
+ *
+
+
+[Event "Fixture study: Nimzo with clocks"]
+[Site "lichess.org"]
+[Date "2026.10.30"]
+[White "Alpha"]
+[Black "Beta"]
+[Result "*"]
+[WhiteElo "1900"]
+[BlackElo "1950"]
+[TimeControl "600+5"]
+[Annotator "https://lichess.org/@/FixtureCoach"]
+[Variant "Standard"]
+[ECO "E32"]
+[Opening "Nimzo-Indian Defense: Classical Variation"]
+[StudyName "Fixture study"]
+[ChapterName "Alpha - Beta"]
+[ChapterURL "https://lichess.org/study/FxStudy1/ChapNimz"]
+[Orientation "white"]
+[UTCDate "2026.10.30"]
+[UTCTime "18:00:00"]
+
+1. d4 { [%eval 0.17] [%clk 0:10:00] } 1... Nf6 { [%clk 0:10:00] } 2. c4 { [%clk 0:10:03] } 2... e6 { [%clk 0:10:02] } 3. Nc3 { [%clk 0:10:06] } 3... Bb4 { [%clk 0:10:05] } 4. Qc2 { [%clk 0:10:08] } 4... O-O { [%clk 0:10:07] } 5. a3 { [%clk 0:10:10] } 5... Bxc3+ { [%clk 0:10:09] } 6. Qxc3 { [%clk 0:10:12] } 6... b6 { [%clk 0:10:10] } 7. Bg5 { [%clk 0:10:01] } 7... Bb7 { [%clk 0:10:00] } 8. f3 { [%clk 0:09:50] } 8... h6 { [%clk 0:09:40] } 9. Bh4 { [%clk 0:09:45] } 9... d5 { [%clk 0:09:20] } 10. e3 { [%clk 0:09:30] } 10... Nbd7 { [%clk 0:09:00] } 11. cxd5 { [%clk 0:09:25] } 11... Nxd5 { [%clk 0:08:55] } 12. Bxd8 { [%clk 0:09:20] } 12... Nxc3 { [%clk 0:08:58] } 13. Bh4 $14 { [%clk 0:09:22] } 13... Nd5 { [%clk 0:09:01] } *
+
+

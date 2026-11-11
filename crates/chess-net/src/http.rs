@@ -1,6 +1,7 @@
 //! The HTTP client both sites share: one request at a time (both ask for
 //! that), a user agent that says what we are, and waits when a server says
-//! it's had too many requests (429).
+//! it's had too many requests (429). Writes (NET-11, NET-12) are sent once:
+//! a 429 there is an answer for the caller, never a reason to send again.
 
 use std::io::{self, Read};
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use ureq::http::Response;
 use ureq::tls::{RootCerts, TlsConfig};
 use ureq::{Agent, Body};
 
+use crate::oauth::Token;
 use crate::time::now_ms;
 use crate::{NetError, Site};
 
@@ -35,6 +37,13 @@ pub struct Client {
     lookup_timeout: Duration,
     /// A download that gets no bytes for this long has stopped.
     pub(crate) stall: Duration,
+    /// The longest a write (a study made, games sent to it) may take.
+    write_timeout: Duration,
+    /// How long a login waits for the browser to come back (NET-11).
+    pub(crate) login_wait: Duration,
+    /// The Lichess user logged in, and their token: a download of their own
+    /// games sends it, which makes Lichess send them 3 times as fast.
+    pub(crate) lichess_login: Option<(String, Token)>,
 }
 
 impl Default for Client {
@@ -70,7 +79,30 @@ impl Client {
             timeout: None,
             lookup_timeout: Duration::from_secs(30),
             stall: Duration::from_secs(300),
+            write_timeout: Duration::from_secs(120),
+            login_wait: Duration::from_secs(600),
+            lichess_login: None,
         }
+    }
+
+    /// The same, sending `token` when downloading the games of `username`
+    /// from Lichess: their own games, which Lichess then sends 3 times as
+    /// fast (NET-11).
+    pub fn with_lichess_login(mut self, username: &str, token: Token) -> Client {
+        self.lichess_login = Some((username.to_owned(), token));
+        self
+    }
+
+    /// The same, a login giving up when the browser hasn't come back after
+    /// `wait` (tests; 10 minutes otherwise).
+    pub fn with_login_wait(mut self, wait: Duration) -> Client {
+        self.login_wait = wait;
+        self
+    }
+
+    /// The Lichess server, as `scheme://host[:port]`.
+    pub fn lichess_url(&self) -> &str {
+        &self.lichess
     }
 
     /// The same, waiting `wait` after a 429 (tests).
@@ -111,12 +143,28 @@ impl Client {
         accept: &str,
         stop: &dyn Fn() -> bool,
     ) -> Result<Response<Body>, NetError> {
+        self.get_with(site, url, query, accept, &[], stop)
+    }
+
+    /// [`get`](Client::get) with more headers (a token, `If-Modified-Since`).
+    pub(crate) fn get_with(
+        &self,
+        site: Site,
+        url: &str,
+        query: &[(&str, String)],
+        accept: &str,
+        headers: &[(&str, String)],
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Response<Body>, NetError> {
         let wait = match site {
             Site::Lichess => self.lichess_wait,
             Site::ChessCom => self.chess_com_wait,
         };
         for attempt in 0.. {
             let mut req = self.agent.get(url).header("Accept", accept);
+            for (k, v) in headers {
+                req = req.header(*k, v);
+            }
             for (k, v) in query {
                 req = req.query(*k, v);
             }
@@ -141,6 +189,126 @@ impl Client {
         }
         Err(NetError::RateLimited(site))
     }
+
+    /// Sends a write (a POST or a DELETE) once: a 429 comes back like any
+    /// other status, never sent again. It gives up after 2 minutes.
+    pub(crate) fn send(&self, site: Site, write: Write<'_>) -> Result<Response<Body>, NetError> {
+        let mut req = ureq::http::Request::builder()
+            .method(write.method)
+            .uri(write.url)
+            .header("Accept", "application/json");
+        if let Some(token) = write.token {
+            req = req.header("Authorization", token.bearer());
+        }
+        let body = match write.body {
+            Payload::Empty => Vec::new(),
+            Payload::Form(fields) => {
+                req = req.header("Content-Type", "application/x-www-form-urlencoded");
+                form(&fields).into_bytes()
+            }
+            Payload::Text(text) => {
+                req = req.header("Content-Type", "text/plain");
+                text.into_bytes()
+            }
+        };
+        let req = req.body(body).map_err(|e| NetError::Unreachable { site, reason: e.to_string() })?;
+        let req = self.agent.configure_request(req).timeout_global(Some(self.write_timeout)).build();
+        self.agent.run(req).map_err(|e| unreachable(site, &e))
+    }
+}
+
+/// A write for [`Client::send`].
+pub(crate) struct Write<'a> {
+    pub method: &'static str,
+    pub url: &'a str,
+    pub token: Option<&'a Token>,
+    pub body: Payload<'a>,
+}
+
+/// What a write sends.
+pub(crate) enum Payload<'a> {
+    Empty,
+    /// `application/x-www-form-urlencoded`.
+    Form(Vec<(&'a str, &'a str)>),
+    Text(String),
+}
+
+fn unreserved(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~')
+}
+
+/// `text` percent-encoded: everything but letters, digits and `-._~`.
+pub(crate) fn encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for b in text.bytes() {
+        if unreserved(b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// How long `text` is once percent-encoded.
+pub(crate) fn encoded_len(text: &str) -> usize {
+    text.bytes().map(|b| if unreserved(b) { 1 } else { 3 }).sum()
+}
+
+/// A percent-encoded query value decoded (`+` is a space).
+pub(crate) fn decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex =
+            bytes.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(b)) => {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+            (b'+', _) => out.push(b' '),
+            (b, _) => out.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A form body, `k=v&k=v`, percent-encoded.
+pub(crate) fn form(fields: &[(&str, &str)]) -> String {
+    let pairs: Vec<String> = fields.iter().map(|(k, v)| format!("{}={}", encode(k), encode(v))).collect();
+    pairs.join("&")
+}
+
+/// The pairs of a query string (`a=1&b=x%20y`), decoded.
+pub(crate) fn query_pairs(query: &str) -> Vec<(String, String)> {
+    query
+        .split('&')
+        .filter(|kv| !kv.is_empty())
+        .map(|kv| {
+            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+            (decode(k), decode(v))
+        })
+        .collect()
+}
+
+/// The `error` (or `error_description`) of a JSON error body, if it has one.
+pub(crate) fn error_message(site: Site, resp: &mut Response<Body>) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Error {
+        error: Option<serde_json::Value>,
+        error_description: Option<String>,
+    }
+    let e: Error = read_json(site, resp, 1 << 16, &Arc::new(AtomicI64::new(0))).ok()?;
+    let error = e.error.map(|v| match v {
+        serde_json::Value::String(s) => s,
+        // A form's errors: {"name": ["…"]}.
+        other => other.to_string(),
+    });
+    e.error_description.filter(|d| !d.is_empty()).or(error).filter(|m| !m.trim().is_empty())
 }
 
 /// What went wrong, in words for the user (ureq's own start with "io: ").
@@ -206,4 +374,40 @@ pub(crate) fn read_json<T: serde::de::DeserializeOwned>(
         }
     })?;
     serde_json::from_slice(&bytes).map_err(|e| NetError::BadData { site, reason: e.to_string() })
+}
+
+/// Reads a whole body (up to `limit` bytes).
+pub(crate) fn read_bytes(site: Site, resp: &mut Response<Body>, limit: u64) -> Result<Vec<u8>, NetError> {
+    let mut bytes = Vec::new();
+    resp.body_mut().with_config().limit(limit).reader().read_to_end(&mut bytes).map_err(|e| {
+        match e.get_ref().and_then(|i| i.downcast_ref::<ureq::Error>()) {
+            Some(ureq::Error::BodyExceedsLimit(_)) => NetError::BadData { site, reason: io_reason(&e) },
+            _ => NetError::Unreachable { site, reason: io_reason(&e) },
+        }
+    })?;
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_encoding_round_trips() {
+        let text = "study:read study:write é&=+/?#[]\"{}\n";
+        assert_eq!(encode("a-b_c.d~9"), "a-b_c.d~9");
+        assert_eq!(encode("a b&c"), "a%20b%26c");
+        assert_eq!(decode(&encode(text)), text);
+        assert_eq!(encoded_len(text), encode(text).len());
+        assert_eq!(decode("a+b%2"), "a b%2", "a cut escape stays as it is");
+        assert_eq!(
+            query_pairs("code=liu_x%2By&state=s+1&&flag"),
+            [
+                ("code".into(), "liu_x+y".into()),
+                ("state".into(), "s 1".into()),
+                ("flag".into(), String::new())
+            ]
+        );
+        assert_eq!(form(&[("pgn", "1. e4 *"), ("initial", "true")]), "pgn=1.%20e4%20%2A&initial=true");
+    }
 }

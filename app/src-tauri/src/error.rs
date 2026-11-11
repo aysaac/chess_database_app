@@ -18,6 +18,8 @@ pub enum ErrorCode {
     Engine,
     /// An online server (NET-01) couldn't be reached or failed.
     Network,
+    /// Lichess needs a login, or a new one (NET-11).
+    Login,
     Internal,
 }
 
@@ -96,7 +98,20 @@ impl From<chess_net::NetError> for AppError {
             | NetError::Unreachable { .. }
             | NetError::Status { .. }
             | NetError::BadData { .. }
-            | NetError::Stalled(_) => ErrorCode::Network,
+            | NetError::Stalled(_)
+            | NetError::StudyLimit
+            | NetError::Refused(_) => ErrorCode::Network,
+            NetError::Login(_)
+            | NetError::TokenRejected
+            | NetError::MissingScopes(_)
+            | NetError::StudyNeedsLogin => ErrorCode::Login,
+            NetError::NoSuchStudy => ErrorCode::NotFound,
+            NetError::NotAStudyLink(_)
+            | NetError::StudyForbidden
+            | NetError::NotContributor
+            | NetError::BadStudyName
+            | NetError::TooManyStudies { .. }
+            | NetError::StudyFull { .. } => ErrorCode::InvalidInput,
         };
         AppError::new(code, e.to_string())
     }
