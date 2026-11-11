@@ -78,17 +78,34 @@ impl FromRequestParts<Arc<AppState>> for Auth {
 
     async fn from_request_parts(parts: &mut Parts, state: &Arc<AppState>) -> ApiResult<Auth> {
         let client = parts.extensions.get::<ClientAddr>().map(|c| c.0.clone()).unwrap_or_default();
+        // Rate limits: per user once known; credentials that don't work
+        // count against the address, as requests without any do.
+        let refused = |state: &AppState| -> ApiError {
+            match state.config.rate_anon.map(|n| state.limits.take(&format!("ip:{client}"), n)) {
+                Some(Err(limited)) => limited,
+                _ => ApiError::unauthorized(),
+            }
+        };
+        let per_user = |state: &AppState, user: &User| -> ApiResult<()> {
+            match state.config.rate_user {
+                Some(n) => state.limits.take(&format!("user:{}", user.id), n),
+                None => Ok(()),
+            }
+        };
         if let Some(token) = bearer(&parts.headers) {
             let st = state.clone();
             let user = blocking(move || st.store.token_user(&token_digest(&token))).await?;
-            return user.map(|user| Auth { user, session: None, client }).ok_or_else(ApiError::unauthorized);
+            let user = user.ok_or_else(|| refused(state))?;
+            per_user(state, &user)?;
+            return Ok(Auth { user, session: None, client });
         }
+        // No credentials: the middleware counted it against the address already.
         let token = cookie(&parts.headers, SESSION_COOKIE).ok_or_else(ApiError::unauthorized)?;
         let token_hash = token_digest(&token);
         let st = state.clone();
         let hash = token_hash.clone();
-        let (user, csrf) =
-            blocking(move || st.store.session(&hash)).await?.ok_or_else(ApiError::unauthorized)?;
+        let (user, csrf) = blocking(move || st.store.session(&hash)).await?.ok_or_else(|| refused(state))?;
+        per_user(state, &user)?;
         if !is_safe(&parts.method) {
             let sent = parts.headers.get(CSRF_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("");
             if !ct_eq(sent.as_bytes(), csrf.as_bytes()) {

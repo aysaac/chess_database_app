@@ -102,6 +102,8 @@ passes `/api` to a server on 8080.
 | `CHESS_SERVER_SMTP_USER`, `CHESS_SERVER_SMTP_PASSWORD` | none | Its login, if it needs one |
 | `CHESS_SERVER_SMTP_FROM` | (needed with a host) | The sender, e.g. `Chess server <chess@example.com>` |
 | `CHESS_SERVER_AUDIT_DAYS` | 365 | How long the audit log keeps entries |
+| `CHESS_SERVER_RATE_LIMIT_PER_MINUTE` | 1200 | Requests a user may make a minute (a quarter of it at once); `0` turns it off |
+| `CHESS_SERVER_RATE_LIMIT_ANON_PER_MINUTE` | 300 | The same per client address, for requests without a login; `0` turns it off |
 | `RUST_LOG` | `info` | `debug` logs every request |
 
 ### In a container, behind Caddy
@@ -447,7 +449,15 @@ million games.
   (8 bytes a game) once a tree was asked for; nothing closes idle
   databases yet.
 - One process; no horizontal scaling. Data on a local disk.
-- No rate limiting beyond logins; put limits in the proxy if needed.
+- **Rate limits**: a token bucket in memory per user (any session or API
+  token of theirs) and per client address for requests without a login (and
+  for credentials that don't work). A bucket holds a quarter of a minute's
+  requests (at least 10) and refills at the per-minute rate; an empty one
+  answers `429` with `Retry-After`. Generous by default (1,200 a minute per
+  user, 300 per address), to stop a runaway script or a flood rather than a
+  person; `/api/health` isn't limited. Behind a proxy, set
+  `CHESS_SERVER_TRUST_PROXY` so the addresses are the clients', not the
+  proxy's.
 - TLS comes from the proxy in front; the server speaks plain HTTP.
 - Opening a database the first time takes about half a second per million
   games (the first request to it waits).
