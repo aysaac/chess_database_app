@@ -69,8 +69,10 @@
   // The board is an editor window's (DB-07): the library window opens one,
   // with no database, and the checks run there.
   if ($(".home")) {
-    await log("library window: opening an editor window for the checks");
-    await api.openEditorWindow(null);
+    await log("library window: opening a board from its button for the checks");
+    const button = $$(".home header button").find((b) => text(b) === "Open board");
+    expect(button, "an Open board button in the library");
+    button.click();
     return;
   }
 
