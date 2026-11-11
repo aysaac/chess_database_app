@@ -1,0 +1,32 @@
+[package]
+name = "chess-server"
+description = "Self-hosted server: several users' chess databases, and searches on them (NET-03)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+chess-core.workspace = true
+chess-db.workspace = true
+chess-jobs.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "io-util", "sync", "time"] }
+http-body-util = "0.1.5"
+rusqlite = { version = "0.41", features = ["bundled"] }
+argon2 = "0.6"
+sha2 = "0.11"
+getrandom = "0.4"
+env_logger = "0.11"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+ureq = "3.4"
