@@ -3,8 +3,8 @@
   import { db } from "../stores/db.svelte";
   import { game } from "../stores/game.svelte";
   import type { HeadersDto } from "../bindings/HeadersDto";
-  import HeaderEditor from "./HeaderEditor.svelte";
   import Modal from "./Modal.svelte";
+  import SaveDetailsDialog from "./SaveDetailsDialog.svelte";
 
   // Saves the game on the board as a new game in a database of the user's
   // choice (DB-01): the way to keep a game played on a bare board, with no
@@ -19,6 +19,17 @@
 
   // The first database takes the focus, also when coming back from the details.
   $effect(() => list?.querySelector<HTMLElement>("button")?.focus());
+
+  /** A database's name from its folder, "My games" for ".../My games.chessdb". */
+  function name(path: string): string {
+    return (
+      path
+        .split(/[\\/]/)
+        .filter(Boolean)
+        .at(-1)
+        ?.replace(/\.chessdb$/i, "") ?? path
+    );
+  }
 
   /** The database chosen, while the details are asked for. */
   let chosen = $state<{ path: string; create: boolean } | null>(null);
@@ -41,10 +52,9 @@
 </script>
 
 {#if chosen && game.view}
-  <HeaderEditor
+  <SaveDetailsDialog
     headers={game.view.headers}
-    title="Game details"
-    saveLabel="Save game"
+    database={db.saveTargets.find((t) => t.path === chosen?.path)?.name ?? name(chosen.path)}
     onSave={save}
     onCancel={() => (chosen = null)}
   />
