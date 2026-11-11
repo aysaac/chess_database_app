@@ -8,6 +8,8 @@ rust-version.workspace = true
 
 [dependencies]
 chess-db.workspace = true
+# NET-06: a TWIC issue is a zip of its PGN (deflate only, through flate2 and miniz_oxide).
+zip = { version = "9.5", default-features = false, features = ["deflate-flate2"] }
 log.workspace = true
 thiserror.workspace = true
 serde.workspace = true
