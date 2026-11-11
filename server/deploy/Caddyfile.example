@@ -1,0 +1,20 @@
+# Caddy in front of chess-server: HTTPS for your domain (certificates from
+# Let's Encrypt, renewed by Caddy), passed on to the server over the compose
+# network. Caddy sets X-Forwarded-For and X-Forwarded-Proto itself.
+
+chess.example.com {
+	encode zstd gzip
+
+	# At least the server's CHESS_SERVER_MAX_UPLOAD_MB, so the server is the
+	# one that refuses an upload too big, with its own message.
+	request_body {
+		max_size 300MB
+	}
+
+	reverse_proxy chess-server:8080
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+}
