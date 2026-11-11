@@ -26,6 +26,7 @@
   import ReferenceMenu from "./ReferenceMenu.svelte";
   import RibbonButton from "./RibbonButton.svelte";
   import RibbonDropdown from "./RibbonDropdown.svelte";
+  import SaveGameDialog from "./SaveGameDialog.svelte";
   import SetupEditor from "./SetupEditor.svelte";
 
   let setup = $state(false);
@@ -159,14 +160,22 @@
       disabled={!game.view}
       onclick={() => game.save()}
     />
-    <RibbonButton
+    <RibbonDropdown
       icon="save-plus"
-      label="Save as new"
-      title="Save as new (Ctrl+Shift+S)"
+      label="More ways to save"
+      title="Save as new in the open database, or choose another one"
+      menuLabel="Save as new"
+      mainLabel="Save as new"
+      mainTitle="Save as new (Ctrl+Shift+S)"
       {compact}
-      disabled={!game.view || !db.info}
-      onclick={() => game.saveAsNew()}
-    />
+      disabled={!game.view}
+      onmain={() => game.saveAsNew()}
+    >
+      <button role="menuitem" disabled={!db.info} onclick={() => game.saveAsNew()}
+        >Save as new in {db.info?.name ?? "the open database"} (Ctrl+Shift+S)</button
+      >
+      <button role="menuitem" onclick={() => (game.choosingSave = true)}>Save in another database…</button>
+    </RibbonDropdown>
   </div>
   <div class="col">
     <RibbonButton
@@ -381,6 +390,10 @@
 
 {#if blunderDialog}
   <BlunderCheckDialog onClose={() => (blunderDialog = false)} />
+{/if}
+
+{#if game.choosingSave}
+  <SaveGameDialog onClose={() => (game.choosingSave = false)} />
 {/if}
 
 {#if setup}

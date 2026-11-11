@@ -595,30 +595,71 @@ class GameStore {
     prefs.set("orientation", this.orientation);
   }
 
-  /** Saves over the game it came from, or into the open database if new. */
+  /** Whether the "Save in…" dialog is showing (the ribbon mounts it). */
+  choosingSave = $state(false);
+
+  /**
+   * Saves over the game it came from, or as a new game into the open
+   * database; with no database open, asks where to save it.
+   */
   async save() {
     const view = this.view;
     if (!view) return;
-    if (view.source && view.source.db === db.info?.handle) {
-      await this.#saveAs("replace");
+    if (view.source && [db.info?.handle, db.reference?.info?.handle].includes(view.source.db)) {
+      await this.#saveAs("replace", view.source.db);
     } else {
       await this.saveAsNew();
     }
   }
 
+  /** Saves as a new game into the open database, or asks where when none is open. */
   async saveAsNew() {
+    if (!this.view) return;
     if (!db.info) {
-      notices.show("Open or create a database first, then save the game into it.", "error");
+      this.choosingSave = true;
       return;
     }
-    await this.#saveAs("new");
+    await this.#saveAs("new", db.info.handle);
   }
 
-  async #saveAs(mode: "replace" | "new") {
+  /**
+   * Saves the game as a new one in the database at `path`: the open one or
+   * the reference database as they are, any other opened first (it becomes
+   * the open database, so the game stays saved in what the list shows),
+   * or created first with `create`.
+   */
+  async saveInto(path: string, create = false) {
+    if (this.session === null) return;
+    try {
+      let handle = [db.info, db.reference?.info].find((i) => i && i.path === path)?.handle;
+      if (handle === undefined) {
+        if (create) await db.create(path);
+        else await db.open(path);
+        handle = db.info?.handle;
+      }
+      if (handle === undefined) return;
+      await this.#saveAs("new", handle);
+      // The reference database's tree and index have a game more.
+      if (handle === db.reference?.info?.handle) await db.loadReference();
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  /** The "Save in…" dialog's last choice: a new database, through a file dialog. */
+  async saveIntoNew() {
+    const path = await save({
+      title: "Save the game in a new database",
+      defaultPath: await inDocuments("My games.chessdb"),
+    });
+    if (path) await this.saveInto(path, true);
+  }
+
+  async #saveAs(mode: "replace" | "new", handle: number) {
     const session = this.session;
     if (session === null) return;
     try {
-      this.#apply(await api.saveGame(session, mode, db.info?.handle ?? null));
+      this.#apply(await api.saveGame(session, mode, handle));
       await db.refresh();
       notices.show(mode === "replace" ? "Saved changes" : "Saved as a new game");
     } catch (e) {
