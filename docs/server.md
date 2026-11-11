@@ -590,6 +590,29 @@ A cold header search or sort reads every index record, so on millions of
 games it takes a second or two; repeating it, or paging through it, comes
 from the cache.
 
+The same machine and cap, Nov 11 2026, for what came after phase 1's
+first cut. "Cold" is the first request after a start, which opens the
+database too; "both" is `/api/search` over the two databases (SRCH-13).
+
+| | Lichess 1M | Mega 2019 | Both |
+|---|---|---|---|
+| Folder import (then the index) | 61.0 s | 473.6 s | |
+| First page by White, cold | 0.65 s | 0.89 s | 1.27 s (1.4× the slower) |
+| First page by date, cold | 0.50 s | 0.63 s | 1.14 s (1.8×) |
+| `text=magnus` by date, cold | 0.78 s | 0.73 s | 1.29 s (1.7×), 9,574 games |
+| Any later page (offset 50, 4,000,000, the last of 8,622,531) | | | 1 to 14 ms |
+| Games reaching the Ruy Lopez after 3...a6 (`fen=`), by date | | 0.15 s, 208,594 games | 0.63 s by White |
+| The same with `white=carlsen` | | 0.14 s, 118 games | |
+| PGN export, all games | 91 s, 2,185 MB; server memory 607 → at most 615 MB | 604 s, 5,172 MB; 615 → at most 683 MB | |
+| Backup (store and both databases, 8.1 GB) | | | 1.1 s: btrfs clones the files (`copy_file_range`); elsewhere it copies them |
+| Compaction with 1,000 games deleted, then the index | 11.2 s | | |
+| Server memory | | | 402 MB after both imports (peak 548 MB); 484 MB after searching both; 893 MB at the end (peak 1.0 GB) |
+
+A search across databases makes each database's list on a thread of its
+own, so its first page takes about the slowest database's time plus the
+other's sort; later pages are found by a selection over the cached lists,
+in milliseconds at any depth.
+
 ## Licence
 
 The server is part of the workspace and under its GPL-3.0-or-later. Whether
