@@ -336,7 +336,7 @@ pub async fn import_report(state: State<'_, AppState>, handle: u32) -> AppResult
 }
 
 /// A short description of a search, for the filter bar.
-fn describe(q: &HeaderQuery) -> String {
+pub(crate) fn describe(q: &HeaderQuery) -> String {
     let mut parts = Vec::new();
     let t = |s: &str| s.trim().to_owned();
     if !t(&q.text).is_empty() {

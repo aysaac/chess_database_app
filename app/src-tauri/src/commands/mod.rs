@@ -1,4 +1,5 @@
 pub mod clipboard;
+pub mod cross;
 pub mod crosstable;
 pub mod db;
 pub mod dbview;

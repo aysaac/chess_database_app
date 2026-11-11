@@ -43,6 +43,7 @@ async function start() {
 async function exposeStores() {
   const [
     { db },
+    { cross },
     { game },
     { jobs },
     { analysis },
@@ -59,6 +60,7 @@ async function exposeStores() {
     { invoke },
   ] = await Promise.all([
     import("./lib/stores/db.svelte"),
+    import("./lib/stores/cross.svelte"),
     import("./lib/stores/game.svelte"),
     import("./lib/stores/jobs.svelte"),
     import("./lib/stores/analysis.svelte"),
@@ -82,6 +84,8 @@ async function exposeStores() {
       LogicalSize,
     },
   });
+  // The search across databases (SRCH-13).
+  Object.assign((window as unknown as { __chessdb: object }).__chessdb, { cross });
 }
 
 void start();

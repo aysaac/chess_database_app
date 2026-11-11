@@ -140,6 +140,13 @@ pub fn run() {
             commands::db::set_deleted_rows,
             commands::db::copy_games,
             commands::db::search_games,
+            // Searching several databases at once (SRCH-13).
+            commands::cross::open_databases,
+            commands::cross::search_databases,
+            commands::cross::cross_info,
+            commands::cross::cross_sort,
+            commands::cross::cross_page,
+            commands::cross::close_search,
             commands::db::clear_filter,
             commands::db::compact_db,
             commands::duplicates::find_duplicates,

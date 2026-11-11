@@ -1,18 +1,23 @@
 <script lang="ts">
   import type { NameKindDto } from "../bindings/NameKindDto";
+  import { cross } from "../stores/cross.svelte";
   import { db } from "../stores/db.svelte";
   import GameList from "./GameList.svelte";
   import NameList from "./NameList.svelte";
+  import SearchResults from "./SearchResults.svelte";
 
-  // The bottom pane: the game list, or one of the name lists (DB-04).
-  const tabs: { id: "games" | NameKindDto; label: string }[] = [
+  // The bottom pane: the game list, one of the name lists (DB-04), or the
+  // results of a search across databases (SRCH-13) while there are some.
+  type Tab = "games" | "results" | NameKindDto;
+  const tabs = $derived<{ id: Tab; label: string }[]>([
     { id: "games", label: "Games" },
+    ...(cross.info ? [{ id: "results" as const, label: "Search results" }] : []),
     { id: "player", label: "Players" },
     { id: "event", label: "Events" },
     { id: "site", label: "Sites" },
     { id: "annotator", label: "Annotators" },
-  ];
-  let tab = $state<"games" | NameKindDto>("games");
+  ]);
+  let tab = $state<Tab>("games");
   // Show games from elsewhere (a cross-table, DB-16) brings the Games tab forward.
   let gamesShown = db.gamesShown;
   $effect(() => {
@@ -20,6 +25,19 @@
     gamesShown = db.gamesShown;
     tab = "games";
   });
+  // A search across databases brings its results forward; closing them goes back to the games.
+  let resultsShown = cross.shown;
+  $effect(() => {
+    if (cross.shown !== resultsShown) {
+      resultsShown = cross.shown;
+      tab = "results";
+    }
+  });
+  $effect(() => {
+    if (tab === "results" && !cross.info) tab = "games";
+  });
+
+  const enabled = (id: Tab) => id === "games" || id === "results" || !!db.info;
 
   function onTabKey(e: KeyboardEvent) {
     const i = tabs.findIndex((t) => t.id === tab);
@@ -27,7 +45,7 @@
     if (!step) return;
     e.preventDefault();
     const next = tabs[(i + step + tabs.length) % tabs.length];
-    if (next.id === "games" || db.info) tab = next.id;
+    if (enabled(next.id)) tab = next.id;
     (e.currentTarget as HTMLElement).querySelector<HTMLElement>(`[data-tab="${tab}"]`)?.focus();
   }
 </script>
@@ -40,13 +58,16 @@
         data-tab={t.id}
         aria-selected={tab === t.id}
         tabindex={tab === t.id ? 0 : -1}
-        disabled={t.id !== "games" && !db.info}
+        disabled={!enabled(t.id)}
         onclick={() => (tab = t.id)}>{t.label}</button
       >
     {/each}
   </div>
   <div class="body" hidden={tab !== "games"}><GameList /></div>
-  {#if tab !== "games"}
+  {#if cross.info}
+    <div class="body" hidden={tab !== "results"}><SearchResults /></div>
+  {/if}
+  {#if tab !== "games" && tab !== "results"}
     <div class="body"><NameList kind={tab} onShowGames={() => (tab = "games")} /></div>
   {/if}
 </div>

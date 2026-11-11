@@ -257,6 +257,9 @@ pub struct AppState {
     /// store them (and to ask `jobs` about its jobs), never while taking a
     /// database or session lock.
     pub lines: Mutex<LinesCache>,
+    /// Searches across databases (SRCH-13) and their results. Held only to
+    /// read or store them, never while taking a database lock.
+    pub cross: Mutex<crate::commands::cross::CrossSearches>,
     next_window: AtomicU32,
     /// A database an editor window should open on start-up (the library
     /// window spawned it for this path), by the new window's label; taken
@@ -308,6 +311,16 @@ impl AppState {
     pub fn find_db(&self, path: &Path) -> Option<u32> {
         let dbs = self.dbs.lock().expect("dbs lock");
         dbs.iter().find(|(_, o)| o.path == path).map(|(&h, _)| h)
+    }
+
+    /// Every open database (SRCH-13): (handle, path, database, in a list,
+    /// the reference database), by handle.
+    pub fn open_dbs(&self) -> Vec<(u32, PathBuf, SharedDb, bool, bool)> {
+        let dbs = self.dbs.lock().expect("dbs lock");
+        let mut out: Vec<_> =
+            dbs.iter().map(|(&h, o)| (h, o.path.clone(), o.db.clone(), o.listed, o.reference)).collect();
+        out.sort_by_key(|o| o.0);
+        out
     }
 
     /// Adds an opened database for `usage`. Databases opened for the list

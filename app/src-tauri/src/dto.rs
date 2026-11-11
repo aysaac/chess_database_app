@@ -177,6 +177,75 @@ pub struct GamePage {
     pub rows: Vec<GameRowDto>,
 }
 
+/// A database open in the app (in a window's list, or as the reference
+/// database) that a search across databases can include (SRCH-13).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OpenDbDto {
+    pub handle: u32,
+    pub name: String,
+    pub games: u32,
+    /// Open in a window's game list.
+    pub listed: bool,
+    /// The reference database (DB-13).
+    pub reference: bool,
+}
+
+/// A search across databases started: its results are `search` once
+/// `job` is done.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchStartDto {
+    pub search: u32,
+    #[ts(type = "number")]
+    pub job: u64,
+}
+
+/// A database a search across databases read, and its games found.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchDbDto {
+    pub handle: u32,
+    pub name: String,
+    pub count: u32,
+}
+
+/// The results of a search across databases (SRCH-13).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchInfoDto {
+    pub search: u32,
+    pub description: String,
+    #[ts(type = "number")]
+    pub total: u64,
+    pub databases: Vec<SearchDbDto>,
+}
+
+/// A row of a search across databases: the game's row and its database.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchRowDto {
+    pub handle: u32,
+    pub database: String,
+    pub row: GameRowDto,
+}
+
+/// A page of a search across databases, in one sort order.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchPageDto {
+    #[ts(type = "number")]
+    pub total: u64,
+    pub offset: u32,
+    pub rows: Vec<SearchRowDto>,
+}
+
 /// Selected rows of the game list as shown: `[start, end)` row ranges in
 /// `sort` order, of the filtered list when a filter is active. A selection
 /// of a million rows is still a few numbers over IPC (DB-06, QOL-04).
