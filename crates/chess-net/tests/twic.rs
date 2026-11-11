@@ -24,7 +24,10 @@ const ISSUE: &str = "[Event \"Stand-in Open\"]\n[White \"A\"]\n[Black \"B\"]\n[R
 [Event \"Stand-in Open\"]\n[White \"C\"]\n[Black \"D\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 1/2-1/2\n";
 
 /// Serves the stand-in site; the requests it got (path, user agent).
-fn serve() -> (String, Arc<Mutex<Vec<(String, String)>>>) {
+/// The requests it got: (path, user agent).
+type Seen = Arc<Mutex<Vec<(String, String)>>>;
+
+fn serve() -> (String, Seen) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let seen = Arc::new(Mutex::new(Vec::new()));
