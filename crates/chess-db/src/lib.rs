@@ -6,6 +6,7 @@ pub mod blob;
 mod bytes;
 pub mod cb;
 mod copy;
+pub mod cross;
 pub mod crosstable;
 mod database;
 mod duplicates;
@@ -24,6 +25,7 @@ use std::path::PathBuf;
 
 pub use cb::import::import_cb;
 pub use copy::{CopySummary, copy_games};
+pub use cross::{CrossPage, CrossSource, SortedIds, merge_page, merged_total, search_many, sorted_ids};
 pub use database::{
     CompactSummary, Database, DbInfo, DbSummary, EXTENSION, GameRow, GameStat, NameKind, PreparedGame,
 };
@@ -43,7 +45,7 @@ pub use reference::{
     game_mainline, reference_lines, reference_overview,
 };
 pub use search::{EloMode, GameSet, HeaderQuery, ResultFilter, fold, games_with_name, search_headers};
-pub use sort::{SortKey, SortSpec, build_sort, page_ids, sorted_subset};
+pub use sort::{SortKey, SortSpec, build_sort, ensure_sort, page_ids, sorted_subset};
 pub use tags::{TaggedGame, scan_tags};
 
 /// Zero-based index of a game in its database.
