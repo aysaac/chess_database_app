@@ -21,6 +21,7 @@ about; read it when your task gets there:
 |---|---|
 | Change anything under `app/` (Svelte UI, Tauri shell) | [`app/AGENTS.md`](app/AGENTS.md): its conventions and gotchas |
 | Change `crates/chess-db`: the file format, import/export, `.cbh`, benchmarks | [`crates/chess-db/AGENTS.md`](crates/chess-db/AGENTS.md), then [`docs/file-format.md`](docs/file-format.md) or [`docs/io-03-cbh.md`](docs/io-03-cbh.md) |
+| Change anything under `server/` (the self-hosted server, its API, admin UI or container) | [`server/AGENTS.md`](server/AGENTS.md), then [`docs/server.md`](docs/server.md) |
 | Run or write a smoke test, or open any window | [`scripts/smoke/README.md`](scripts/smoke/README.md) |
 | Work on the ribbon, panel tabs, docking or the Reference tab | [`docs/workspace-ui.md`](docs/workspace-ui.md): the spec for UI-18/19, UI-04 and OPEN-14, with the build order |
 | Work on the Windows PC | [`docs/windows-testing.md`](docs/windows-testing.md): code fixes and checks, with how to verify each |
@@ -42,6 +43,7 @@ about; read it when your task gets there:
 | `app/src` | Svelte UI: `lib/api.ts` (typed commands), `lib/stores/` (state), `lib/components/` (the ribbon is `Ribbon.svelte`, the docked panels around the board `Dock.svelte`), `lib/bindings/` (generated types), `lib/icons/` (vendored Lucide icons; licence in `COPYING`) |
 | `testdata/pgn/` | Small edge-case PGN fixtures (committed) |
 | `testdata/large/` | Big real-world PGNs (git-ignored; see `scripts/fetch-testdata.sh`) |
+| `server/` | The self-hosted server (NET-03, `chess-server`): several users' databases over a JSON API (axum on tokio, outside `crates/`), SQLite for users and permissions, imports as jobs; `admin/` is its admin web UI (Svelte), embedded in the binary; `Dockerfile` and `deploy/` for the container. See `docs/server.md` |
 | `scripts/smoke/` | End-to-end smoke test harness for the running app |
 
 ## Commands
@@ -53,6 +55,9 @@ and ChessBase imports are in [`crates/chess-db/AGENTS.md`](crates/chess-db/AGENT
 # Run the app (hot reload for the UI; Rust changes trigger a rebuild)
 cd app && npm install && npm run tauri dev
 
+# The self-hosted server (NET-03) on 127.0.0.1:8080 (docs/server.md)
+cargo run -p chess-server -- serve --data target/server-data
+
 # All checks: run these before saying you're done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
@@ -60,6 +65,7 @@ cargo test --workspace            # also regenerates app/src/lib/bindings/
 cd app && npm run check           # svelte-check (TypeScript + Svelte)
 cd app && npm run build           # production frontend build
 cd app && npm test                # frontend unit tests (node --test; Node 22.18+)
+cd server/admin && npm run check && npm run build && npm test   # the server's admin UI
 
 # Regenerate the TypeScript types after changing a DTO in app/src-tauri/src/dto.rs
 cd app && npm run bindings
