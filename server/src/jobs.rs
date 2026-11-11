@@ -114,6 +114,23 @@ impl Jobs {
         self.manager.list().into_iter().filter_map(|s| meta.get(&s.id).cloned().map(|m| (s, m))).collect()
     }
 
+    /// Cancels the jobs user `user` started and waits for them to end
+    /// (blocking).
+    pub fn stop_all_by(&self, user: i64) {
+        let ids: Vec<JobId> = self
+            .all()
+            .into_iter()
+            .filter(|(s, m)| m.user == user && !s.state.is_finished())
+            .map(|(s, _)| s.id)
+            .collect();
+        for &id in &ids {
+            self.manager.cancel(id);
+        }
+        for id in ids {
+            self.manager.wait(id);
+        }
+    }
+
     /// Cancels the jobs working on database `db` and waits for them to end
     /// (blocking).
     pub fn stop_all_for(&self, db: &str) {

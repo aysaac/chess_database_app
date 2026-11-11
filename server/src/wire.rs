@@ -65,11 +65,158 @@ pub struct LoginRequest {
     pub password: String,
 }
 
-/// Whether the first admin still has to be made (see `POST /api/setup`).
+/// Whether the first admin still has to be made (see `POST /api/setup`),
+/// and what the login page can offer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupStatusDto {
     pub needed: bool,
+    /// Anyone may make an account (`POST /api/signup` without an invite).
+    #[serde(default)]
+    pub open_signup: bool,
+    /// "Forgot password" can e-mail a reset link.
+    #[serde(default)]
+    pub email_resets: bool,
+}
+
+/// `POST /api/signup`: an account, with an invite's token or (open sign-up)
+/// without one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignupRequest {
+    #[serde(default)]
+    pub invite: Option<String>,
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub email: Option<String>,
+}
+
+/// What an invite makes (`GET /api/invites/{token}`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InviteInfoDto {
+    pub role: Role,
+}
+
+/// `POST /api/password-reset`: a new password with a reset link's token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetRequest {
+    pub token: String,
+    pub password: String,
+}
+
+/// `POST /api/password-reset/request`: "Forgot password", by username or
+/// e-mail address.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgotRequest {
+    pub login: String,
+}
+
+/// `PUT /api/me/email`: one's address (`null` removes it), with one's
+/// password.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailChange {
+    pub current_password: String,
+    pub email: Option<String>,
+}
+
+/// One's own account (`GET /api/me/account`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountDto {
+    pub username: String,
+    pub role: Role,
+    pub email: Option<String>,
+    pub quota_bytes: Option<u64>,
+    /// What one's databases take together.
+    pub used_bytes: u64,
+    /// Whether "Forgot password" can e-mail a link (so an address is of use).
+    pub email_resets: bool,
+}
+
+/// A link with a one-time token (an invite, a reset link): shown once.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkDto {
+    pub token: String,
+    /// The page that takes the token, under the public URL when one is set
+    /// (else a path: prefix the server's address).
+    pub url: String,
+    pub expires_at: i64,
+    /// An invite's id (to withdraw it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<i64>,
+}
+
+/// `POST /api/admin/invites`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateInvite {
+    #[serde(default)]
+    pub role: Option<Role>,
+    #[serde(default)]
+    pub quota_bytes: Option<u64>,
+    /// 1 to 30; 7 when left out.
+    #[serde(default)]
+    pub days: Option<u32>,
+}
+
+/// An invite as the admin sees it (never its token).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InviteDto {
+    pub id: i64,
+    pub role: Role,
+    pub quota_bytes: Option<u64>,
+    pub created_by: Option<String>,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub used_at: Option<i64>,
+    pub used_by: Option<String>,
+}
+
+/// A database offered to another user, or by them (`GET /api/transfers`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferDto {
+    pub database: String,
+    pub name: String,
+    pub from: String,
+    pub to: String,
+    pub visibility: Visibility,
+    pub games: u32,
+    pub size_bytes: u64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransfersDto {
+    /// Offered to the caller: accept or decline them.
+    pub incoming: Vec<TransferDto>,
+    /// Offered by the caller, not accepted yet.
+    pub outgoing: Vec<TransferDto>,
+}
+
+/// `PUT /api/databases/{id}/transfer`: offer it to a user.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OfferRequest {
+    pub username: String,
+}
+
+/// A database the admin is about to delete with its owner (metadata only).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnedDatabaseDto {
+    pub id: String,
+    pub name: String,
+    pub games: u32,
+    pub size_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -173,6 +173,27 @@ pub struct DbMeta {
     pub id_epoch: u64,
 }
 
+/// An invite, as the admin sees it (never its token).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InviteRow {
+    pub id: i64,
+    pub role: Role,
+    pub quota_bytes: Option<u64>,
+    pub created_by: Option<String>,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub used_at: Option<i64>,
+    pub used_by: Option<String>,
+}
+
+pub fn invalid_invite() -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::BAD_REQUEST,
+        "badInvite",
+        "This invite is used up, has expired or doesn't exist: ask for another",
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenRow {
     pub id: i64,
@@ -621,6 +642,274 @@ impl Store {
             .conn()
             .execute("DELETE FROM shares WHERE database_id = ?1 AND user_id = ?2", params![db, user])?
             > 0)
+    }
+
+    // ---- e-mail addresses ----------------------------------------------------
+
+    pub fn email_of(&self, user: i64) -> ApiResult<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row("SELECT email FROM users WHERE id = ?1", [user], |r| r.get(0))
+            .optional()?
+            .flatten())
+    }
+
+    /// Sets (or with `None` removes) a user's address; a conflict when
+    /// another account has it (in any case).
+    pub fn set_email(&self, user: i64, email: Option<&str>) -> ApiResult<()> {
+        match self.conn().execute("UPDATE users SET email = ?1 WHERE id = ?2", params![email, user]) {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                Err(ApiError::conflict("Another account has that address"))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The enabled user with this username or e-mail address (any case),
+    /// and their address.
+    pub fn user_by_login(&self, login: &str) -> ApiResult<Option<(User, Option<String>)>> {
+        Ok(self
+            .conn()
+            .query_row(
+                &format!(
+                    "SELECT {USER_COLUMNS}, email FROM users
+                     WHERE (username = ?1 OR email = ?1 COLLATE NOCASE) AND disabled = 0 ORDER BY id LIMIT 1"
+                ),
+                [login],
+                |r| Ok((user_row(r)?, r.get(6)?)),
+            )
+            .optional()?)
+    }
+
+    /// Deletes a user: their sessions, tokens, shares, transfers and reset
+    /// links go with them. Their databases must be gone first. False when
+    /// there was none.
+    pub fn delete_user(&self, user: i64) -> ApiResult<bool> {
+        Ok(self.conn().execute("DELETE FROM users WHERE id = ?1", [user])? > 0)
+    }
+
+    // ---- invites -------------------------------------------------------------
+
+    pub fn create_invite(
+        &self,
+        token_hash: &[u8],
+        role: Role,
+        quota_bytes: Option<u64>,
+        by: i64,
+        expires_at: i64,
+    ) -> ApiResult<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO invites (token_hash, role, quota_bytes, created_by, created_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![token_hash, role.as_str(), quota(quota_bytes), by, now(), expires_at],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn invites(&self) -> ApiResult<Vec<InviteRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT i.id, i.role, i.quota_bytes, c.username, i.created_at, i.expires_at, i.used_at, u.username
+             FROM invites i LEFT JOIN users c ON c.id = i.created_by LEFT JOIN users u ON u.id = i.used_by
+             ORDER BY i.id DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                let role: String = r.get(1)?;
+                Ok(InviteRow {
+                    id: r.get(0)?,
+                    role: Role::parse(&role).unwrap_or(Role::User),
+                    quota_bytes: r.get::<_, Option<i64>>(2)?.map(|q| q.max(0) as u64),
+                    created_by: r.get(3)?,
+                    created_at: r.get(4)?,
+                    expires_at: r.get(5)?,
+                    used_at: r.get(6)?,
+                    used_by: r.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn delete_invite(&self, id: i64) -> ApiResult<bool> {
+        Ok(self.conn().execute("DELETE FROM invites WHERE id = ?1", [id])? > 0)
+    }
+
+    /// The role and quota of an invite that's unused and hasn't expired.
+    pub fn open_invite(&self, token_hash: &[u8]) -> ApiResult<Option<(Role, Option<u64>)>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT role, quota_bytes FROM invites WHERE token_hash = ?1 AND used_at IS NULL AND expires_at > ?2",
+                params![token_hash, now()],
+                |r| {
+                    let role: String = r.get(0)?;
+                    Ok((Role::parse(&role).unwrap_or(Role::User), r.get::<_, Option<i64>>(1)?.map(|q| q.max(0) as u64)))
+                },
+            )
+            .optional()?)
+    }
+
+    /// Makes a user, with an invite (used up by it, in the same
+    /// transaction, so it makes one account only) or without one (open
+    /// sign-up: a user with `quota`).
+    pub fn sign_up(
+        &self,
+        invite: Option<&[u8]>,
+        username: &str,
+        password_hash: &str,
+        email: Option<&str>,
+        quota_bytes: Option<u64>,
+    ) -> ApiResult<User> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let (invite_id, role, quota_bytes) = match invite {
+            Some(hash) => {
+                let found = tx
+                    .query_row(
+                        "SELECT id, role, quota_bytes FROM invites
+                         WHERE token_hash = ?1 AND used_at IS NULL AND expires_at > ?2",
+                        params![hash, now()],
+                        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<i64>>(2)?)),
+                    )
+                    .optional()?;
+                let (id, role, q) = found.ok_or_else(invalid_invite)?;
+                (Some(id), Role::parse(&role).unwrap_or(Role::User), q.map(|q| q.max(0) as u64))
+            }
+            None => (None, Role::User, quota_bytes),
+        };
+        let mut user = Store::insert_user(&tx, username, password_hash, role)?;
+        if let Some(q) = quota_bytes {
+            tx.execute("UPDATE users SET quota_bytes = ?1 WHERE id = ?2", params![quota(Some(q)), user.id])?;
+            user.quota_bytes = Some(q);
+        }
+        if let Some(email) = email {
+            match tx.execute("UPDATE users SET email = ?1 WHERE id = ?2", params![email, user.id]) {
+                Ok(_) => {}
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    return Err(ApiError::conflict("Another account has that address"));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        if let Some(id) = invite_id {
+            tx.execute(
+                "UPDATE invites SET used_at = ?1, used_by = ?2 WHERE id = ?3",
+                params![now(), user.id, id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(user)
+    }
+
+    // ---- password resets -----------------------------------------------------
+
+    /// A new one-time reset link for `user`; earlier ones stop working.
+    pub fn create_reset(&self, user: i64, token_hash: &[u8], expires_at: i64) -> ApiResult<()> {
+        let conn = self.conn();
+        conn.execute(
+            "DELETE FROM password_resets WHERE user_id = ?1 OR expires_at <= ?2",
+            params![user, now()],
+        )?;
+        conn.execute(
+            "INSERT INTO password_resets (token_hash, user_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
+            params![token_hash, user, now(), expires_at],
+        )?;
+        Ok(())
+    }
+
+    /// Sets a new password with a reset link: the user's links go, and so do
+    /// their sessions. None when the link is wrong, used or expired.
+    pub fn reset_password(&self, token_hash: &[u8], password_hash: &str) -> ApiResult<Option<User>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let user: Option<i64> = tx
+            .query_row(
+                "SELECT r.user_id FROM password_resets r JOIN users u ON u.id = r.user_id
+                 WHERE r.token_hash = ?1 AND r.expires_at > ?2 AND u.disabled = 0",
+                params![token_hash, now()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(user) = user else { return Ok(None) };
+        tx.execute("UPDATE users SET password_hash = ?1 WHERE id = ?2", params![password_hash, user])?;
+        tx.execute("DELETE FROM password_resets WHERE user_id = ?1", [user])?;
+        tx.execute("DELETE FROM sessions WHERE user_id = ?1", [user])?;
+        let found =
+            tx.query_row(&format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"), [user], user_row)?;
+        tx.commit()?;
+        Ok(Some(found))
+    }
+
+    // ---- ownership transfers -------------------------------------------------
+
+    /// Offers database `db` to user `to` (replacing an earlier offer).
+    pub fn offer(&self, db: &str, from: i64, to: i64) -> ApiResult<()> {
+        self.conn().execute(
+            "INSERT INTO transfers (database_id, from_user, to_user, created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (database_id) DO UPDATE SET from_user = excluded.from_user,
+                 to_user = excluded.to_user, created_at = excluded.created_at",
+            params![db, from, to, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn withdraw_offer(&self, db: &str) -> ApiResult<bool> {
+        Ok(self.conn().execute("DELETE FROM transfers WHERE database_id = ?1", [db])? > 0)
+    }
+
+    /// The offers made to `user` and by them: (database, from, to, when),
+    /// with the database's metadata.
+    pub fn offers_for(&self, user: i64) -> ApiResult<Vec<(DbMeta, String, String, i64)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {DB_COLUMNS}, f.username, t.username, x.created_at FROM transfers x
+             JOIN databases d ON d.id = x.database_id JOIN users u ON u.id = d.owner_id
+             JOIN users f ON f.id = x.from_user JOIN users t ON t.id = x.to_user
+             WHERE (x.to_user = ?1 AND t.disabled = 0) OR x.from_user = ?1 ORDER BY x.created_at"
+        ))?;
+        let rows = stmt
+            .query_map([user], |r| Ok((db_row(r)?, r.get(8)?, r.get(9)?, r.get(10)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// The offer of `db` to `to`, if there is one: who made it.
+    pub fn offer_to(&self, db: &str, to: i64) -> ApiResult<Option<i64>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT from_user FROM transfers WHERE database_id = ?1 AND to_user = ?2",
+                params![db, to],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Makes `to` the owner of `db`, if it's still offered to them by its
+    /// owner: the offer goes, and so does any share `to` had (they own it
+    /// now). The old owner keeps nothing of it.
+    pub fn accept_offer(&self, db: &str, to: i64) -> ApiResult<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let moved = tx.execute(
+            "UPDATE databases SET owner_id = ?2 WHERE id = ?1
+             AND owner_id = (SELECT from_user FROM transfers WHERE database_id = ?1 AND to_user = ?2)",
+            params![db, to],
+        )?;
+        if moved == 0 {
+            return Ok(false);
+        }
+        tx.execute("DELETE FROM transfers WHERE database_id = ?1", [db])?;
+        tx.execute("DELETE FROM shares WHERE database_id = ?1 AND user_id = ?2", params![db, to])?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// The size of the store's files.

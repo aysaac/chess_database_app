@@ -34,7 +34,43 @@ pub struct Config {
     pub login_window: Duration,
     /// Password hashes computed at once (each Argon2id hash takes 19 MiB).
     pub hash_concurrency: usize,
+    /// Anyone may make an account without an invite (off by default).
+    pub open_signup: bool,
+    /// The quota of an account someone made without an invite.
+    pub signup_quota: Option<u64>,
+    /// How long an invite works, by default.
+    pub invite_lifetime: Duration,
+    /// How long a reset link works: one the admin made, one sent by e-mail.
+    pub reset_lifetime: Duration,
+    pub email_reset_lifetime: Duration,
+    /// Where to send e-mail from ("Forgot password"), if anywhere.
+    pub smtp: Option<SmtpConfig>,
 }
+
+/// How the server sends e-mail (password reset links).
+#[derive(Debug, Clone)]
+pub struct SmtpConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    /// e.g. `Chess server <chess@example.com>`.
+    pub from: String,
+    pub tls: SmtpTls,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmtpTls {
+    /// Plain connection upgraded with STARTTLS (port 587), the default.
+    StartTls,
+    /// TLS from the start (port 465).
+    Tls,
+    /// No TLS: only for a relay on the same machine or network.
+    None,
+}
+
+/// Default quota of an account made without an invite: 1 GiB.
+pub const DEFAULT_SIGNUP_QUOTA: u64 = 1024 * 1024 * 1024;
 
 impl Config {
     pub fn new(data_dir: PathBuf) -> Config {
@@ -48,7 +84,19 @@ impl Config {
             login_attempts: 5,
             login_window: Duration::from_secs(15 * 60),
             hash_concurrency: 4,
+            open_signup: false,
+            signup_quota: Some(DEFAULT_SIGNUP_QUOTA),
+            invite_lifetime: Duration::from_secs(7 * 24 * 3600),
+            reset_lifetime: Duration::from_secs(24 * 3600),
+            email_reset_lifetime: Duration::from_secs(3600),
+            smtp: None,
         }
+    }
+
+    /// Whether "Forgot password" can e-mail a link: SMTP is set up, and the
+    /// public URL the link points to.
+    pub fn email_resets(&self) -> bool {
+        self.smtp.is_some() && self.public_url.is_some()
     }
 
     /// The metadata store: users, sessions, tokens, databases, shares.
@@ -104,6 +152,46 @@ impl Config {
         config.public_url = env("CHESS_SERVER_PUBLIC_URL").map(|u| u.trim_end_matches('/').to_owned());
         config.trust_proxy =
             env("CHESS_SERVER_TRUST_PROXY").is_some_and(|v| matches!(v.as_str(), "1" | "true"));
+        config.open_signup =
+            env("CHESS_SERVER_OPEN_SIGNUP").is_some_and(|v| matches!(v.as_str(), "1" | "true"));
+        if let Some(mb) = env("CHESS_SERVER_SIGNUP_QUOTA_MB") {
+            let mb: u64 =
+                mb.parse().map_err(|_| format!("CHESS_SERVER_SIGNUP_QUOTA_MB: not a number: {mb}"))?;
+            config.signup_quota = (mb > 0).then(|| mb.saturating_mul(1024 * 1024));
+        }
+        if let Some(host) = env("CHESS_SERVER_SMTP_HOST") {
+            let tls = match env("CHESS_SERVER_SMTP_TLS").as_deref().unwrap_or("starttls") {
+                "starttls" => SmtpTls::StartTls,
+                "tls" => SmtpTls::Tls,
+                "none" => SmtpTls::None,
+                other => return Err(format!("CHESS_SERVER_SMTP_TLS: starttls, tls or none, not {other}")),
+            };
+            let default_port = match tls {
+                SmtpTls::Tls => 465,
+                SmtpTls::StartTls => 587,
+                SmtpTls::None => 25,
+            };
+            let port = match env("CHESS_SERVER_SMTP_PORT") {
+                Some(p) => p.parse().map_err(|_| format!("CHESS_SERVER_SMTP_PORT: not a port: {p}"))?,
+                None => default_port,
+            };
+            let from = env("CHESS_SERVER_SMTP_FROM").ok_or(
+                "CHESS_SERVER_SMTP_FROM is needed with CHESS_SERVER_SMTP_HOST (the sender's address)",
+            )?;
+            config.smtp = Some(SmtpConfig {
+                host,
+                port,
+                username: env("CHESS_SERVER_SMTP_USER"),
+                password: env("CHESS_SERVER_SMTP_PASSWORD"),
+                from,
+                tls,
+            });
+            if config.public_url.is_none() {
+                log::warn!(
+                    "CHESS_SERVER_SMTP_HOST is set but not CHESS_SERVER_PUBLIC_URL: no reset links by e-mail"
+                );
+            }
+        }
         Ok(config)
     }
 }

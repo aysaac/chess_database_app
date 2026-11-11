@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api } from "../lib/api";
-  import { bytes, parseBytes, when } from "../lib/format";
-  import type { Me, Role, User } from "../lib/types";
+  import { api, fullLink } from "../lib/api";
+  import { bytes, count, parseBytes, when } from "../lib/format";
+  import type { Link, Me, OwnedDatabase, Role, User } from "../lib/types";
 
   let { me }: { me: Me } = $props();
 
@@ -18,9 +18,34 @@
   // The dialog's user and what it edits.
   let dialog: HTMLDialogElement | undefined = $state();
   let editing = $state<User | null>(null);
-  let mode = $state<"password" | "quota">("password");
+  let mode = $state<"password" | "quota" | "delete" | "link">("password");
   let field = $state("");
   let dialogError = $state("");
+  /** Deleting: the databases that go with the user. */
+  let owned = $state<OwnedDatabase[] | null>(null);
+  /** A reset link just made: shown once. */
+  let link = $state<Link | null>(null);
+  let busy = $state(false);
+
+  async function openDelete(u: User) {
+    open(u, "delete");
+    owned = null;
+    try {
+      owned = await api.userDatabases(u.id);
+    } catch (e) {
+      dialogError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function makeLink(u: User) {
+    open(u, "link");
+    link = null;
+    try {
+      link = await api.resetLink(u.id);
+    } catch (e) {
+      dialogError = e instanceof Error ? e.message : String(e);
+    }
+  }
 
   async function refresh() {
     try {
@@ -56,7 +81,7 @@
     creating = false;
   }
 
-  function open(u: User, m: "password" | "quota") {
+  function open(u: User, m: "password" | "quota" | "delete" | "link") {
     editing = u;
     mode = m;
     field = m === "quota" && u.quotaBytes !== null ? bytes(u.quotaBytes) : "";
@@ -69,8 +94,15 @@
     const u = editing;
     if (!u) return;
     dialogError = "";
+    busy = true;
     try {
-      if (mode === "password") {
+      if (mode === "link") {
+        dialog?.close();
+        return;
+      } else if (mode === "delete") {
+        await api.deleteUser(u.id, field);
+        notice = `Deleted ${u.username} and their ${owned?.length ?? 0} databases.`;
+      } else if (mode === "password") {
         await api.setPassword(u.id, field);
         notice = `Set a new password for ${u.username}; their sessions ended.`;
       } else {
@@ -86,6 +118,8 @@
       await refresh();
     } catch (err) {
       dialogError = err instanceof Error ? err.message : String(err);
+    } finally {
+      busy = false;
     }
   }
 
@@ -139,8 +173,14 @@
                     )}>{u.role === "admin" ? "Make user" : "Make admin"}</button
                 >
               {/if}
+              <button onclick={() => makeLink(u)} title="A one-time link for them to set a password you never see"
+                >Reset link</button
+              >
               <button onclick={() => open(u, "password")}>New password</button>
               <button onclick={() => open(u, "quota")}>Quota</button>
+              {#if u.id !== me.id}
+                <button class="danger" onclick={() => openDelete(u)}>Delete…</button>
+              {/if}
             </div></td>
           </tr>
         {/each}
@@ -174,7 +214,37 @@
 <dialog bind:this={dialog}>
   {#if editing}
     <form onsubmit={save}>
-      {#if mode === "password"}
+      {#if mode === "link"}
+        <h3>Reset link for {editing.username}</h3>
+        {#if link}
+          <p>
+            Send them this link; it works once, until {when(link.expiresAt)}, and isn't shown again. Earlier links
+            stop working. Using it ends their sessions.
+          </p>
+          <p><code class="token">{fullLink(link.url)}</code></p>
+        {:else if !dialogError}
+          <p class="muted">Making the link…</p>
+        {/if}
+      {:else if mode === "delete"}
+        <h3>Delete {editing.username}?</h3>
+        {#if owned === null}
+          <p class="muted">Looking up their databases…</p>
+        {:else if owned.length === 0}
+          <p>They own no databases.</p>
+        {:else}
+          <p>
+            These databases are theirs and are deleted with them, for good (they can't go to you: you'd read
+            databases that are private to them):
+          </p>
+          <ul class="owned">
+            {#each owned as d (d.id)}
+              <li><strong>{d.name}</strong> <span class="muted">{bytes(d.sizeBytes)}, {count(d.games)} games</span></li>
+            {/each}
+          </ul>
+        {/if}
+        <p class="muted small">Their sessions, API tokens, shares and running jobs end too.</p>
+        <label>Type their username to confirm <input bind:value={field} autocomplete="off" required /></label>
+      {:else if mode === "password"}
         <h3>New password for {editing.username}</h3>
         <label
           >Password (8 characters or more)
@@ -187,8 +257,17 @@
       {/if}
       {#if dialogError}<p class="error small" role="alert">{dialogError}</p>{/if}
       <div class="dialog-buttons">
-        <button type="button" onclick={() => dialog?.close()}>Cancel</button>
-        <button class="primary" type="submit">Save</button>
+        {#if mode === "link"}
+          <button class="primary" type="submit">Done</button>
+        {:else if mode === "delete"}
+          <button type="button" onclick={() => dialog?.close()}>Cancel</button>
+          <button class="danger solid" type="submit" disabled={busy || owned === null || field.trim() !== editing.username}
+            >Delete {editing.username}</button
+          >
+        {:else}
+          <button type="button" onclick={() => dialog?.close()}>Cancel</button>
+          <button class="primary" type="submit" disabled={busy}>Save</button>
+        {/if}
       </div>
     </form>
   {/if}
@@ -197,6 +276,13 @@
 <style>
   .you {
     margin-left: 0.3rem;
+  }
+  .token {
+    word-break: break-all;
+  }
+  .owned {
+    margin: 0.3rem 0 0.6rem;
+    padding-left: 1.2rem;
   }
   .spaced {
     margin-top: 0.8rem;

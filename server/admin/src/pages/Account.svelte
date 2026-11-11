@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../lib/api";
-  import { when } from "../lib/format";
-  import type { NewToken, Token } from "../lib/types";
+  import { bytes, when } from "../lib/format";
+  import type { Account, NewToken, Token } from "../lib/types";
 
   let current = $state("");
   let next = $state("");
@@ -63,8 +63,72 @@
     }
   }
 
-  onMount(refreshTokens);
+  let account = $state<Account | null>(null);
+  let email = $state("");
+  let emailPassword = $state("");
+  let emError = $state("");
+  let emDone = $state("");
+
+  async function refreshAccount() {
+    try {
+      account = await api.account();
+      email = account.email ?? "";
+    } catch (e) {
+      emError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function saveEmail(e: SubmitEvent) {
+    e.preventDefault();
+    emError = "";
+    emDone = "";
+    try {
+      await api.changeEmail(emailPassword, email.trim() || null);
+      emDone = email.trim() ? "Saved." : "Removed.";
+      emailPassword = "";
+      await refreshAccount();
+    } catch (err) {
+      emError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  onMount(() => {
+    refreshTokens();
+    refreshAccount();
+  });
 </script>
+
+{#if account}
+  <section class="panel">
+    <h2>{account.username}</h2>
+    <p class="muted">
+      {account.role === "admin" ? "Admin" : "User"} · your databases take {bytes(account.usedBytes)}{account.quotaBytes ===
+      null
+        ? ""
+        : ` of ${bytes(account.quotaBytes)}`}
+    </p>
+  </section>
+{/if}
+
+<section class="panel">
+  <h2>E-mail address</h2>
+  <p class="muted small">
+    {#if account?.emailResets}
+      Where "Forgot your password?" sends a link to set a new one. Nothing else is sent to it.
+    {:else}
+      For links to set a new password, once the server can send e-mail (it can't yet). Nothing else is sent to it.
+    {/if}
+  </p>
+  <form class="form-row" onsubmit={saveEmail}>
+    <label>Address <input type="email" bind:value={email} maxlength="254" autocomplete="email" placeholder="none" /></label>
+    <label
+      >Your password <input type="password" bind:value={emailPassword} required autocomplete="current-password" /></label
+    >
+    <button class="primary" type="submit">Save</button>
+  </form>
+  {#if emError}<p class="error small" role="alert">{emError}</p>{/if}
+  {#if emDone}<p class="success small" role="status">{emDone}</p>{/if}
+</section>
 
 <section class="panel">
   <h2>Password</h2>

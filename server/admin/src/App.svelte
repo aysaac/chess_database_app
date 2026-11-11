@@ -1,18 +1,23 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, ApiError, setCsrf, whenSignedOut } from "./lib/api";
-  import type { Me } from "./lib/types";
+  import type { Me, SetupStatus } from "./lib/types";
   import Account from "./pages/Account.svelte";
   import Databases from "./pages/Databases.svelte";
   import Disk from "./pages/Disk.svelte";
+  import Forgot from "./pages/Forgot.svelte";
   import Import from "./pages/Import.svelte";
+  import Invites from "./pages/Invites.svelte";
   import Jobs from "./pages/Jobs.svelte";
   import Login from "./pages/Login.svelte";
+  import Reset from "./pages/Reset.svelte";
   import Setup from "./pages/Setup.svelte";
+  import Signup from "./pages/Signup.svelte";
   import Users from "./pages/Users.svelte";
 
   const PAGES = [
     { id: "users", label: "Users" },
+    { id: "invites", label: "Invites" },
     { id: "databases", label: "Databases" },
     { id: "import", label: "Import" },
     { id: "jobs", label: "Jobs" },
@@ -20,15 +25,28 @@
     { id: "account", label: "Account" },
   ] as const;
   type PageId = (typeof PAGES)[number]["id"];
+  /** Pages for users who aren't admins: their own account only (a players' UI is NET-09). */
+  const USER_PAGES = PAGES.filter((p) => p.id === "account");
 
   let phase = $state<"loading" | "setup" | "login" | "ready" | "error">("loading");
   let me = $state<Me | null>(null);
   let page = $state<PageId>(fromHash());
+  /** A page reached by a link, signed in or not: an invite, a reset link, "Forgot password". */
+  let linkPage = $state(publicPage());
+  let status = $state<SetupStatus | null>(null);
   let loadError = $state("");
 
   function fromHash(): PageId {
     const h = location.hash.replace(/^#\/?/, "");
     return (PAGES.find((p) => p.id === h)?.id ?? "users") as PageId;
+  }
+
+  function publicPage(): { kind: "invite" | "reset"; token: string } | { kind: "signup" | "forgot" } | null {
+    const h = location.hash.replace(/^#\/?/, "");
+    const m = /^(invite|reset)\/([0-9a-f]{64})$/.exec(h);
+    if (m) return { kind: m[1] as "invite" | "reset", token: m[2] };
+    if (h === "signup" || h === "forgot") return { kind: h };
+    return null;
   }
 
   async function load() {
@@ -40,7 +58,8 @@
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         try {
-          phase = (await api.setupStatus()).needed ? "setup" : "login";
+          status = await api.setupStatus();
+          phase = status.needed ? "setup" : "login";
         } catch (e2) {
           loadError = String(e2);
           phase = "error";
@@ -69,7 +88,11 @@
   }
 
   onMount(() => {
-    const onHash = () => (page = fromHash());
+    const onHash = () => {
+      page = fromHash();
+      linkPage = publicPage();
+      if (!me && !status) void load();
+    };
     window.addEventListener("hashchange", onHash);
     whenSignedOut(() => {
       setCsrf(null);
@@ -81,7 +104,21 @@
   });
 </script>
 
-{#if phase === "loading"}
+{#if linkPage?.kind === "invite" || linkPage?.kind === "signup"}
+  <main class="center">
+    <Signup
+      invite={linkPage.kind === "invite" ? linkPage.token : null}
+      signedIn={(m) => {
+        linkPage = null;
+        signedIn(m);
+      }}
+    />
+  </main>
+{:else if linkPage?.kind === "reset"}
+  <main class="center"><Reset token={linkPage.token} /></main>
+{:else if linkPage?.kind === "forgot"}
+  <main class="center"><Forgot /></main>
+{:else if phase === "loading"}
   <main class="center"><p class="muted">Loading…</p></main>
 {:else if phase === "error"}
   <main class="center">
@@ -94,17 +131,28 @@
 {:else if phase === "setup"}
   <main class="center"><Setup done={() => (phase = "login")} /></main>
 {:else if phase === "login" || !me}
-  <main class="center"><Login {signedIn} /></main>
-{:else if me.role !== "admin"}
   <main class="center">
-    <div class="panel narrow">
-      <h1>For admins only</h1>
-      <p>
-        You're signed in as <strong>{me.username}</strong>, who isn't an admin. This page manages the server; a
-        page for players comes later.
-      </p>
-      <button onclick={logout}>Log out</button>
+    <Login {signedIn} openSignup={status?.openSignup ?? false} emailResets={status?.emailResets ?? false} />
+  </main>
+{:else if me.role !== "admin"}
+  <header>
+    <div class="brand">Chess server</div>
+    <nav>
+      {#each USER_PAGES as p (p.id)}
+        <a href={`#/${p.id}`} class="active" aria-current="page">{p.label}</a>
+      {/each}
+    </nav>
+    <div class="who">
+      <span class="muted">{me.username}</span>
+      <button class="link" onclick={logout}>Log out</button>
     </div>
+  </header>
+  <main>
+    <p class="muted small intro">
+      Your account on the chess server. The databases are reached through the API (and, later, the desktop app);
+      the server's pages are for its admin.
+    </p>
+    <Account />
   </main>
 {:else}
   <header>
@@ -124,6 +172,8 @@
   <main>
     {#if page === "users"}
       <Users {me} />
+    {:else if page === "invites"}
+      <Invites />
     {:else if page === "databases"}
       <Databases />
     {:else if page === "import"}
@@ -182,6 +232,10 @@
     display: flex;
     gap: 0.7rem;
     align-items: center;
+  }
+
+  .intro {
+    margin: 0 0 1rem;
   }
 
   main {

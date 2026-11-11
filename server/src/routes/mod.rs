@@ -9,6 +9,7 @@ mod imports;
 pub(crate) mod jobs;
 mod maintenance;
 mod search;
+mod transfers;
 
 use std::sync::Arc;
 
@@ -27,11 +28,21 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/logout", post(account::logout))
         .route("/me", get(account::me))
         .route("/me/password", post(account::change_password))
+        .route("/me/account", get(account::account))
+        .route("/me/email", put(account::change_email))
+        .route("/signup", post(account::signup))
+        .route("/invites/{token}", get(account::invite_info))
+        .route("/password-reset", post(account::reset_password))
+        .route("/password-reset/request", post(account::forgot_password))
+        .route("/transfers", get(transfers::list))
+        .route("/transfers/{db}/accept", post(transfers::accept))
+        .route("/transfers/{db}/decline", post(transfers::decline))
         .route("/tokens", get(account::tokens).post(account::create_token))
         .route("/tokens/{token}", delete(account::delete_token))
         .route("/databases", get(databases::list).post(databases::create))
         .route("/databases/{db}", get(databases::info).patch(databases::update).delete(databases::remove))
         .route("/databases/{db}/shares", get(databases::shares))
+        .route("/databases/{db}/transfer", put(transfers::offer).delete(transfers::withdraw))
         .route("/databases/{db}/shares/{username}", put(databases::set_share).delete(databases::remove_share))
         .route("/databases/{db}/games", get(games::page))
         .route("/databases/{db}/games/{game}", get(games::game))
@@ -50,10 +61,14 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/jobs/{job}", get(jobs::job))
         .route("/jobs/{job}/cancel", post(jobs::cancel))
         .route("/admin/users", get(admin::users).post(admin::create_user))
-        .route("/admin/users/{user}", patch(admin::update_user))
+        .route("/admin/users/{user}", patch(admin::update_user).delete(admin::delete_user))
         .route("/admin/users/{user}/password", post(admin::set_password))
         .route("/admin/databases", get(admin::databases))
         .route("/admin/databases/{db}", patch(admin::update_database).delete(admin::delete_database))
+        .route("/admin/users/{user}/databases", get(admin::user_databases))
+        .route("/admin/users/{user}/reset-link", post(admin::reset_link))
+        .route("/admin/invites", get(admin::invites).post(admin::create_invite))
+        .route("/admin/invites/{invite}", delete(admin::delete_invite))
         .route("/admin/jobs", get(admin::jobs))
         .route("/admin/jobs/{job}/cancel", post(admin::cancel_job))
         .route("/admin/disk", get(admin::disk))
