@@ -169,7 +169,7 @@ pub async fn lichess_study_lookup(app: AppHandle, link: String) -> AppResult<Stu
             chapters: found.chapters.iter().map(|c| c.name.clone()).collect(),
             private,
         };
-        *state.lichess.looked_up.lock().expect("lichess lock") = Some(found);
+        *state.lichess.looked_up.lock().expect("lichess lock") = Some((found, private));
         Ok(preview)
     })
     .await
@@ -222,7 +222,10 @@ pub async fn import_study(
 ) -> AppResult<u64> {
     let link = study::parse_study_link(&link)?;
     let db = state.db(handle)?;
-    let looked = state.lichess.looked_up.lock().expect("lichess lock").clone().filter(|s| s.link == link);
+    let looked =
+        state.lichess.looked_up.lock().expect("lichess lock").clone().filter(|(s, _)| s.link == link);
+    // A study whose look-up took the login gets it at once.
+    let (looked, private) = looked.map_or((None, false), |(s, private)| (Some(s), private));
     let name = looked.as_ref().map_or_else(|| "a study".to_owned(), |s| s.name.clone());
     let label = format!("Importing {name} from Lichess");
     let slot = claim_download(&app, &label)?;
@@ -234,11 +237,14 @@ pub async fn import_study(
         let download = |token: Option<&Token>| {
             study::download_study_into(client, &db, &link, token, looked.as_ref(), ctx)
         };
-        let s = match download(None) {
-            Err(NetError::StudyNeedsLogin) if lichess::account(&state).username.is_some() => {
-                let login = lichess::login(&state);
-                let s = download(login.as_ref().map(|l| &l.token));
-                checked(&state, login.as_ref(), s)
+        let with_login = || {
+            let login = lichess::login(&state);
+            let s = download(login.as_ref().map(|l| &l.token));
+            checked(&state, login.as_ref(), s)
+        };
+        let s = match if private { with_login() } else { download(None) } {
+            Err(NetError::StudyNeedsLogin) if !private && lichess::account(&state).username.is_some() => {
+                with_login()
             }
             other => other,
         };
