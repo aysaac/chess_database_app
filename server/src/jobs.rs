@@ -270,7 +270,6 @@ impl Jobs {
             return Some((JobDto::from(&status), meta));
         }
         let row = self.inner.store.job(id).ok()??;
-        row.db.as_ref()?;
         Some((dto_of(&row), meta_of(&row)))
     }
 
@@ -311,7 +310,7 @@ impl Jobs {
         };
         if let Ok(rows) = self.inner.store.recent_jobs(200) {
             for row in rows {
-                if row.db.is_some() && !out.iter().any(|(j, _)| j.id == row.id) {
+                if !out.iter().any(|(j, _)| j.id == row.id) {
                     out.push((dto_of(&row), meta_of(&row)));
                 }
             }

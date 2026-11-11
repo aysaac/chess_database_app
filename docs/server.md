@@ -57,11 +57,8 @@ players (NET-09), encrypted ("sealed") databases.
 systems don't reliably give. One server process per data directory (each
 open database is locked).
 
-**Backups**: stop the server (or the container), then copy the directory.
-A copy taken while an import commits can hold a database's `games.blob`
-from before a commit and its `games.idx` from after it, which doesn't open.
-With no import running the database files don't change; the SQLite store
-can be copied live with `sqlite3 server.sqlite ".backup copy.sqlite"`.
+**Backups**: see [Backups](#backups): the server makes them while it runs,
+into a folder of its own (another volume, ideally).
 
 ## Running it
 
@@ -102,6 +99,9 @@ passes `/api` to a server on 8080.
 | `CHESS_SERVER_SMTP_USER`, `CHESS_SERVER_SMTP_PASSWORD` | none | Its login, if it needs one |
 | `CHESS_SERVER_SMTP_FROM` | (needed with a host) | The sender, e.g. `Chess server <chess@example.com>` |
 | `CHESS_SERVER_AUDIT_DAYS` | 365 | How long the audit log keeps entries |
+| `CHESS_SERVER_BACKUP_DIR` | none | Where backups go ([Backups](#backups)); another volume than the data, ideally |
+| `CHESS_SERVER_BACKUP_EVERY_HOURS` | none | Back up on a schedule too |
+| `CHESS_SERVER_BACKUP_KEEP` | 7 | Backups kept |
 | `CHESS_SERVER_METRICS_TOKEN` | none | Turns `/metrics` on, for requests bearing it (16 characters or more) |
 | `CHESS_SERVER_IDLE_CLOSE_MINUTES` | 30 | Databases unused this long are closed (`0`: never) |
 | `CHESS_SERVER_RATE_LIMIT_PER_MINUTE` | 1200 | Requests a user may make a minute (a quarter of it at once); `0` turns it off |
@@ -357,6 +357,54 @@ curl -H "Authorization: Bearer $TOKEN" --data-binary @twic1600.pgn \
 | `GET /api/admin/disk` | Free space, and what the databases, the store, uploads and the import folder take |
 | `GET /api/admin/import-files` | The `.pgn` and `.cbh` files in `import/` |
 | `GET /api/admin/audit` | The audit log, newest first: `?action=` (an action, or a group such as `login`), `who=` (a username, as who did it or to whom), `from=`, `to=` (Unix seconds), `offset=`, `limit=` (100, at most 500) |
+
+## Backups
+
+With `CHESS_SERVER_BACKUP_DIR` set, the admin's Backups page (or `POST
+/api/admin/backups`) makes a backup while the server runs, as a job, and
+`CHESS_SERVER_BACKUP_EVERY_HOURS` makes one on a schedule; the newest
+`CHESS_SERVER_BACKUP_KEEP` (7) are kept. **Put the folder on another volume
+than the data directory** (another disk, a mounted backup share), so a lost
+disk doesn't take both; the compose example mounts one.
+
+A backup is a folder `chess-server-<date>-<time>/` (written as `.partial`
+and renamed once complete) holding:
+
+- `server.sqlite`: the metadata store (users, password hashes, API tokens'
+  hashes, databases, shares, invites, jobs, the audit log), copied with
+  SQLite's online backup API, without the sessions;
+- `dbs/<id>.chessdb/`: every database. Each is copied **holding its
+  writer slot**, so no import, index build or compaction writes to it
+  meanwhile and no batch is committing (a backup waits for one running to
+  end); `games.idx`, with the committed count, and the name tables are
+  copied first and the append-only `games.blob` and position index after,
+  so a copy never refers to data it lacks (`docs/file-format.md`, Crash
+  safety). Requests keep reading it during the copy.
+
+Not in it: `import/` (the files to import from: keep them elsewhere) and
+uploads in progress.
+
+**Backups are never downloadable through the API**: they hold every user's
+databases, private ones too, which the admin can't read on the server. The
+API lists them (name, date, size, databases) and nothing more; they're
+reached on the server's disk, by whoever runs it, like the data directory.
+
+**Restoring** one (tested: `server/tests/running.rs` restores into a fresh
+data directory and finds the same users, databases, games and tokens):
+
+```sh
+# 1. Stop the server (docker compose -f compose.example.yaml stop chess-server).
+# 2. Set the data directory's store and databases aside:
+cd /path/to/data && mkdir ../before-restore && mv server.sqlite* dbs ../before-restore/
+# 3. Copy the backup in:
+cp /path/to/backups/chess-server-20261111-030000/server.sqlite .
+cp -r /path/to/backups/chess-server-20261111-030000/dbs .
+# 4. Start the server.
+```
+
+Users, password hashes, API tokens, databases, shares and the audit log
+are as they were at the backup; everyone logs in again (sessions aren't
+kept), and jobs that ran then are marked interrupted.
 
 ## The audit log
 

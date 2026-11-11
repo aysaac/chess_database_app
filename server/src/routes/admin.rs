@@ -29,6 +29,7 @@ use crate::wire::{
     CreateInvite, CreateUser, DiskDto, ImportFileDto, InviteDto, LinkDto, OwnedDatabaseDto, Role,
     SetPassword, UpdateUser, UserDto,
 };
+use crate::wire::{BackupsDto, JobStarted};
 use crate::{AppState, blocking};
 
 fn user_dto(state: &AppState, user: User) -> ApiResult<UserDto> {
@@ -454,6 +455,28 @@ pub async fn cancel_job(
     })
     .await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The backups on the server's disk: names, sizes and dates only.
+pub async fn backups(State(state): State<Arc<AppState>>, _: AdminAuth) -> ApiResult<Json<BackupsDto>> {
+    blocking(move || {
+        Ok(Json(BackupsDto {
+            configured: state.config.backup_dir.is_some(),
+            every_hours: state.config.backup_every.map(|d| d.as_secs() / 3600),
+            keep: state.config.backup_keep,
+            backups: crate::backup::list(&state),
+        }))
+    })
+    .await
+}
+
+/// Makes a backup now, as a job.
+pub async fn backup_now(
+    State(state): State<Arc<AppState>>,
+    AdminAuth(auth): AdminAuth,
+) -> ApiResult<(StatusCode, Json<JobStarted>)> {
+    let job = blocking(move || crate::backup::start(&state, Some(&auth.user), Some(&auth.client))).await?;
+    Ok((StatusCode::ACCEPTED, Json(JobStarted { job })))
 }
 
 /// The audit log, newest first, filtered by action, username and dates.

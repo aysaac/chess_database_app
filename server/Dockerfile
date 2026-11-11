@@ -41,7 +41,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 chess \
     && useradd --system --uid 10001 --gid chess --home-dir /data --no-create-home chess \
-    && mkdir /data && chown chess:chess /data
+    && mkdir /data /backups && chown chess:chess /data /backups
 COPY --from=build /usr/local/bin/chess-server /usr/local/bin/chess-server
 USER chess
 ENV CHESS_SERVER_DATA=/data \

@@ -22,7 +22,7 @@ http-body = "1.1"
 serde_urlencoded = "0.7"
 # "Forgot password" e-mails (NET-03): SMTP over rustls (ring, the OS's certificates), as ureq does.
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "rustls", "ring", "rustls-platform-verifier"] }
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 argon2 = "0.6"
 sha2 = "0.11"
 getrandom = "0.4"

@@ -1009,7 +1009,16 @@ impl Store {
         conn.execute(
             "INSERT INTO jobs (id, kind, label, database_id, database_name, user_id, username, state, started_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8)",
-            params![id as i64, kind, label, meta.db, meta.db_name, meta.user, meta.username, meta.started_at],
+            params![
+                id as i64,
+                kind,
+                label,
+                (!meta.db.is_empty()).then_some(&meta.db),
+                meta.db_name,
+                (meta.user > 0).then_some(meta.user),
+                meta.username,
+                meta.started_at
+            ],
         )?;
         // Finished jobs are kept, the newest thousand.
         conn.execute(
@@ -1133,6 +1142,15 @@ impl Store {
     /// Forgets entries older than `before` (unix seconds); how many went.
     pub fn prune_audit(&self, before: i64) -> ApiResult<usize> {
         Ok(self.conn().execute("DELETE FROM audit WHERE at < ?1", [before])?)
+    }
+
+    // ---- backups -----------------------------------------------------------------
+
+    /// A consistent copy of the store at `path`, made with SQLite's online
+    /// backup API while the server runs.
+    pub fn backup_to(&self, path: &Path) -> ApiResult<()> {
+        self.conn().backup(rusqlite::MAIN_DB, path, None::<fn(rusqlite::backup::Progress)>)?;
+        Ok(())
     }
 
     // ---- settings ----------------------------------------------------------------

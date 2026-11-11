@@ -20,9 +20,13 @@ services:
       # Caddy is in front: take the client's address from X-Forwarded-For.
       CHESS_SERVER_TRUST_PROXY: "1"
       CHESS_SERVER_MAX_UPLOAD_MB: "256"
+      CHESS_SERVER_BACKUP_DIR: /backups
+      CHESS_SERVER_BACKUP_EVERY_HOURS: "24"
     volumes:
       # The data directory. A local disk: not NFS or SMB (file locks, fsync).
       - chess-data:/data
+      # Backups, on another volume (better: a bind mount of another disk).
+      - chess-backups:/backups
       # Optional: a host folder the admin imports from (PGN, ChessBase .cbh).
       # - /srv/chess-import:/data/import:ro
     # Not published: only Caddy reaches it, on the compose network.
@@ -45,5 +49,6 @@ services:
 
 volumes:
   chess-data:
+  chess-backups:
   caddy-data:
   caddy-config:
