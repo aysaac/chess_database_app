@@ -39,6 +39,8 @@ export interface AdminDatabase {
   sizeBytes: number;
   quotaBytes: number | null;
   createdAt: number;
+  /** What the admin may do with it as any user; null for another user's private database. */
+  access: Access | null;
 }
 
 /** A database the caller can read (`GET /api/databases`). */

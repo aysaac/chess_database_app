@@ -70,6 +70,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 const enc = encodeURIComponent;
 
+/** Where a database's games download as PGN (the session cookie goes along). */
+export function exportUrl(db: string): string {
+  return `/api/databases/${encodeURIComponent(db)}/export.pgn`;
+}
+
 export const api = {
   me: () => request<Me>("GET", "/me"),
   setupStatus: () => request<SetupStatus>("GET", "/setup"),

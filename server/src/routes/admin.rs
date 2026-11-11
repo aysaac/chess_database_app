@@ -13,6 +13,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
+use crate::access::access;
 use crate::auth::AdminAuth;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::account::hash;
@@ -118,9 +119,11 @@ pub async fn set_password(
     .await
 }
 
-fn db_dto(state: &AppState, meta: DbMeta) -> AdminDatabaseDto {
+fn db_dto(state: &AppState, admin: &User, meta: DbMeta) -> ApiResult<AdminDatabaseDto> {
     let (games, size_bytes) = state.pool.stats(&meta.id);
-    AdminDatabaseDto {
+    let share = if meta.owner_id == admin.id { None } else { state.store.share(&meta.id, admin.id)? };
+    let access = access(admin, &meta, share);
+    Ok(AdminDatabaseDto {
         id: meta.id,
         name: meta.name,
         owner: meta.owner,
@@ -130,7 +133,8 @@ fn db_dto(state: &AppState, meta: DbMeta) -> AdminDatabaseDto {
         size_bytes,
         quota_bytes: meta.quota_bytes,
         created_at: meta.created_at,
-    }
+        access,
+    })
 }
 
 fn database(store: &Store, id: &str) -> ApiResult<DbMeta> {
@@ -143,10 +147,13 @@ fn database(store: &Store, id: &str) -> ApiResult<DbMeta> {
 /// Every database, as metadata.
 pub async fn databases(
     State(state): State<Arc<AppState>>,
-    _: AdminAuth,
+    AdminAuth(auth): AdminAuth,
 ) -> ApiResult<Json<Vec<AdminDatabaseDto>>> {
-    blocking(move || Ok(Json(state.store.all_databases()?.into_iter().map(|m| db_dto(&state, m)).collect())))
-        .await
+    blocking(move || {
+        let all = state.store.all_databases()?;
+        Ok(Json(all.into_iter().map(|m| db_dto(&state, &auth.user, m)).collect::<ApiResult<_>>()?))
+    })
+    .await
 }
 
 /// Sets a database's quota, the one thing the admin changes on any
@@ -163,7 +170,7 @@ pub async fn update_database(
             state.store.set_database_quota(&meta.id, q)?;
             log::info!("{} set the quota of database {} to {q:?}", auth.user.username, meta.id);
         }
-        Ok(Json(db_dto(&state, database(&state.store, &id)?)))
+        Ok(Json(db_dto(&state, &auth.user, database(&state.store, &id)?)?))
     })
     .await
 }

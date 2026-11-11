@@ -618,6 +618,7 @@ dependencies = [
  "chess-jobs",
  "env_logger",
  "getrandom 0.4.3",
+ "http-body",
  "http-body-util",
  "libc",
  "log",

@@ -1106,6 +1106,9 @@ pub struct AdminDatabaseDto {
     pub size_bytes: u64,
     pub quota_bytes: Option<u64>,
     pub created_at: i64,
+    /// What the admin themselves may do with it, as any user (none for
+    /// another user's private database): whether they can export it.
+    pub access: Option<Access>,
 }
 
 /// The only thing the admin changes on a database that isn't theirs: the

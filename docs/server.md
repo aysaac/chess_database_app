@@ -242,6 +242,7 @@ desktop client can share the types later.
 | `DELETE /api/databases/{id}/shares/{username}` | owner | |
 | `GET /api/databases/{id}/games` | read | A page of the game list (below) |
 | `GET /api/databases/{id}/games/{n}` | read | One game: `row`, `headers`, `pgn`, `startFen`, `notation` (the move tree with comments, NAGs, clocks and evals), `opening` |
+| `GET /api/databases/{id}/export.pgn` | read | The games the game list shows for the same criteria (all but the deleted ones by default; `fen=`, `sort=`… as below), in its order, as one PGN file (`Content-Disposition: attachment`). Streamed as it's written, never held in memory; `202 {"kind":"job"}` like the list while the position index is far behind |
 | `GET /api/databases/{id}/tree?fen=` | read | The position tree with Hot, best players and top games (`chess_db::reference_overview`); the start when no FEN |
 | `GET /api/databases/{id}/lines?fen=` | read | The main line and lines (`reference_lines`): `{"kind":"ready","lines":…}`, or from 50,000 games `{"kind":"job","job":N,"games":…}`: ask again when the job is done |
 | `POST /api/databases/{id}/import?filename=` | write | The request body is a PGN file (at most `CHESS_SERVER_MAX_UPLOAD_MB`) → `202 {"job": N}` |
