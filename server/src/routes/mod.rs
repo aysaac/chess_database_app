@@ -5,7 +5,7 @@ mod admin;
 mod databases;
 mod export;
 pub(crate) mod games;
-mod imports;
+pub(crate) mod imports;
 pub(crate) mod jobs;
 mod maintenance;
 mod search;

@@ -278,7 +278,8 @@ td.wrap {
 }
 
 .badge.off,
-.badge.failed {
+.badge.failed,
+.badge.interrupted {
   border-color: var(--danger);
   color: var(--danger);
 }

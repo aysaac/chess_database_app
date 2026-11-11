@@ -13,7 +13,7 @@ use crate::auth::Auth;
 use crate::error::{ApiError, ApiResult};
 use crate::jobs::JobMeta;
 use crate::store::User;
-use crate::wire::{Access, JobDto, JobInfoDto};
+use crate::wire::{Access, JobInfoDto};
 use crate::{AppState, blocking};
 
 /// What `user` may do with a job: `None` (it's "not found"), read it, or
@@ -37,10 +37,10 @@ pub async fn job(
         let (status, meta) = state.jobs.info(id).ok_or_else(ApiError::not_found)?;
         let full = rights(&state, &auth.user, &meta)?.ok_or_else(ApiError::not_found)?;
         Ok(Json(JobInfoDto {
-            job: JobDto::from(&status),
+            job: status,
             database: meta.db,
             report: if full { state.jobs.report(id) } else { None },
-            duplicates: if full { state.jobs.duplicates(id).map(|d| d.report()) } else { None },
+            duplicates: if full { state.jobs.duplicates_report(id) } else { None },
         }))
     })
     .await

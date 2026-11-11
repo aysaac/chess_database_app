@@ -40,7 +40,7 @@ use crate::store::Store;
 
 pub struct AppState {
     pub config: Config,
-    pub store: Store,
+    pub store: Arc<Store>,
     pub pool: Pool,
     pub jobs: Jobs,
     pub throttle: Throttle,
@@ -52,22 +52,26 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Prepares the data directory and opens the metadata store.
+    /// Prepares the data directory and opens the metadata store; imports a
+    /// stop interrupted go on, other jobs it interrupted are marked so, and
+    /// uploads no import goes on with are deleted.
     pub fn new(config: Config) -> Result<Arc<AppState>, String> {
         let dir = config.data_dir.display().to_string();
         config::prepare_data_dir(&config).map_err(|e| format!("data directory {dir}: {e}"))?;
-        let store = Store::open(&config.store_path()).map_err(|e| format!("metadata store in {dir}: {e}"))?;
+        let store =
+            Arc::new(Store::open(&config.store_path()).map_err(|e| format!("metadata store in {dir}: {e}"))?);
         let no_users = store.user_count().map_err(|e| e.message)? == 0;
-        let state = AppState {
+        let state = Arc::new(AppState {
             pool: Pool::new(config.dbs_dir()),
-            jobs: Jobs::default(),
+            jobs: Jobs::new(store.clone()).map_err(|e| e.message)?,
             throttle: Throttle::new(config.login_attempts, config.login_window),
             hashing: tokio::sync::Semaphore::new(config.hash_concurrency.max(1)),
             setup_token: Mutex::new(no_users.then(secret::new_token)),
             store,
             config,
-        };
-        Ok(Arc::new(state))
+        });
+        routes::imports::resume_interrupted(&state).map_err(|e| format!("data directory {dir}: {e}"))?;
+        Ok(state)
     }
 
     /// The setup token, while the first admin is still to be made.

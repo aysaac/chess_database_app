@@ -2,7 +2,7 @@
 //! (`docs/server.md` lists them).
 
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// Default address: this machine only. The container sets `0.0.0.0:8080`.
@@ -218,26 +218,14 @@ pub fn prepare_data_dir(config: &Config) -> std::io::Result<()> {
     for dir in [config.data_dir.clone(), config.dbs_dir(), config.import_dir(), config.tmp_dir()] {
         std::fs::create_dir_all(&dir)?;
     }
-    // Uploads left by a crash or a restart are never imported.
-    clear_dir(&config.tmp_dir())?;
+    // Uploads stay in tmp/ for an import to go on with after a restart; the
+    // others are deleted once the jobs were looked at (`resume_interrupted`).
     // A database deleted while a request still had it open (`Pool::remove`).
     for entry in std::fs::read_dir(config.dbs_dir())? {
         let path = entry?.path();
         if path.extension().is_some_and(|e| e == "deleted") {
             log::info!("removing deleted database {}", path.display());
             std::fs::remove_dir_all(&path)?;
-        }
-    }
-    Ok(())
-}
-
-fn clear_dir(dir: &Path) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            std::fs::remove_dir_all(entry.path())?;
-        } else {
-            std::fs::remove_file(entry.path())?;
         }
     }
     Ok(())

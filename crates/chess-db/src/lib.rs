@@ -23,7 +23,7 @@ mod tags;
 
 use std::path::PathBuf;
 
-pub use cb::import::import_cb;
+pub use cb::import::{import_cb, import_cb_resumable};
 pub use copy::{CopySummary, copy_games};
 pub use cross::{CrossPage, CrossSource, SortedIds, merge_page, merged_total, search_many, sorted_ids};
 pub use database::{
@@ -34,7 +34,10 @@ pub use duplicates::{
     find_duplicates, unfill,
 };
 pub use export::export_pgn;
-pub use import::{ImportSummary, ImportWarning, game_label, import_pgn, import_reader};
+pub use import::{
+    Checkpoint, ImportResume, ImportSummary, ImportWarning, game_label, import_pgn, import_pgn_resumable,
+    import_reader,
+};
 pub use names::NameTable;
 pub use positions::{
     IndexPlan, IndexSummary, PositionHits, PositionIndex, PositionTree, TreeStats, find_position,

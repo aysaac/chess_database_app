@@ -12,9 +12,13 @@ use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use chess_db::{ImportSummary, Progress, import_cb, import_pgn, update_position_index};
+use chess_db::{
+    Checkpoint, ImportResume, ImportSummary, Progress, import_cb_resumable, import_pgn_resumable,
+    update_position_index,
+};
 use chess_jobs::{JobContext, JobError};
 use http_body_util::BodyExt;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
 use crate::access::require;
@@ -23,7 +27,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::jobs::{thousands, to_job_error};
 use crate::pool::{OpenDb, dir_size, writer_busy};
 use crate::secret;
-use crate::store::{DbMeta, User};
+use crate::store::{DbMeta, JobRow, User};
 use crate::wire::{Access, ImportFileRequest, ImportKind, ImportReportDto, JobStarted, UploadQuery};
 use crate::{AppState, blocking};
 
@@ -72,13 +76,66 @@ impl Progress for Guarded<'_> {
     }
 }
 
-/// Deletes an uploaded file when the import is done with it.
-struct TempFile(Option<PathBuf>);
+/// Deletes an uploaded file when the import is done with it, unless the
+/// server is stopping: then the import goes on with it after a restart.
+struct TempFile {
+    path: Option<PathBuf>,
+    stopping: Arc<AtomicBool>,
+}
+
+impl TempFile {
+    fn none(state: &AppState) -> TempFile {
+        TempFile { path: None, stopping: state.jobs.stopping() }
+    }
+}
 
 impl Drop for TempFile {
     fn drop(&mut self) {
-        if let Some(path) = &self.0 {
+        if let Some(path) = &self.path
+            && !self.stopping.load(Ordering::Acquire)
+        {
             let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// What the database and the file are at, before a commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct Mark {
+    games: u32,
+    read: u64,
+}
+
+/// How an import goes on after the server stopped in it (kept as JSON with
+/// its job): the last two checkpoints noted before a commit, and the
+/// database's game count tell where it left off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Resume {
+    kind: ImportKind,
+    /// The file: an upload in `tmp/`, or one in the import folder.
+    path: PathBuf,
+    /// What the job and its report call it.
+    file: String,
+    upload: bool,
+    /// The database's games when the import began.
+    base: u32,
+    prev: Option<Mark>,
+    next: Option<Mark>,
+    /// The file is read: only the position index is left.
+    #[serde(default)]
+    read_all: bool,
+}
+
+impl Resume {
+    /// Games of the file to pass over when the database has `count` games,
+    /// if that's a state the import was in.
+    fn skip(&self, count: u32) -> Option<u64> {
+        match (self.prev, self.next) {
+            (_, Some(n)) if n.games == count => Some(n.read),
+            (Some(p), _) if p.games == count => Some(p.read),
+            (None, None) if count == self.base => Some(0),
+            _ => None,
         }
     }
 }
@@ -86,13 +143,20 @@ impl Drop for TempFile {
 struct Import {
     meta: DbMeta,
     open: Arc<OpenDb>,
-    path: PathBuf,
-    kind: ImportKind,
-    /// What the job and its report call the file.
-    file: String,
+    resume: Mutex<Resume>,
+    /// Games of the file an earlier run went through.
+    skip: u64,
     /// The upload to delete afterwards.
     _temp: TempFile,
     limit: Option<u64>,
+}
+
+impl Import {
+    fn note(&self, state: &AppState, job: u64, change: impl FnOnce(&mut Resume)) {
+        let mut resume = self.resume.lock().expect("resume lock");
+        change(&mut resume);
+        state.jobs.set_resume(job, &serde_json::to_string(&*resume).unwrap_or_default());
+    }
 }
 
 fn run(state: &AppState, import: &Import, ctx: &JobContext) -> Result<String, JobError> {
@@ -104,17 +168,35 @@ fn run(state: &AppState, import: &Import, ctx: &JobContext) -> Result<String, Jo
         // The first report checks at once: a small file is one batch.
         checked: Mutex::new(Instant::now().checked_sub(Duration::from_secs(1)).unwrap_or_else(Instant::now)),
     };
-    let summary: ImportSummary = match import.kind {
-        ImportKind::Pgn => import_pgn(&import.open.db, &import.path, &guard),
-        ImportKind::Cbh => import_cb(&import.open.db, &import.path, &guard),
-    }
-    .map_err(to_job_error)?;
-    state.jobs.set_report(ctx.id(), ImportReportDto::new(import.file.clone(), &summary));
+    let (kind, path, file, read_all, base) = {
+        let r = import.resume.lock().expect("resume lock");
+        (r.kind, r.path.clone(), r.file.clone(), r.read_all, r.base)
+    };
+    import.note(state, ctx.id(), |_| {});
+    let checkpoint = |c: Checkpoint| {
+        import.note(state, ctx.id(), |r| {
+            r.prev = r.next;
+            r.next = Some(Mark { games: c.games, read: c.read });
+        });
+    };
+    let resume = ImportResume { skip: import.skip, before_commit: Some(&checkpoint) };
+    let mut summary: ImportSummary = if read_all {
+        ImportSummary::default()
+    } else {
+        match kind {
+            ImportKind::Pgn => import_pgn_resumable(&import.open.db, &path, resume, &guard),
+            ImportKind::Cbh => import_cb_resumable(&import.open.db, &path, resume, &guard),
+        }
+        .map_err(to_job_error)?
+    };
+    // Counting what earlier runs imported too.
+    summary.imported = u64::from(import.open.lock().count().saturating_sub(base));
+    state.jobs.set_report(ctx.id(), ImportReportDto::new(file.clone(), &summary));
     let over = guard.over.load(Ordering::Relaxed);
     log::info!(
         "imported {} games from {} into {} ({} skipped{})",
         summary.imported,
-        import.file,
+        file,
         import.meta.id,
         summary.skipped,
         if over {
@@ -128,6 +210,9 @@ fn run(state: &AppState, import: &Import, ctx: &JobContext) -> Result<String, Jo
     if ctx.is_cancelled() {
         // The games read so far stay; the next tree request indexes them.
         return Err(JobError::Cancelled);
+    }
+    if !summary.cancelled {
+        import.note(state, ctx.id(), |r| r.read_all = true);
     }
     ctx.progress_msg(0, 0, "Indexing positions");
     let indexed = update_position_index(&import.open.db, ctx).map_err(to_job_error)?;
@@ -184,13 +269,22 @@ fn start(
         return Err(busy());
     }
     let label = format!("Importing {file} into {}", meta.name);
+    let resume = Resume {
+        kind,
+        path,
+        file,
+        upload: temp.path.is_some(),
+        base: open.lock().count(),
+        prev: None,
+        next: None,
+        read_all: false,
+    };
     let import = Import {
         limit: limit_left.map(|l| size + l),
         open: open.clone(),
         meta,
-        path,
-        kind,
-        file,
+        resume: Mutex::new(resume),
+        skip: 0,
         _temp: temp,
     };
     let st = state.clone();
@@ -198,6 +292,79 @@ fn start(
     let job = state.jobs.spawn("import", label, (&db.0, &db.1), user, move |ctx| run(&st, &import, ctx));
     *writer = Some(job);
     Ok(job)
+}
+
+/// At start: imports the server stopped in go on from what they committed
+/// (their database's game count says which of their last two checkpoints
+/// made it); the other jobs it stopped in are marked interrupted. Uploads
+/// in `tmp/` that no import goes on with are deleted.
+pub fn resume_interrupted(state: &Arc<AppState>) -> std::io::Result<()> {
+    let mut keep = std::collections::HashSet::new();
+    for row in state.jobs.interrupted() {
+        let resume: Option<Resume> = row.resume.as_deref().and_then(|r| serde_json::from_str(r).ok());
+        match go_on(state, &row, resume.clone()) {
+            Ok(()) => {
+                if let Some(r) = resume {
+                    keep.insert(r.path);
+                }
+            }
+            Err(why) => {
+                log::info!("job {} ({}) was interrupted: {why}", row.id, row.kind);
+                state.jobs.mark_interrupted(&row, &why);
+            }
+        }
+    }
+    let tmp = state.config.tmp_dir();
+    for entry in std::fs::read_dir(&tmp)? {
+        let path = entry?.path();
+        if !keep.contains(&path) {
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path)?;
+            } else {
+                std::fs::remove_file(&path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn go_on(state: &Arc<AppState>, row: &JobRow, resume: Option<Resume>) -> Result<(), String> {
+    const STOPPED: &str = "The server stopped while it ran";
+    let (Some(resume), true) = (resume, row.kind == "import") else { return Err(STOPPED.into()) };
+    let gone = || format!("{STOPPED}, and its database or file is gone");
+    let meta =
+        state.store.database(row.db.as_deref().ok_or_else(gone)?).map_err(|e| e.message)?.ok_or_else(gone)?;
+    let user = state.store.user(row.user.ok_or_else(gone)?).map_err(|e| e.message)?.ok_or_else(gone)?;
+    if !resume.path.is_file() {
+        return Err(gone());
+    }
+    let open = state.pool.get(&meta.id).map_err(|e| e.to_string())?;
+    let count = open.lock().count();
+    let skip = resume.skip(count).ok_or_else(|| format!("{STOPPED}, and the database changed since"))?;
+    let limit_left = room(state, &meta).map_err(|e| e.message)?;
+    let size = dir_size(&state.pool.path(&meta.id));
+    let temp = TempFile { path: resume.upload.then(|| resume.path.clone()), stopping: state.jobs.stopping() };
+    log::info!(
+        "going on with job {} for {}: importing {} into {} from game {} of the file",
+        row.id,
+        user.username,
+        resume.file,
+        meta.id,
+        skip + 1
+    );
+    let import = Import {
+        limit: limit_left.map(|l| size + l),
+        open: open.clone(),
+        meta,
+        resume: Mutex::new(resume),
+        skip,
+        _temp: temp,
+    };
+    let st = state.clone();
+    let mut writer = open.writer.lock().expect("writer lock");
+    let job = state.jobs.spawn_kept(row, move |ctx| run(&st, &import, ctx));
+    *writer = Some(job);
+    Ok(())
 }
 
 /// The file name to show for an upload: its last component, or "upload.pgn".
@@ -247,7 +414,7 @@ pub async fn upload(
     }
 
     let path = state.config.tmp_dir().join(format!("upload-{}.pgn", secret::new_token()));
-    let temp = TempFile(Some(path.clone()));
+    let temp = TempFile { path: Some(path.clone()), stopping: state.jobs.stopping() };
     let mut file = tokio::fs::File::create_new(&path).await?;
     let mut received = 0u64;
     let mut body = http_body_util::Limited::new(body, usize::try_from(max).unwrap_or(usize::MAX));
@@ -315,7 +482,8 @@ pub async fn import_file(
         let (meta, _) = require(&state.store, &auth.user, &id, Access::Write)?;
         let path = resolve_in(&state.config.import_dir(), &req.path)?;
         let kind = import_kind(&path).ok_or_else(|| ApiError::bad_request("Import a .pgn or a .cbh file"))?;
-        start(&state, &auth.user, meta, kind, path, req.path.clone(), TempFile(None))
+        let temp = TempFile::none(&state);
+        start(&state, &auth.user, meta, kind, path, req.path.clone(), temp)
     })
     .await?;
     Ok((StatusCode::ACCEPTED, Json(JobStarted { job })))

@@ -173,6 +173,64 @@ pub struct DbMeta {
     pub id_epoch: u64,
 }
 
+/// Who and what a job is for, as the store keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobMetaRow {
+    pub db: String,
+    pub db_name: String,
+    pub user: i64,
+    pub username: String,
+    pub started_at: i64,
+}
+
+/// A job as the store keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobRow {
+    pub id: u64,
+    pub kind: String,
+    pub label: String,
+    /// None once its database is gone (then the row goes too).
+    pub db: Option<String>,
+    pub db_name: String,
+    /// None once the user who started it was deleted.
+    pub user: Option<i64>,
+    pub username: String,
+    /// `running`, `done`, `failed`, `cancelled` or `interrupted`.
+    pub state: String,
+    pub done: u64,
+    pub total: u64,
+    pub message: String,
+    pub error: Option<String>,
+    pub report: Option<String>,
+    pub resume: Option<String>,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+}
+
+const JOB_COLUMNS: &str = "id, kind, label, database_id, database_name, user_id, username, state, done, total, \
+                           message, error, report, resume, started_at, finished_at";
+
+fn job_row(r: &Row<'_>) -> rusqlite::Result<JobRow> {
+    Ok(JobRow {
+        id: r.get::<_, i64>(0)?.max(0) as u64,
+        kind: r.get(1)?,
+        label: r.get(2)?,
+        db: r.get(3)?,
+        db_name: r.get(4)?,
+        user: r.get(5)?,
+        username: r.get(6)?,
+        state: r.get(7)?,
+        done: r.get::<_, i64>(8)?.max(0) as u64,
+        total: r.get::<_, i64>(9)?.max(0) as u64,
+        message: r.get(10)?,
+        error: r.get(11)?,
+        report: r.get(12)?,
+        resume: r.get(13)?,
+        started_at: r.get(14)?,
+        finished_at: r.get(15)?,
+    })
+}
+
 /// An invite, as the admin sees it (never its token).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteRow {
@@ -910,6 +968,108 @@ impl Store {
         tx.execute("DELETE FROM shares WHERE database_id = ?1 AND user_id = ?2", params![db, to])?;
         tx.commit()?;
         Ok(true)
+    }
+
+    // ---- jobs ------------------------------------------------------------------
+
+    pub fn max_job_id(&self) -> ApiResult<u64> {
+        Ok(self.conn().query_row("SELECT COALESCE(MAX(id), 0) FROM jobs", [], |r| r.get::<_, i64>(0))?.max(0)
+            as u64)
+    }
+
+    pub fn insert_job(&self, id: u64, kind: &str, label: &str, meta: &JobMetaRow) -> ApiResult<()> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO jobs (id, kind, label, database_id, database_name, user_id, username, state, started_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8)",
+            params![id as i64, kind, label, meta.db, meta.db_name, meta.user, meta.username, meta.started_at],
+        )?;
+        // Finished jobs are kept, the newest thousand.
+        conn.execute(
+            "DELETE FROM jobs WHERE state != 'running' AND id <= (SELECT id FROM jobs ORDER BY id DESC LIMIT 1 OFFSET 1000)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn job_progress(&self, id: u64, done: u64, total: u64, message: &str) -> ApiResult<()> {
+        self.conn().execute(
+            "UPDATE jobs SET done = ?2, total = ?3, message = ?4 WHERE id = ?1",
+            params![id as i64, done as i64, total as i64, message],
+        )?;
+        Ok(())
+    }
+
+    /// A job's end: its state (`done`, `failed`, `cancelled`, `interrupted`),
+    /// and its report as JSON; how to resume it is forgotten.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_job(
+        &self,
+        id: u64,
+        state: &str,
+        error: Option<&str>,
+        message: &str,
+        done: u64,
+        total: u64,
+        report: Option<&str>,
+    ) -> ApiResult<()> {
+        self.conn().execute(
+            "UPDATE jobs SET state = ?2, error = ?3, message = ?4, done = ?5, total = ?6,
+                 report = COALESCE(?7, report), resume = NULL, finished_at = ?8 WHERE id = ?1",
+            params![id as i64, state, error, message, done as i64, total as i64, report, now()],
+        )?;
+        Ok(())
+    }
+
+    /// How to go on with an import if the server stops (JSON).
+    pub fn job_resume(&self, id: u64, resume: &str) -> ApiResult<()> {
+        self.conn().execute("UPDATE jobs SET resume = ?2 WHERE id = ?1", params![id as i64, resume])?;
+        Ok(())
+    }
+
+    pub fn job(&self, id: u64) -> ApiResult<Option<JobRow>> {
+        Ok(self
+            .conn()
+            .query_row(&format!("SELECT {JOB_COLUMNS} FROM jobs WHERE id = ?1"), [id as i64], job_row)
+            .optional()?)
+    }
+
+    /// The newest jobs, newest first.
+    pub fn recent_jobs(&self, limit: u32) -> ApiResult<Vec<JobRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!("SELECT {JOB_COLUMNS} FROM jobs ORDER BY id DESC LIMIT ?1"))?;
+        let rows = stmt.query_map([limit], job_row)?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Jobs the store says are running: at start, those a stop interrupted.
+    pub fn running_jobs(&self) -> ApiResult<Vec<JobRow>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare(&format!("SELECT {JOB_COLUMNS} FROM jobs WHERE state = 'running' ORDER BY id"))?;
+        let rows = stmt.query_map([], job_row)?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    // ---- settings ----------------------------------------------------------------
+
+    pub fn setting(&self, key: &str) -> ApiResult<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: Option<&str>) -> ApiResult<()> {
+        let conn = self.conn();
+        match value {
+            Some(v) => conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![key, v],
+            )?,
+            None => conn.execute("DELETE FROM settings WHERE key = ?1", [key])?,
+        };
+        Ok(())
     }
 
     /// The size of the store's files.

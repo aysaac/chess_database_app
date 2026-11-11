@@ -76,5 +76,9 @@ none).
 - The upload route disables axum's body limit and enforces
   `Config::max_upload` itself (`http_body_util::Limited`), with or without a
   Content-Length.
-- Jobs are in memory: a restart forgets them, and the setup token is new at
-  each start until there is a user.
+- Jobs are kept in the metadata store (`jobs.rs`): insert a row before a
+  job starts (`Jobs::spawn` does), and an import notes how it goes on
+  (`set_resume`) before each batch. The setup token is new at each start
+  until there is a user.
+- `server/tests/restart.rs` runs the real binary (`CARGO_BIN_EXE_chess-server`)
+  and SIGKILLs it mid-import; it needs no network but takes a few seconds.
