@@ -3,6 +3,7 @@
 mod account;
 mod admin;
 mod databases;
+mod export;
 pub(crate) mod games;
 mod imports;
 mod jobs;
@@ -32,6 +33,7 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/databases/{db}/shares/{username}", put(databases::set_share).delete(databases::remove_share))
         .route("/databases/{db}/games", get(games::page))
         .route("/databases/{db}/games/{game}", get(games::game))
+        .route("/databases/{db}/export.pgn", get(export::export))
         .route("/databases/{db}/tree", get(games::tree))
         .route("/databases/{db}/lines", get(games::lines))
         // The upload limits itself (`Config::max_upload`).

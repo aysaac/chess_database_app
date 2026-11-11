@@ -214,6 +214,54 @@ fn games_reaching_a_position_with_criteria_sort_and_paging() {
 }
 
 #[test]
+fn exports_stream_the_listed_games_as_pgn() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let fixtures = ["crosstable.pgn", "reference.pgn", "variations.pgn"];
+    let db = alice.create_db("Réti's games", "private");
+    for f in fixtures {
+        alice.import_fixture(&db, f);
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let local = local_db(tmp.path(), &fixtures);
+    let pgn_of = |ids: &[u32]| -> String {
+        let db = local.lock().unwrap();
+        ids.iter().map(|&id| write_game(&db.read_game(id).unwrap())).collect()
+    };
+    let all: Vec<u32> = (0..local.lock().unwrap().count()).collect();
+    let r = alice.get(&format!("/api/databases/{db}/export.pgn")).ok();
+    assert_eq!(r.body, pgn_of(&all));
+    assert_eq!(r.header("content-type"), Some("application/x-chess-pgn; charset=utf-8"));
+    assert_eq!(
+        r.header("content-disposition"),
+        Some("attachment; filename=\"R_ti_s games.pgn\"; filename*=UTF-8''R%C3%A9ti%27s%20games.pgn")
+    );
+    assert!(r.header("content-length").is_none(), "streamed");
+    // The same criteria and order as the list.
+    let path = format!("fen={AFTER_NF3}&text=pine&sort=white&desc=true");
+    let page: GamePage = alice.get(&format!("/api/databases/{db}/games?limit=500&{path}")).ok().parse();
+    assert!(!page.rows.is_empty());
+    let ids: Vec<u32> = page.rows.iter().map(|r| r.id).collect();
+    assert_eq!(alice.get(&format!("/api/databases/{db}/export.pgn?{path}")).ok().body, pgn_of(&ids));
+    // Deleted games stay out unless asked for.
+    let open = s.state.pool.get(&db).unwrap();
+    open.lock().set_deleted_many(&[0, 1], true).unwrap();
+    drop(open);
+    assert_eq!(alice.get(&format!("/api/databases/{db}/export.pgn")).ok().body, pgn_of(&all[2..]));
+    assert_eq!(alice.get(&format!("/api/databases/{db}/export.pgn?deleted=only")).ok().body, pgn_of(&[0, 1]));
+    assert_eq!(alice.get(&format!("/api/databases/{db}/export.pgn?white=nobody")).ok().body, "");
+    // Only for those who may read it.
+    assert_eq!(admin.get(&format!("/api/databases/{db}/export.pgn")).status, 404);
+    // The admin's list says which they may export: their own and the server-wide ones.
+    let wide = admin.create_db("Wide", "server");
+    let listed = admin.get("/api/admin/databases").ok().json();
+    let access =
+        |id: &str| listed.as_array().unwrap().iter().find(|d| d["id"] == id).unwrap()["access"].clone();
+    assert_eq!((access(&db), access(&wide)), (serde_json::Value::Null, json!("owner")));
+}
+
+#[test]
 fn a_position_search_waits_for_an_index_far_behind() {
     let s = TestServer::start();
     let admin = s.admin();

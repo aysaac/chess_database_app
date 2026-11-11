@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api } from "../lib/api";
+  import { api, exportUrl } from "../lib/api";
   import { bytes, count, parseBytes, visibilityLabel, when } from "../lib/format";
   import type { AdminDatabase } from "../lib/types";
 
@@ -99,6 +99,9 @@
             <td class="num">{d.quotaBytes === null ? "none" : bytes(d.quotaBytes)}</td>
             <td class="muted small">{when(d.createdAt)}</td>
             <td><div class="actions">
+              {#if d.access}
+                <a class="button" href={exportUrl(d.id)} download title="Download its games as PGN">Export PGN</a>
+              {/if}
               <button onclick={() => open(d, "quota")}>Quota</button>
               <button class="danger" onclick={() => open(d, "delete")}>Delete…</button>
             </div></td>
