@@ -132,6 +132,8 @@ pub struct OpenDb {
     /// A compaction holds the database's lock for its whole run: requests
     /// answer "busy" meanwhile instead of waiting for it.
     pub compacting: AtomicBool,
+    /// When a request or job last took it ([`Pool::get`]): idle ones close.
+    last_used: Mutex<Instant>,
 }
 
 impl OpenDb {
@@ -142,6 +144,7 @@ impl OpenDb {
             cache: Mutex::default(),
             writer: Mutex::new(None),
             compacting: AtomicBool::new(false),
+            last_used: Mutex::new(Instant::now()),
         }
     }
 
@@ -220,12 +223,42 @@ impl Pool {
         let slot = self.slot(id);
         let mut slot = slot.lock().expect("pool slot lock");
         if let Some(open) = &*slot {
+            *open.last_used.lock().expect("last used lock") = Instant::now();
             return Ok(open.clone());
         }
         let open = Arc::new(OpenDb::new(id, Database::open(&self.path(id))?));
         log::info!("opened database {id} ({} games)", open.lock().count());
         *slot = Some(open.clone());
         Ok(open)
+    }
+
+    /// Closes the databases nobody took for `idle` and nothing holds now (no
+    /// request or job has them, the writer slot is free): their files are
+    /// closed and their lock released; the next request opens them again.
+    /// Returns their ids.
+    pub fn close_idle(&self, idle: Duration, jobs: &JobManager) -> Vec<String> {
+        let slots: Vec<(String, Slot)> =
+            self.slots.lock().expect("pool lock").iter().map(|(id, s)| (id.clone(), s.clone())).collect();
+        let mut closed = Vec::new();
+        for (id, slot) in slots {
+            let mut slot = slot.lock().expect("pool slot lock");
+            let Some(open) = &*slot else { continue };
+            let idle_long = open.last_used.lock().expect("last used lock").elapsed() >= idle;
+            let held = Arc::strong_count(open) > 1;
+            let writing =
+                writer_busy(&open.writer.lock().expect("writer lock"), jobs) || open.is_compacting();
+            if idle_long && !held && !writing {
+                *slot = None;
+                closed.push(id);
+            }
+        }
+        closed
+    }
+
+    /// How many databases are open.
+    pub fn open_count(&self) -> usize {
+        let slots: Vec<Slot> = self.slots.lock().expect("pool lock").values().cloned().collect();
+        slots.iter().filter(|s| s.lock().expect("pool slot lock").is_some()).count()
     }
 
     /// The database if it's open, without opening it.
