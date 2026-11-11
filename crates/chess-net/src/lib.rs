@@ -14,6 +14,7 @@ mod http;
 pub mod keys;
 mod lichess;
 pub mod time;
+pub mod twic;
 
 use std::cell::Cell;
 use std::collections::HashSet;
