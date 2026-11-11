@@ -127,16 +127,15 @@
     expect(game.view.source.db === db.info.handle, "its source the new database");
     expect(!game.view.dirty, "saved");
 
-    // ---- Save as new with a database open goes straight in; the menu offers more.
+    // ---- Save as new always asks, also with a database open, listing it first.
     await game.saveAsNew();
-    await until(() => db.info.games === 2, "Save as new appending to the open database");
-    expect(!game.choosingSave, "no dialog with a database open");
-    const menu = rb("More ways to save");
-    expect(menu, "the split button's arrow");
-    menu.click();
-    await until(() => $$("[role='menuitem']").some((b) => text(b) === "Save in another database…"), "the menu item");
-    $$("[role='menuitem']").find((b) => text(b) === "Save in another database…").click();
-    await until(() => shown(dialog()), "the dialog from the menu");
+    await until(() => shown(dialog()), "the dialog from Save as new with a database open");
+    expect(db.info.games === 1, "nothing saved before choosing, got " + db.info.games);
+    $$("[role='dialog'] button.target").find((b) => text($(".name strong", b)) === "other").click();
+    await until(() => db.info.games === 2, "the open database picked: one game more");
+    // The ribbon's button asks again, so another database can follow.
+    rb("Save as new…").click();
+    await until(() => shown(dialog()), "the dialog from the ribbon button");
     const names = targets();
     expect(names[0] === "other" && names.includes("ref"), "the open one first, then ref; got " + names.join());
     await shot("save-dialog-open");

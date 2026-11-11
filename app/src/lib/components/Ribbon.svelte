@@ -163,22 +163,14 @@
       disabled={!game.view}
       onclick={() => game.save()}
     />
-    <RibbonDropdown
+    <RibbonButton
       icon="save-plus"
-      label="More ways to save"
-      title="Save as new in the open database, or choose another one"
-      menuLabel="Save as new"
-      mainLabel="Save as new"
-      mainTitle="Save as new (Ctrl+Shift+S)"
+      label="Save as new…"
+      title="Save as new in a database you choose (Ctrl+Shift+S)"
       {compact}
       disabled={!game.view}
-      onmain={() => game.saveAsNew()}
-    >
-      <button role="menuitem" disabled={!db.info} onclick={() => game.saveAsNew()}
-        >Save as new in {db.info?.name ?? "the open database"} (Ctrl+Shift+S)</button
-      >
-      <button role="menuitem" onclick={() => (game.choosingSave = true)}>Save in another database…</button>
-    </RibbonDropdown>
+      onclick={() => game.saveAsNew()}
+    />
   </div>
   <div class="col">
     <RibbonButton

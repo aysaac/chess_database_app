@@ -607,19 +607,16 @@ class GameStore {
     if (!view) return;
     if (view.source && [db.info?.handle, db.reference?.info?.handle].includes(view.source.db)) {
       await this.#saveAs("replace", view.source.db);
+    } else if (db.info) {
+      await this.#saveAs("new", db.info.handle);
     } else {
-      await this.saveAsNew();
+      this.choosingSave = true;
     }
   }
 
-  /** Saves as a new game into the open database, or asks where when none is open. */
-  async saveAsNew() {
-    if (!this.view) return;
-    if (!db.info) {
-      this.choosingSave = true;
-      return;
-    }
-    await this.#saveAs("new", db.info.handle);
+  /** Ctrl+Shift+S: always asks which database to save the game into, as a new game. */
+  saveAsNew() {
+    if (this.view) this.choosingSave = true;
   }
 
   /**
