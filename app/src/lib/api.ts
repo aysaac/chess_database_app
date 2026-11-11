@@ -30,6 +30,7 @@ import type { NameListDto } from "./bindings/NameListDto";
 import type { OnboardingDto } from "./bindings/OnboardingDto";
 import type { OnlinePlayerDto } from "./bindings/OnlinePlayerDto";
 import type { OnlineSiteDto } from "./bindings/OnlineSiteDto";
+import type { OpenDbDto } from "./bindings/OpenDbDto";
 import type { PastedGameDto } from "./bindings/PastedGameDto";
 import type { PlayResultDto } from "./bindings/PlayResultDto";
 import type { RecentDbDto } from "./bindings/RecentDbDto";
@@ -37,6 +38,9 @@ import type { ReferenceDbDto } from "./bindings/ReferenceDbDto";
 import type { ReferenceDto } from "./bindings/ReferenceDto";
 import type { ReferenceLinesDto } from "./bindings/ReferenceLinesDto";
 import type { SaveModeDto } from "./bindings/SaveModeDto";
+import type { SearchInfoDto } from "./bindings/SearchInfoDto";
+import type { SearchPageDto } from "./bindings/SearchPageDto";
+import type { SearchStartDto } from "./bindings/SearchStartDto";
 import type { ShapeDto } from "./bindings/ShapeDto";
 import type { SortSpecDto } from "./bindings/SortSpecDto";
 import type { StepDto } from "./bindings/StepDto";
@@ -89,6 +93,19 @@ export const api = {
     invoke<number>("copy_games", { handle, selection, target, create, mode }),
   searchGames: (handle: number, query: Partial<HeaderQueryDto>, within: boolean, quick: boolean) =>
     invoke<number | null>("search_games", { handle, query, within, quick }),
+  // Searching several databases at once (SRCH-13).
+  /** The databases open in any window, and the reference database: what a search can read. */
+  openDatabases: () => invoke<OpenDbDto[]>("open_databases"),
+  /** Searches several open databases as a job; `session` limits it to its board's position. */
+  searchDatabases: (handles: number[], query: Partial<HeaderQueryDto>, session: number | null) =>
+    invoke<SearchStartDto>("search_databases", { handles, query, session }),
+  searchInfo: (search: number) => invoke<SearchInfoDto>("cross_info", { search }),
+  /** Puts the results in a sort order, as a job (null when they're in it already). */
+  searchSort: (search: number, sort: SortSpecDto) => invoke<number | null>("cross_sort", { search, sort }),
+  /** A page of the results; fails with `notSorted` until `searchSort` made the order. */
+  searchPage: (search: number, sort: SortSpecDto, offset: number, limit: number) =>
+    invoke<SearchPageDto>("cross_page", { search, sort, offset, limit }),
+  closeSearch: (search: number) => invoke<void>("close_search", { search }),
   clearFilter: (handle: number) => invoke<DbInfoDto>("clear_filter", { handle }),
   compactDb: (handle: number) => invoke<number>("compact_db", { handle }),
   /** Starts looking for duplicate games (DB-08); the result is in `duplicatesReport`. */

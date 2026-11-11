@@ -2,7 +2,10 @@
   import type { EloModeDto } from "../bindings/EloModeDto";
   import type { HeaderQueryDto } from "../bindings/HeaderQueryDto";
   import type { ResultFilterDto } from "../bindings/ResultFilterDto";
+  import { formatCount } from "../format";
+  import { cross } from "../stores/cross.svelte";
   import { db } from "../stores/db.svelte";
+  import { game } from "../stores/game.svelte";
   import Modal from "./Modal.svelte";
 
   let { onClose }: { onClose: () => void } = $props();
@@ -44,6 +47,17 @@
   let within = $state(false);
   let error = $state("");
 
+  // Which open databases to search (SRCH-13): this window's, unless others
+  // are picked too.
+  let chosen = $state<number[]>(db.info ? [db.info.handle] : []);
+  let atPosition = $state(false);
+  const several = $derived(chosen.length > 1 || (chosen.length === 1 && chosen[0] !== db.info?.handle));
+  void cross.loadOpen();
+
+  function toggleDb(handle: number) {
+    chosen = chosen.includes(handle) ? chosen.filter((h) => h !== handle) : [...chosen, handle];
+  }
+
   function num(s: string, what: string, max: number): number | null {
     if (!s.trim()) return null;
     const n = Number(s.trim());
@@ -84,7 +98,18 @@
       error = (e as Error).message;
       return;
     }
+    if (chosen.length === 0) {
+      error = "Choose at least one database to search.";
+      return;
+    }
+    const handles = $state.snapshot(chosen);
+    const session = atPosition ? game.session : null;
     onClose();
+    if (several) {
+      db.lastQuery = query;
+      void cross.run(handles, query, session);
+      return;
+    }
     db.quickText = "";
     db.search(query, within);
   }
@@ -144,10 +169,29 @@
         ><input type="checkbox" bind:checked={q.annotatedOnly} /> Only annotated games</label
       >
       <label class="check"><input type="checkbox" bind:checked={q.skipDeleted} /> Leave out deleted games</label>
-      <label class="check wide" class:disabled={!db.info?.filter}>
-        <input type="checkbox" bind:checked={within} disabled={!db.info?.filter} /> Search within the current
+      <label class="check wide" class:disabled={!db.info?.filter || several}>
+        <input type="checkbox" bind:checked={within} disabled={!db.info?.filter || several} /> Search within the current
         results
       </label>
+      {#if cross.open.length > 1}
+        <fieldset class="wide dbs" aria-describedby="dbs-note">
+          <legend>Search in</legend>
+          {#each cross.open as d (d.handle)}
+            <label class="check">
+              <input type="checkbox" checked={chosen.includes(d.handle)} onchange={() => toggleDb(d.handle)} />
+              <span class="name">{d.name}</span>
+              <span class="soft">{formatCount(d.games)} games{d.reference ? ", reference" : ""}</span>
+            </label>
+          {/each}
+          <label class="check" class:disabled={!several || game.session === null}>
+            <input type="checkbox" bind:checked={atPosition} disabled={!several || game.session === null} /> Only games
+            reaching the position on the board
+          </label>
+          <p id="dbs-note" class="soft note">
+            With several databases, the results open in their own list, Search results, with a Database column.
+          </p>
+        </fieldset>
+      {/if}
     </div>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <button type="submit" hidden aria-hidden="true"></button>
@@ -208,5 +252,37 @@
   .error {
     margin: 12px 0 0;
     color: var(--danger);
+  }
+
+  .dbs {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 4px 0 0;
+    padding: 6px 10px 8px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+  }
+
+  .dbs legend {
+    padding: 0 4px;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+
+  .dbs .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .soft {
+    color: var(--ink-soft);
+    font-size: 12px;
+  }
+
+  .note {
+    margin: 2px 0 0;
   }
 </style>
