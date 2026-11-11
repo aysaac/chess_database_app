@@ -15,6 +15,7 @@
   import Reset from "./pages/Reset.svelte";
   import Setup from "./pages/Setup.svelte";
   import Signup from "./pages/Signup.svelte";
+  import TwicPage from "./pages/Twic.svelte";
   import Users from "./pages/Users.svelte";
 
   const PAGES = [
@@ -22,6 +23,7 @@
     { id: "invites", label: "Invites" },
     { id: "databases", label: "Databases" },
     { id: "import", label: "Import" },
+    { id: "twic", label: "TWIC" },
     { id: "jobs", label: "Jobs" },
     { id: "disk", label: "Disk" },
     { id: "backups", label: "Backups" },
@@ -184,6 +186,8 @@
       <Import />
     {:else if page === "jobs"}
       <Jobs />
+    {:else if page === "twic"}
+      <TwicPage />
     {:else if page === "backups"}
       <BackupsPage />
     {:else if page === "audit"}

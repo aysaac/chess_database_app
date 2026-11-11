@@ -5,6 +5,7 @@ import type {
   Account,
   AuditPage,
   Backups,
+  Twic,
   Invite,
   Link,
   OwnedDatabase,
@@ -143,6 +144,10 @@ export const api = {
   disk: () => request<Disk>("GET", "/admin/disk"),
   backups: () => request<Backups>("GET", "/admin/backups"),
   backUp: () => request<{ job: number }>("POST", "/admin/backups"),
+  twic: () => request<Twic>("GET", "/admin/twic"),
+  setTwic: (database: string | null, everyDays: number) =>
+    request<Twic>("PUT", "/admin/twic", { database, everyDays }),
+  twicCheck: () => request<{ job: number }>("POST", "/admin/twic/check"),
   audit: (q: { action: string; who: string; from: number | null; to: number | null; offset: number; limit: number }) => {
     const params = new URLSearchParams({ offset: String(q.offset), limit: String(q.limit) });
     if (q.action) params.set("action", q.action);

@@ -99,6 +99,7 @@ passes `/api` to a server on 8080.
 | `CHESS_SERVER_SMTP_USER`, `CHESS_SERVER_SMTP_PASSWORD` | none | Its login, if it needs one |
 | `CHESS_SERVER_SMTP_FROM` | (needed with a host) | The sender, e.g. `Chess server <chess@example.com>` |
 | `CHESS_SERVER_AUDIT_DAYS` | 365 | How long the audit log keeps entries |
+| `CHESS_SERVER_TWIC_URL` | `https://theweekinchess.com` | Where TWIC issues come from (a stand-in, for tests) |
 | `CHESS_SERVER_BACKUP_DIR` | none | Where backups go ([Backups](#backups)); another volume than the data, ideally |
 | `CHESS_SERVER_BACKUP_EVERY_HOURS` | none | Back up on a schedule too |
 | `CHESS_SERVER_BACKUP_KEEP` | 7 | Backups kept |
@@ -356,6 +357,9 @@ curl -H "Authorization: Bearer $TOKEN" --data-binary @twic1600.pgn \
 | `GET /api/admin/jobs`, `POST /api/admin/jobs/{n}/cancel` | |
 | `GET /api/admin/disk` | Free space, and what the databases, the store, uploads and the import folder take |
 | `GET /api/admin/import-files` | The `.pgn` and `.cbh` files in `import/` |
+| `GET /api/admin/twic`, `PUT /api/admin/twic` | The TWIC updater (NET-06): `{database, databaseName, everyDays, lastCheck, lastIssue, issues}`; `PUT` takes `{database, everyDays}` (`database`: one the admin owns, or `null` for off) |
+| `POST /api/admin/twic/check` | Checks for new TWIC issues now, as a job |
+| `GET /api/admin/backups`, `POST /api/admin/backups` | The backups (names, dates, sizes; never their content), and making one now as a job |
 | `GET /api/admin/audit` | The audit log, newest first: `?action=` (an action, or a group such as `login`), `who=` (a username, as who did it or to whom), `from=`, `to=` (Unix seconds), `offset=`, `limit=` (100, at most 500) |
 
 ## Backups
@@ -405,6 +409,23 @@ cp -r /path/to/backups/chess-server-20261111-030000/dbs .
 Users, password hashes, API tokens, databases, shares and the audit log
 are as they were at the backup; everyone logs in again (sessions aren't
 kept), and jobs that ran then are marked interrupted.
+
+## TWIC updates (NET-06)
+
+The admin's TWIC page (or `PUT /api/admin/twic`) picks a database the
+admin owns for [The Week in Chess](https://theweekinchess.com/twic)'s
+weekly issues, and how often to look (every 7 days by default; 0: only when
+asked). A check is a job (`twic`, or `POST /api/admin/twic/check` now): it
+reads TWIC's page for the newest issue (`chess_net::twic`, one request at a
+time, with a user agent saying what it is) and imports each issue out
+since the last one taken, at most 10 a check. The first check takes the
+newest issue only, not the years before it. Each issue is noted as taken
+before its games go in, so **none is imported twice**, even across a
+crash (one cut off then is shown as unfinished, not taken again); its zip
+is unpacked into `tmp/` and imported by an ordinary import job, which goes
+on after a restart like any other. Issues are free to use: a server-wide
+database suits them. If the database stops being the admin's (deleted,
+transferred), checks stop until another is chosen.
 
 ## The audit log
 

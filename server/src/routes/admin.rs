@@ -29,7 +29,7 @@ use crate::wire::{
     CreateInvite, CreateUser, DiskDto, ImportFileDto, InviteDto, LinkDto, OwnedDatabaseDto, Role,
     SetPassword, UpdateUser, UserDto,
 };
-use crate::wire::{BackupsDto, JobStarted};
+use crate::wire::{BackupsDto, JobStarted, TwicDto, TwicSettings};
 use crate::{AppState, blocking};
 
 fn user_dto(state: &AppState, user: User) -> ApiResult<UserDto> {
@@ -476,6 +476,35 @@ pub async fn backup_now(
     AdminAuth(auth): AdminAuth,
 ) -> ApiResult<(StatusCode, Json<JobStarted>)> {
     let job = blocking(move || crate::backup::start(&state, Some(&auth.user), Some(&auth.client))).await?;
+    Ok((StatusCode::ACCEPTED, Json(JobStarted { job })))
+}
+
+/// The TWIC updater's settings and the issues it took (NET-06).
+pub async fn twic(State(state): State<Arc<AppState>>, _: AdminAuth) -> ApiResult<Json<TwicDto>> {
+    blocking(move || Ok(Json(crate::twic::view(&state)?))).await
+}
+
+/// Sets the database TWIC goes into (one the admin owns; `null` turns it
+/// off) and the days between checks.
+pub async fn set_twic(
+    State(state): State<Arc<AppState>>,
+    AdminAuth(auth): AdminAuth,
+    body: axum::body::Bytes,
+) -> ApiResult<Json<TwicDto>> {
+    blocking(move || {
+        let req: TwicSettings = crate::routes::json_body(&body)?;
+        crate::twic::configure(&state, &auth, req.database, req.every_days)?;
+        Ok(Json(crate::twic::view(&state)?))
+    })
+    .await
+}
+
+/// Checks for new issues now, as a job.
+pub async fn twic_check(
+    State(state): State<Arc<AppState>>,
+    AdminAuth(auth): AdminAuth,
+) -> ApiResult<(StatusCode, Json<JobStarted>)> {
+    let job = blocking(move || crate::twic::start(&state, Some(&auth))).await?;
     Ok((StatusCode::ACCEPTED, Json(JobStarted { job })))
 }
 

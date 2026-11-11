@@ -79,12 +79,17 @@ impl Progress for Guarded<'_> {
 
 /// Deletes an uploaded file when the import is done with it, unless the
 /// server is stopping: then the import goes on with it after a restart.
-struct TempFile {
+pub(crate) struct TempFile {
     path: Option<PathBuf>,
     stopping: Arc<AtomicBool>,
 }
 
 impl TempFile {
+    /// A file of `tmp/` the import deletes once it ends (as an upload).
+    pub(crate) fn upload(state: &AppState, path: PathBuf) -> TempFile {
+        TempFile { path: Some(path), stopping: state.jobs.stopping() }
+    }
+
     fn none(state: &AppState) -> TempFile {
         TempFile { path: None, stopping: state.jobs.stopping() }
     }
@@ -250,7 +255,7 @@ fn busy() -> ApiError {
 }
 
 /// Checks the database may take an import now, and starts it. Blocking.
-fn start(
+pub(crate) fn start(
     state: &Arc<AppState>,
     auth: &Auth,
     meta: DbMeta,
