@@ -405,6 +405,31 @@ pub struct GamesQuery {
     pub moves_min: Option<u16>,
     pub moves_max: Option<u16>,
     pub annotated_only: bool,
+    /// Only the games reaching this position (SRCH-03, through the
+    /// position index, so within its plies).
+    pub fen: Option<String>,
+    /// Games marked as deleted: left out unless asked for.
+    pub deleted: DeletedFilter,
+}
+
+/// Which games marked as deleted a list shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeletedFilter {
+    #[default]
+    Hide,
+    Show,
+    /// Only them.
+    Only,
+}
+
+/// A page of the game list, or (with `fen=` while the position index is
+/// behind) the job bringing it up to date: ask again when it's done.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum GamesAnswer {
+    Ready(GamePage),
+    Job { job: u64 },
 }
 
 /// Rows per page at most.
@@ -419,7 +444,13 @@ impl GamesQuery {
         self.limit.unwrap_or(50).min(MAX_PAGE)
     }
 
-    /// The header criteria; deleted games are always left out.
+    /// The FEN asked for, if any.
+    pub fn fen(&self) -> Option<&str> {
+        self.fen.as_deref().map(str::trim).filter(|f| !f.is_empty())
+    }
+
+    /// The header criteria; deleted games are left out unless `deleted`
+    /// asks for them (`only` is applied after).
     pub fn header_query(&self) -> HeaderQuery {
         HeaderQuery {
             white: self.white.clone(),
@@ -449,7 +480,7 @@ impl GamesQuery {
             moves_min: self.moves_min,
             moves_max: self.moves_max,
             annotated_only: self.annotated_only,
-            skip_deleted: true,
+            skip_deleted: self.deleted == DeletedFilter::Hide,
         }
     }
 }

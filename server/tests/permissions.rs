@@ -14,6 +14,8 @@ fn game_routes(db: &str) -> Vec<String> {
         format!("/api/databases/{db}/games"),
         format!("/api/databases/{db}/games?white=Carlsen"),
         format!("/api/databases/{db}/games?sort=white&desc=true"),
+        format!("/api/databases/{db}/games?fen={start_after_e4}&white=a"),
+        format!("/api/databases/{db}/games?deleted=only"),
         format!("/api/databases/{db}/games/0"),
         format!("/api/databases/{db}/tree"),
         format!("/api/databases/{db}/tree?fen={start_after_e4}"),

@@ -87,6 +87,10 @@ impl From<DbError> for ApiError {
             DbError::Invalid(m) => ApiError::bad_request(m),
             DbError::Locked(_) => ApiError::conflict("The database is busy"),
             DbError::Cancelled => ApiError::conflict("Cancelled"),
+            // A sort order dropped meanwhile (by a compaction): asked again, it's built.
+            DbError::NotSorted => {
+                ApiError::new(StatusCode::CONFLICT, "notSorted", "The list changed meanwhile: ask again")
+            }
             other => ApiError::internal(other),
         }
     }
