@@ -22,6 +22,7 @@ pub mod ratelimit;
 mod routes;
 pub mod secret;
 pub mod store;
+pub mod twic;
 mod ui;
 pub mod wire;
 

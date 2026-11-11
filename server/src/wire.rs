@@ -271,6 +271,40 @@ pub struct BackupsDto {
     pub backups: Vec<BackupDto>,
 }
 
+/// The TWIC updater (NET-06), for the admin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TwicDto {
+    /// The database issues go into (one the admin owns); none: off.
+    pub database: Option<String>,
+    pub database_name: Option<String>,
+    /// Days between checks (0: only when asked).
+    pub every_days: u32,
+    pub last_check: Option<i64>,
+    pub last_issue: Option<u32>,
+    /// The newest issues taken.
+    pub issues: Vec<TwicIssueDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TwicIssueDto {
+    pub issue: u32,
+    pub imported_at: i64,
+    /// None while it's imported, or if its import didn't finish.
+    pub games: Option<u64>,
+}
+
+/// `PUT /api/admin/twic`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TwicSettings {
+    #[serde(default)]
+    pub database: Option<String>,
+    #[serde(default)]
+    pub every_days: Option<u32>,
+}
+
 /// A database the admin is about to delete with its owner (metadata only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

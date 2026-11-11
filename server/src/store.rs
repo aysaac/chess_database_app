@@ -1144,6 +1144,44 @@ impl Store {
         Ok(self.conn().execute("DELETE FROM audit WHERE at < ?1", [before])?)
     }
 
+    // ---- TWIC issues (NET-06) ------------------------------------------------------
+
+    /// The highest issue taken, if any.
+    pub fn twic_last(&self) -> ApiResult<Option<u32>> {
+        let n: Option<i64> = self.conn().query_row("SELECT MAX(issue) FROM twic_issues", [], |r| r.get(0))?;
+        Ok(n.map(|n| n.max(0) as u32))
+    }
+
+    /// Notes issue `issue` as taken, before its games go in (so it's never
+    /// taken twice); false if it was already.
+    pub fn twic_take(&self, issue: u32, db: &str) -> ApiResult<bool> {
+        Ok(self.conn().execute(
+            "INSERT INTO twic_issues (issue, database_id, imported_at, games) VALUES (?1, ?2, ?3, -1)
+             ON CONFLICT (issue) DO NOTHING",
+            params![issue, db, now()],
+        )? > 0)
+    }
+
+    /// The games issue `issue` brought, once its import ended.
+    pub fn twic_games(&self, issue: u32, games: u64) -> ApiResult<()> {
+        self.conn()
+            .execute("UPDATE twic_issues SET games = ?2 WHERE issue = ?1", params![issue, games as i64])?;
+        Ok(())
+    }
+
+    /// The newest issues taken: (issue, database, when, games or -1 while
+    /// importing or if it didn't finish).
+    pub fn twic_issues(&self, limit: u32) -> ApiResult<Vec<(u32, Option<String>, i64, i64)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT issue, database_id, imported_at, games FROM twic_issues ORDER BY issue DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map([limit], |r| Ok((r.get::<_, i64>(0)?.max(0) as u32, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     // ---- backups -----------------------------------------------------------------
 
     /// A consistent copy of the store at `path`, made with SQLite's online

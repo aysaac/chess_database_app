@@ -11,6 +11,7 @@ publish = false
 chess-core.workspace = true
 chess-db.workspace = true
 chess-jobs.workspace = true
+chess-net.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -34,3 +35,4 @@ libc = "0.2"
 [dev-dependencies]
 tempfile.workspace = true
 ureq = "3.4"
+zip = { version = "9.5", default-features = false, features = ["deflate-flate2"] }

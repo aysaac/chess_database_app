@@ -84,6 +84,15 @@ export interface Backups {
   backups: Backup[];
 }
 
+export interface Twic {
+  database: string | null;
+  databaseName: string | null;
+  everyDays: number;
+  lastCheck: number | null;
+  lastIssue: number | null;
+  issues: { issue: number; importedAt: number; games: number | null }[];
+}
+
 /** A database deleted with its owner (metadata only). */
 export interface OwnedDatabase {
   id: string;

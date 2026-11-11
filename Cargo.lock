@@ -623,6 +623,7 @@ dependencies = [
  "chess-core",
  "chess-db",
  "chess-jobs",
+ "chess-net",
  "env_logger",
  "getrandom 0.4.3",
  "http-body",
@@ -639,6 +640,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "ureq",
+ "zip",
 ]
 
 [[package]]

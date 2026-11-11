@@ -40,6 +40,13 @@ pub fn once(state: &Arc<AppState>) {
             }
         }
     }
+    if crate::twic::due(state) {
+        match crate::twic::start(state, None) {
+            Ok(job) => log::info!("scheduled TWIC check: job {job}"),
+            Err(e) if e.status.as_u16() == 409 => log::warn!("no scheduled TWIC check: {}", e.message),
+            Err(e) => log::warn!("couldn't check TWIC: {}", e.message),
+        }
+    }
     if let Some(idle) = state.config.idle_close {
         for id in state.pool.close_idle(idle, &state.jobs.manager) {
             log::info!("closed database {id}: unused for {} minutes", idle.as_secs() / 60);

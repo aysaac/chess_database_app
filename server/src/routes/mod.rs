@@ -74,6 +74,8 @@ pub fn api(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/admin/disk", get(admin::disk))
         .route("/admin/audit", get(admin::audit))
         .route("/admin/backups", get(admin::backups).post(admin::backup_now))
+        .route("/admin/twic", get(admin::twic).put(admin::set_twic))
+        .route("/admin/twic/check", post(admin::twic_check))
         .route("/admin/import-files", get(admin::import_files))
         // Counted by route template (after routing: only matched routes).
         .route_layer(axum::middleware::from_fn_with_state(state, crate::metrics::record))
