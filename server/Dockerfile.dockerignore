@@ -1,0 +1,17 @@
+# The build context is the repository root (docker build -f server/Dockerfile .).
+# Only what the Dockerfile copies is needed; the rest stays out (testdata/large
+# alone is gigabytes).
+*
+!Cargo.toml
+!Cargo.lock
+!rustfmt.toml
+!crates/
+!app/src-tauri/
+!server/
+app/src-tauri/binaries/
+app/src-tauri/gen/
+app/src-tauri/test_/
+**/*.chessdb/
+server/admin/node_modules/
+server/admin/dist/
+**/target/

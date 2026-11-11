@@ -1,0 +1,49 @@
+# chess-server behind Caddy, which gets and renews a TLS certificate for your
+# domain. Copy this folder, set your domain here and in Caddyfile.example,
+# then from this folder:
+#
+#   docker compose -f compose.example.yaml up -d --build
+#   docker compose -f compose.example.yaml logs chess-server   # the setup token
+#
+# See docs/server.md (Deployment).
+
+services:
+  chess-server:
+    build:
+      context: ../..
+      dockerfile: server/Dockerfile
+    image: chess-server:latest
+    restart: unless-stopped
+    environment:
+      # Your domain: Secure cookies, and the origin requests must come from.
+      CHESS_SERVER_PUBLIC_URL: https://chess.example.com
+      # Caddy is in front: take the client's address from X-Forwarded-For.
+      CHESS_SERVER_TRUST_PROXY: "1"
+      CHESS_SERVER_MAX_UPLOAD_MB: "256"
+    volumes:
+      # The data directory. A local disk: not NFS or SMB (file locks, fsync).
+      - chess-data:/data
+      # Optional: a host folder the admin imports from (PGN, ChessBase .cbh).
+      # - /srv/chess-import:/data/import:ro
+    # Not published: only Caddy reaches it, on the compose network.
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - chess-server
+
+volumes:
+  chess-data:
+  caddy-data:
+  caddy-config:
