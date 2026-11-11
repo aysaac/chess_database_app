@@ -64,7 +64,8 @@ pub(crate) fn sort_value(key: SortKey, r: &IndexRecord, ranks: &[u32]) -> (bool,
     }
 }
 
-fn name_kind(key: SortKey) -> Option<NameKind> {
+/// The name table a key sorts by, if any.
+pub(crate) fn name_kind(key: SortKey) -> Option<NameKind> {
     match key {
         SortKey::White | SortKey::Black => Some(NameKind::Player),
         SortKey::Event => Some(NameKind::Event),
@@ -163,17 +164,27 @@ pub fn page_ids(db: &Database, spec: SortSpec, offset: u32, limit: u32) -> Resul
 
 /// `ids` (ascending, e.g. a search result) in `spec` order. Needs the
 /// permutation for `spec` (else [`DbError::NotSorted`]); ids added after it
-/// was built follow in id order.
+/// was built follow in id order. A caller that just built the permutation
+/// passes it to [`subset_in`] instead (it may not have been kept).
 pub fn sorted_subset(db: &Database, spec: SortSpec, ids: &[GameId]) -> Result<Vec<GameId>, DbError> {
     if spec.is_natural_order() {
         return Ok(if spec.descending { ids.iter().rev().copied().collect() } else { ids.to_vec() });
     }
     let perm = db.cached_sort(spec).ok_or(DbError::NotSorted)?;
+    Ok(subset_in(&perm, ids))
+}
+
+/// `ids` (ascending, e.g. a search result) in the order of `perm`, a sort
+/// permutation ([`build_sort`], [`ensure_sort`]); ids it doesn't cover
+/// (games added after it was built) follow in id order. With a
+/// permutation from [`ensure_sort`] made after `ids` were found, that's
+/// none of them: the result is in true sort order.
+pub fn subset_in(perm: &[GameId], ids: &[GameId]) -> Vec<GameId> {
     let set = GameSet::from_ids(ids);
     let sorted = perm.len() as GameId;
     let mut out: Vec<GameId> = perm.iter().copied().filter(|&id| set.contains(id)).collect();
     out.extend(ids.iter().copied().filter(|&id| id >= sorted));
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
@@ -240,6 +251,8 @@ mod tests {
         let db = db.lock().unwrap();
         assert_eq!(sorted_subset(&db, spec, &[0, 1, 3]).unwrap(), [1, 0, 3]);
         assert_eq!(sorted_subset(&db, SortSpec::new(SortKey::Id, true), &[0, 1, 3]).unwrap(), [3, 1, 0]);
+        // With the permutation in hand, nothing is looked up; ids past it follow.
+        assert_eq!(subset_in(&[1, 2, 0], &[0, 1, 5, 7]), [1, 0, 5, 7]);
     }
 
     #[test]

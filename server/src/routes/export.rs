@@ -2,7 +2,10 @@
 //! games route's criteria, streamed as one PGN file. Games are read and
 //! written a few hundred at a time on the blocking pool and passed on
 //! through a small channel, so the file is never held in memory, and a
-//! client that goes away stops the export.
+//! client that goes away stops the export. A compaction meanwhile
+//! renumbers the games: the export stops then, with an error (the client
+//! sees a broken download rather than a file mixing games from before and
+//! after it).
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -21,8 +24,7 @@ use crate::access::require;
 use crate::audit::Target;
 use crate::auth::Auth;
 use crate::error::ApiResult;
-use crate::listing::Listing;
-use crate::routes::games::listing_of;
+use crate::listing::{ListFor, Listing, compacted_since, listing};
 use crate::wire::{Access, GamesAnswer, GamesQuery};
 use crate::{AppState, blocking};
 
@@ -84,7 +86,7 @@ pub async fn export(
     let (meta, open, ids) = blocking(move || {
         let (meta, _) = require(&st.store, &auth.user, &id, Access::Read)?;
         let open = st.open_db(&id)?;
-        let listing = listing_of(&st, &open, &meta, &auth.user, &q)?;
+        let listing = listing(&st, &open, &meta, &auth.user, &q, ListFor::Page)?;
         log::info!("{} exports database {}", auth.user.username, meta.id);
         st.audit("export", Some(&auth.user), Target::Database(&meta), None, Some(&auth.client));
         Ok((meta, open, listing))
@@ -105,6 +107,12 @@ pub async fn export(
             from += GAMES_PER_READ;
             let games = {
                 let db = open.lock();
+                if compacted_since(&db, &ids) {
+                    log::info!("export of {} stopped: the database was compacted meanwhile", open.id);
+                    let why = "the database was compacted during the export, which renumbers its games";
+                    let _ = tx.blocking_send(Err(std::io::Error::other(why)));
+                    return;
+                }
                 part.iter().map(|&g| db.read_game(g)).collect::<Result<Vec<_>, _>>()
             };
             let games = match games {

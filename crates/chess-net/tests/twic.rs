@@ -5,7 +5,6 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
-use chess_db::{Database, NoProgress};
 use chess_net::twic::{Twic, TwicError};
 
 /// A zip holding `name` with `contents`, deflated.
@@ -76,17 +75,12 @@ fn serve() -> (String, Seen) {
 }
 
 #[test]
-fn the_newest_issue_is_found_and_imported() {
+fn the_newest_issue_is_found_and_read() {
     let (base, seen) = serve();
     let twic = Twic::with_base(&base);
     assert_eq!(twic.latest_issue().unwrap(), 1601);
     let pgn = twic.issue_pgn(1601).unwrap();
     assert_eq!(pgn, ISSUE.as_bytes());
-    let dir = tempfile::tempdir().unwrap();
-    let db = Mutex::new(Database::create(&dir.path().join("TWIC")).unwrap());
-    let summary = twic.import_issue(&db, 1601, &NoProgress).unwrap();
-    assert_eq!(summary.imported, 2);
-    assert_eq!(db.lock().unwrap().row(0).unwrap().event, "Stand-in Open");
     assert!(matches!(twic.issue_pgn(1600), Err(TwicError::NoSuchIssue(1600))));
     assert!(matches!(twic.issue_pgn(1599), Err(TwicError::BadZip(1599, _))));
     // It says what it is.

@@ -20,11 +20,10 @@ use std::sync::{Arc, Mutex};
 
 use chess_core::shakmaty::Chess;
 
-use crate::database::NameKind;
-use crate::sort::sort_value;
+use crate::sort::{name_kind, sort_value};
 use crate::{
     Database, DbError, GameId, GameRow, GameSet, HeaderQuery, Progress, SortKey, SortSpec, ensure_sort,
-    find_position, search_headers, sorted_subset,
+    find_position, search_headers, subset_in,
 };
 
 /// One database's results in a sort order.
@@ -104,15 +103,6 @@ fn compare(a: &Key, b: &Key, descending: bool) -> Ordering {
         .then(if descending { value.reverse() } else { value })
         .then(a.source.cmp(&b.source))
         .then(a.id.cmp(&b.id))
-}
-
-fn name_kind(key: SortKey) -> Option<NameKind> {
-    match key {
-        SortKey::White | SortKey::Black => Some(NameKind::Player),
-        SortKey::Event => Some(NameKind::Event),
-        SortKey::Site => Some(NameKind::Site),
-        _ => None,
-    }
 }
 
 struct Merger<'s, 'a> {
@@ -281,7 +271,8 @@ pub fn sorted_ids(
     let ordered = match perm {
         None if spec.descending => found.into_iter().rev().collect(),
         None => found,
-        Some(_) => sorted_subset(&db.lock().expect("db lock"), spec, &found)?,
+        // Built after the search, so it covers every game found.
+        Some(perm) => subset_in(&perm, &found),
     };
     Ok(SortedIds::List(Arc::new(ordered)))
 }

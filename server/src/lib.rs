@@ -57,14 +57,20 @@ pub struct AppState {
     /// While no user exists: the one-time token that makes the first admin
     /// (`POST /api/setup`), printed to the log at start.
     pub setup_token: Mutex<Option<String>>,
+    /// The data directory's lock (`config::LOCK_FILE`), held until
+    /// [`serve`] ends: one server per data directory.
+    data_lock: Mutex<Option<std::fs::File>>,
 }
 
 impl AppState {
-    /// Prepares the data directory and opens the metadata store; imports a
-    /// stop interrupted go on, other jobs it interrupted are marked so, and
-    /// uploads no import goes on with are deleted.
+    /// Locks and prepares the data directory and opens the metadata store;
+    /// imports a stop interrupted go on, other jobs it interrupted are
+    /// marked so, and uploads no import goes on with are deleted. Refused
+    /// while another server has the data directory (it would take that
+    /// one's running jobs for interrupted ones).
     pub fn new(config: Config) -> Result<Arc<AppState>, String> {
         let dir = config.data_dir.display().to_string();
+        let data_lock = config::lock_data_dir(&config).map_err(|e| format!("data directory {dir}: {e}"))?;
         config::prepare_data_dir(&config).map_err(|e| format!("data directory {dir}: {e}"))?;
         let store =
             Arc::new(Store::open(&config.store_path()).map_err(|e| format!("metadata store in {dir}: {e}"))?);
@@ -77,6 +83,7 @@ impl AppState {
             metrics: metrics::Metrics::default(),
             hashing: tokio::sync::Semaphore::new(config.hash_concurrency.max(1)),
             setup_token: Mutex::new(no_users.then(secret::new_token)),
+            data_lock: Mutex::new(Some(data_lock)),
             store,
             config,
         });
@@ -149,6 +156,20 @@ async fn check_origin(State(state): State<Arc<AppState>>, req: Request, next: Ne
     next.run(req).await
 }
 
+/// Whether a request comes with credentials, working or not.
+fn has_credentials(headers: &HeaderMap) -> bool {
+    headers.contains_key(header::AUTHORIZATION) || auth::cookie(headers, auth::SESSION_COOKIE).is_some()
+}
+
+/// Takes one request from the client address's bucket (the limit for
+/// requests without a login).
+fn take_anon(state: &AppState, addr: &str) -> ApiResult<()> {
+    match state.config.rate_anon {
+        Some(n) => state.limits.take(&format!("ip:{addr}"), n),
+        None => Ok(()),
+    }
+}
+
 /// Notes the client's address in the request (`audit::ClientAddr`): the
 /// peer's, or a trusted proxy's `X-Forwarded-For`.
 async fn client_addr(State(state): State<Arc<AppState>>, mut req: Request, next: Next) -> Response {
@@ -157,19 +178,37 @@ async fn client_addr(State(state): State<Arc<AppState>>, mut req: Request, next:
         .get::<axum::extract::ConnectInfo<SocketAddr>>()
         .map_or_else(|| SocketAddr::from(([0, 0, 0, 0], 0)), |c| c.0);
     let addr = auth::client_ip(&state.config, req.headers(), peer);
-    // API requests without credentials count against the address (with
-    // them, the user's limit applies, in `Auth`).
+    // API requests without credentials count against the address. With
+    // them, `Auth` counts them against the user, or against the address
+    // when they don't work; routes that never look at them count them
+    // against the address too (`anonymous_limit`).
     let api = req.uri().path().starts_with("/api/") && req.uri().path() != "/api/health";
-    let credentials = req.headers().contains_key(header::AUTHORIZATION)
-        || auth::cookie(req.headers(), auth::SESSION_COOKIE).is_some();
     if api
-        && !credentials
-        && let Some(n) = state.config.rate_anon
-        && let Err(limited) = state.limits.take(&format!("ip:{addr}"), n)
+        && !has_credentials(req.headers())
+        && let Err(limited) = take_anon(&state, &addr)
     {
         return limited.into_response();
     }
     req.extensions_mut().insert(audit::ClientAddr(addr));
+    next.run(req).await
+}
+
+/// For the routes anyone may call without logging in (login, setup,
+/// sign-up, invites, password resets), which never check credentials: a
+/// request that comes with some counts against the address all the same
+/// (`client_addr` counted those without). Else any `Authorization` header
+/// would get round the address's limit there.
+pub(crate) async fn anonymous_limit(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if has_credentials(req.headers()) {
+        let addr = req.extensions().get::<audit::ClientAddr>().map(|c| c.0.clone()).unwrap_or_default();
+        if let Err(limited) = take_anon(&state, &addr) {
+            return limited.into_response();
+        }
+    }
     next.run(req).await
 }
 
@@ -195,7 +234,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 
 /// Serves until `shutdown` resolves, then cancels the running jobs and
 /// waits for them (imports stop between two batches, keeping what they
-/// committed).
+/// committed), and lets the data directory go.
 pub async fn serve(
     listener: tokio::net::TcpListener,
     state: Arc<AppState>,
@@ -214,5 +253,6 @@ pub async fn serve(
     housekeeping.abort();
     let st = state.clone();
     let _ = tokio::task::spawn_blocking(move || st.jobs.stop_all()).await;
+    state.data_lock.lock().expect("data lock").take();
     Ok(())
 }

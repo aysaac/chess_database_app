@@ -1165,6 +1165,13 @@ impl Store {
         )? > 0)
     }
 
+    /// Gives issue `issue` back when none of its games went in (its import
+    /// couldn't start, or failed first), so the next check takes it again.
+    pub fn twic_untake(&self, issue: u32) -> ApiResult<()> {
+        self.conn().execute("DELETE FROM twic_issues WHERE issue = ?1 AND games = -1", [issue])?;
+        Ok(())
+    }
+
     /// The games issue `issue` brought, once its import ended.
     pub fn twic_games(&self, issue: u32, games: u64) -> ApiResult<()> {
         self.conn()

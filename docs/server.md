@@ -63,11 +63,12 @@ queries on one database, a web UI for players (NET-09), encrypted
 | `dbs/<id>.chessdb/` | The databases. `<id>` is 32 random hex digits; the API never takes a path, only an id, checked to be exactly that before a path is built |
 | `import/` | Files the admin imports from: PGN, or ChessBase databases (the `.cbh` with its `.cbg`, `.cbp`, `.cbt`, `.cbc`) |
 | `tmp/` | Uploads being received or imported; one stays until its import ends, also across a restart (the import goes on), and the others are deleted at start |
+| `server.lock` | Locked by the running server (`File::try_lock`): a second one on the same data directory refuses to start, rather than take the first one's running imports for interrupted ones and delete their uploads |
 
 **It must be a local disk**, not NFS or SMB: databases are locked with
 `File::try_lock` and rely on `fsync` for crash safety, which network file
-systems don't reliably give. One server process per data directory (each
-open database is locked).
+systems don't reliably give. One server process per data directory (the
+directory and each open database are locked).
 
 **Backups**: see [Backups](#backups): the server makes them while it runs,
 into a folder of its own (another volume, ideally).
@@ -342,7 +343,15 @@ marked as deleted). The answer is `{"kind": "ready", total, offset, rows}`.
 With `fen` while the position index is far behind (over 20,000 games not
 indexed, as during a big import), it's `{"kind": "job", "job": N}`: the job
 bringing the index up to date, as `/lines` answers; ask again when it's
-done.
+done (`503 busy`, with `Retry-After`, while a backup copies the database
+instead). While a write job adds games (an import's batches), a sorted
+list shows the games added since its sort order was built after the
+sorted ones, in id order, rather than sorting every game again at each
+batch; a search across databases (`/api/search`) sorts such a database
+again, as merging needs every list in true order. A page read while a
+compaction renumbers the games is made again; an export it comes in the
+middle of stops with an error (a broken download, never a file mixing
+games from before and after it).
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \
@@ -435,7 +444,12 @@ newest issue only, not the years before it. Each issue is noted as taken
 before its games go in, so **none is imported twice**, even across a
 crash (one cut off then is shown as unfinished, not taken again); its zip
 is unpacked into `tmp/` and imported by an ordinary import job, which goes
-on after a restart like any other. Issues are free to use: a server-wide
+on after a restart like any other. An issue is given back, to be taken at
+the next check, when its import can't start (the database at its quota)
+or fails before any of its games went in; one that brought some of them
+stays taken, with what it brought. Only a check that worked counts for
+the schedule: one that failed (TWIC unreachable, an import that failed)
+is tried again an hour later, not a week later. Issues are free to use: a server-wide
 database suits them. If the database stops being the admin's (deleted,
 transferred), checks stop until another is chosen.
 
@@ -491,8 +505,11 @@ format is a few lines of text, not worth a crate.
 - **Compaction changes game ids**, as in the app: games after a deleted
   one move down. Each database has an `idEpoch` (in its info) that every
   compaction bumps; requests that take game ids (`deleted`) can send the
-  epoch they read the ids at, and are refused (409, `staleIds`) after a
-  compaction. Nothing syncs with the server yet, so nothing else holds
+  epoch they read the ids at (read it before the ids), and are refused
+  (409, `staleIds`) after a compaction. The compaction bumps it holding
+  the database, before it renumbers anything (one that fails or is
+  cancelled bumps it too), and those requests check it holding the
+  database, so one waiting for a compaction is refused after it. Nothing syncs with the server yet, so nothing else holds
   ids; permanent game ids are a later feature. While a compaction runs,
   the database answers `503 busy` with `Retry-After` (it holds the
   database for the whole run); its search, sort and lines caches go with
@@ -521,9 +538,11 @@ format is a few lines of text, not worth a crate.
   jobs it interrupted marked so at the next start, except imports: **an
   import goes on by itself** from what it committed. Before each batch it
   notes where the file and the database will be once the batch is in; at
-  start the database's game count says which of the last two notes made it,
-  so no game is imported twice and none is left out (tested by killing the
-  server mid-import, `server/tests/restart.rs`). Its upload stays in `tmp/`
+  start the database's game count says which of the last two notes made it
+  (or, stopped in its first commit, that none did: it starts over), so no
+  game is imported twice and none is left out (tested by killing the
+  server mid-import, `server/tests/restart.rs`). An import that fails says
+  in its report how many games went in before it did. Its upload stays in `tmp/`
   until the import ends or is discarded (an import that can't go on: its
   database or file gone); other files there are deleted at start. A
   resumed import is the same job, which who started it, the database's
@@ -557,7 +576,9 @@ million games.
 - One process; no horizontal scaling. Data on a local disk.
 - **Rate limits**: a token bucket in memory per user (any session or API
   token of theirs) and per client address for requests without a login (and
-  for credentials that don't work). A bucket holds a quarter of a minute's
+  for credentials that don't work, and for the routes anyone may call:
+  login, setup, sign-up, invites and password resets, whatever credentials
+  come with them). A bucket holds a quarter of a minute's
   requests (at least 10) and refills at the per-minute rate; an empty one
   answers `429` with `Retry-After`. Generous by default (1,200 a minute per
   user, 300 per address), to stop a runaway script or a flood rather than a

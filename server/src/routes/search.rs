@@ -1,22 +1,24 @@
 //! Searching several databases at once (SRCH-13): `GET /api/search` with
 //! `db=` for each database (or `all=true` for every one the caller may
 //! read) and the games route's criteria, sort and paging. Each database's
-//! list is made and cached as its own game list is (`listing`), then they
-//! are merged in the sort order (`chess_db::merge_page`) without copying.
+//! list is made and cached as its own game list is (`listing`), in true
+//! sort order even while a write job adds games to it (its own list then
+//! puts the games added since its sort order was built last; merging
+//! can't), then they are merged in the sort order (`chess_db::merge_page`)
+//! without copying.
 
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{RawQuery, State};
-use chess_db::{CrossSource, SortedIds, merge_page, merged_total};
+use chess_db::{CrossSource, merge_page, merged_total};
 
 use crate::access::{access, require};
 use crate::auth::Auth;
 use crate::error::{ApiError, ApiResult};
-use crate::listing::Listing;
+use crate::listing::{GameList, ListFor, Listing, compacted_since, listing, renumbered};
 use crate::pool::OpenDb;
-use crate::routes::games::listing_of;
-use crate::store::DbMeta;
+use crate::store::{DbMeta, User};
 use crate::wire::{
     Access, GameRowDto, GamesQuery, SearchAnswer, SearchDatabaseDto, SearchPage, SearchRowDto,
 };
@@ -91,60 +93,87 @@ pub async fn search(
             )));
         }
         let opens: Vec<Arc<OpenDb>> = metas.iter().map(|m| state.open_db(&m.id)).collect::<ApiResult<_>>()?;
-        // Each database's list on a thread of its own: the first page takes
-        // about as long as the slowest database's.
-        let lists: Vec<ApiResult<Listing>> = std::thread::scope(|scope| {
-            let handles: Vec<_> = metas
-                .iter()
-                .zip(&opens)
-                .map(|(meta, open)| {
-                    let (state, user, q) = (&state, &auth.user, &q);
-                    scope.spawn(move || listing_of(state, open, meta, user, q))
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|h| h.join().unwrap_or_else(|_| Err(ApiError::internal("a search panicked"))))
-                .collect()
-        });
-        let mut ready: Vec<SortedIds> = Vec::with_capacity(lists.len());
-        for (meta, list) in metas.iter().zip(lists) {
-            match list? {
-                Listing::Ready(ids) => ready.push(ids),
-                Listing::Job(job) => {
-                    return Ok(Json(SearchAnswer::Job { job, database: meta.id.clone() }));
-                }
+        // Made again once if a compaction renumbered a database's games meanwhile.
+        for _ in 0..2 {
+            if let Some(answer) = page_of(&state, &auth.user, &metas, &opens, &q)? {
+                return Ok(Json(answer));
             }
         }
-        let sources: Vec<CrossSource<'_>> =
-            opens.iter().zip(&ready).map(|(open, ids)| CrossSource { db: &open.db, ids }).collect();
-        let page = merge_page(&sources, q.sort_spec(), u64::from(q.offset), q.page_limit() as usize)?;
-        let mut rows = Vec::with_capacity(page.len());
-        for (s, id) in page {
-            let row = opens[s].lock().row(id)?;
-            rows.push(SearchRowDto {
-                database: metas[s].id.clone(),
-                database_name: metas[s].name.clone(),
-                row: GameRowDto::from(row),
-            });
-        }
-        let databases = metas
-            .iter()
-            .zip(&ready)
-            .map(|(m, ids)| SearchDatabaseDto {
-                id: m.id.clone(),
-                name: m.name.clone(),
-                total: ids.len() as u32,
-            })
-            .collect();
-        Ok(Json(SearchAnswer::Ready(SearchPage {
-            total: merged_total(&sources),
-            offset: q.offset,
-            databases,
-            rows,
-        })))
+        Err(renumbered())
     })
     .await
+}
+
+/// The page `q` asks for of the databases' games together; None when a
+/// compaction came meanwhile (the ids changed). Blocking.
+fn page_of(
+    state: &AppState,
+    user: &User,
+    metas: &[DbMeta],
+    opens: &[Arc<OpenDb>],
+    q: &GamesQuery,
+) -> ApiResult<Option<SearchAnswer>> {
+    // Each database's list on a thread of its own: the first page takes
+    // about as long as the slowest database's. Each in true sort order
+    // (`ListFor::Merge`), as merging needs.
+    let lists: Vec<ApiResult<Listing>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = metas
+            .iter()
+            .zip(opens)
+            .map(|(meta, open)| scope.spawn(move || listing(state, open, meta, user, q, ListFor::Merge)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| Err(ApiError::internal("a search panicked"))))
+            .collect()
+    });
+    let mut ready: Vec<GameList> = Vec::with_capacity(lists.len());
+    for (meta, list) in metas.iter().zip(lists) {
+        match list? {
+            Listing::Ready(list) => ready.push(list),
+            Listing::Job(job) => return Ok(Some(SearchAnswer::Job { job, database: meta.id.clone() })),
+        }
+    }
+    let moved = || opens.iter().zip(&ready).any(|(open, list)| compacted_since(&open.lock(), list));
+    let sources: Vec<CrossSource<'_>> =
+        opens.iter().zip(&ready).map(|(open, list)| CrossSource { db: &open.db, ids: &list.ids }).collect();
+    // A list made across a compaction may hold ids past the end: a
+    // compaction is checked for before its error is.
+    let page = match merge_page(&sources, q.sort_spec(), u64::from(q.offset), q.page_limit() as usize) {
+        Ok(page) => page,
+        Err(_) if moved() => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let mut rows = Vec::with_capacity(page.len());
+    for (s, id) in page {
+        let db = opens[s].lock();
+        if compacted_since(&db, &ready[s]) {
+            return Ok(None);
+        }
+        rows.push(SearchRowDto {
+            database: metas[s].id.clone(),
+            database_name: metas[s].name.clone(),
+            row: GameRowDto::from(db.row(id)?),
+        });
+    }
+    if moved() {
+        return Ok(None);
+    }
+    let databases = metas
+        .iter()
+        .zip(&ready)
+        .map(|(m, list)| SearchDatabaseDto {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            total: list.len() as u32,
+        })
+        .collect();
+    Ok(Some(SearchAnswer::Ready(SearchPage {
+        total: merged_total(&sources),
+        offset: q.offset,
+        databases,
+        rows,
+    })))
 }
 
 #[cfg(test)]

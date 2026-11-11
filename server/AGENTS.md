@@ -51,6 +51,14 @@ none).
   an extractor would read it first. Requests that read or change a
   database's games take it with `AppState::open_db` (503 while it's being
   compacted).
+- **Game ids change with a compaction**, which can come between two locks
+  of a request. Reading games by the ids of a list: check
+  `listing::compacted_since` holding the lock that reads them (make the
+  list again, or stop). Changing games by ids a client sent: check the
+  store's `idEpoch` holding the database's lock (`maintenance.rs`).
+- Routes anyone may call without logging in go in the `anonymous` router
+  (`routes/mod.rs`): they count against the client's address whatever
+  credentials come with them.
 - **Never log game content, search criteria, positions or file names in
   the audit log** (`state.audit`); the admin's jobs view leaves out labels
   and messages for the same reason. No database name, id or username in a

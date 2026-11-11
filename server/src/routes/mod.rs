@@ -21,19 +21,25 @@ use crate::AppState;
 use crate::error::{ApiError, ApiResult};
 
 pub fn api(state: Arc<AppState>) -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/health", get(account::health))
+    // Anyone may call these without logging in; they never look at
+    // credentials, so they count against the client's address with or
+    // without them.
+    let anonymous = Router::new()
         .route("/setup", get(account::setup_status).post(account::setup))
         .route("/login", post(account::login))
+        .route("/signup", post(account::signup))
+        .route("/invites/{token}", get(account::invite_info))
+        .route("/password-reset", post(account::reset_password))
+        .route("/password-reset/request", post(account::forgot_password))
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::anonymous_limit));
+    Router::new()
+        .merge(anonymous)
+        .route("/health", get(account::health))
         .route("/logout", post(account::logout))
         .route("/me", get(account::me))
         .route("/me/password", post(account::change_password))
         .route("/me/account", get(account::account))
         .route("/me/email", put(account::change_email))
-        .route("/signup", post(account::signup))
-        .route("/invites/{token}", get(account::invite_info))
-        .route("/password-reset", post(account::reset_password))
-        .route("/password-reset/request", post(account::forgot_password))
         .route("/transfers", get(transfers::list))
         .route("/transfers/{db}/accept", post(transfers::accept))
         .route("/transfers/{db}/decline", post(transfers::decline))

@@ -5,7 +5,10 @@
 //! Compaction renumbers the games, as in the app: an id read before means
 //! another game after. Each database has an `idEpoch`, bumped by each
 //! compaction, that changes taking ids can name to be refused (409) when
-//! the ids are stale. Ids aren't permanent; that's a later feature.
+//! the ids are stale. Ids aren't permanent; that's a later feature. The
+//! compaction bumps it holding the database's lock, before it renumbers
+//! anything, and changes taking ids check it holding the lock too: a
+//! compaction can't come between the check and the change.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -49,6 +52,14 @@ fn check_epoch(meta: &DbMeta, epoch: Option<u64>) -> ApiResult<()> {
     if epoch.is_some_and(|e| e != meta.id_epoch) { Err(stale_ids()) } else { Ok(()) }
 }
 
+/// The same with the database's `idEpoch` as it is now: called holding the
+/// database's lock, which a compaction holds from bumping it to its end.
+fn check_epoch_now(state: &AppState, id: &str, epoch: Option<u64>) -> ApiResult<()> {
+    let Some(epoch) = epoch else { return Ok(()) };
+    let meta = state.store.database(id)?.ok_or_else(ApiError::not_found)?;
+    check_epoch(&meta, Some(epoch))
+}
+
 /// Marks games as deleted, or restores them (write access). They stay in
 /// the database until it's compacted; the game list leaves them out unless
 /// asked (`deleted=show`, `deleted=only`).
@@ -66,10 +77,13 @@ pub async fn mark_deleted(
             return Err(ApiError::bad_request(format!("Mark at most {MAX_GAMES} games at once")));
         }
         let open = state.open_db(&id)?;
-        let changed = open.lock().set_deleted_many(&req.games, req.deleted).map_err(|e| match e {
+        let mut db = open.lock();
+        check_epoch_now(&state, &id, req.id_epoch)?;
+        let changed = db.set_deleted_many(&req.games, req.deleted).map_err(|e| match e {
             chess_db::DbError::NotFound(g) => ApiError::bad_request(format!("There is no game {g}")),
             other => other.into(),
         })?;
+        drop(db);
         log::info!(
             "{} {} {changed} games of database {}",
             auth.user.username,
@@ -177,6 +191,7 @@ pub async fn delete_found(
         }
         let open = state.open_db(&id)?;
         let mut db = open.lock();
+        check_epoch_now(&state, &id, Some(found.id_epoch))?;
         if db.generation() != found.found.generation {
             return Err(ApiError::conflict(
                 "The database changed since the search: find the duplicates again",
@@ -235,15 +250,21 @@ pub async fn compact(
             &auth.user,
             move |ctx| {
                 o.compacting.store(true, Ordering::Release);
-                let result = o.lock().compact(ctx);
-                if result.is_ok() {
-                    // Before requests are let in again: ids read from now on are the new ones.
-                    if let Err(e) = st.store.bump_id_epoch(&db_id) {
-                        log::error!("database {db_id}: couldn't note the compaction: {}", e.message);
+                let result = {
+                    let mut db = o.lock();
+                    // Bumped first, holding the database: a change that took
+                    // ids waiting for it then sees the new epoch, and ids read
+                    // before it are refused even if the server stops halfway.
+                    // A compaction that fails or is cancelled bumps it too.
+                    match st.store.bump_id_epoch(&db_id) {
+                        Ok(()) => db.compact(ctx).map_err(to_job_error),
+                        Err(e) => {
+                            Err(JobError::Failed(format!("couldn't note the compaction: {}", e.message)))
+                        }
                     }
-                }
+                };
                 o.compacting.store(false, Ordering::Release);
-                let summary = result.map_err(to_job_error)?;
+                let summary = result?;
                 if ctx.is_cancelled() {
                     return Err(JobError::Cancelled);
                 }

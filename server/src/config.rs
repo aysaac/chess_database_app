@@ -280,6 +280,30 @@ fn take_flag(args: &mut Vec<String>, name: &str) -> Result<Option<String>, Strin
     }
 }
 
+/// The data directory's lock file: whoever holds it runs a server there.
+pub const LOCK_FILE: &str = "server.lock";
+
+/// Takes the data directory for this process (an exclusive lock on its
+/// `server.lock`, released when the file closes, or the process ends
+/// however it ends). Refused while another server has it.
+pub fn lock_data_dir(config: &Config) -> Result<std::fs::File, String> {
+    std::fs::create_dir_all(&config.data_dir).map_err(|e| e.to_string())?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(config.data_dir.join(LOCK_FILE))
+        .map_err(|e| e.to_string())?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            Err("another chess-server runs on it (one server per data directory)".into())
+        }
+        Err(std::fs::TryLockError::Error(e)) => Err(e.to_string()),
+    }
+}
+
 /// Creates the data directory's folders.
 pub fn prepare_data_dir(config: &Config) -> std::io::Result<()> {
     for dir in [config.data_dir.clone(), config.dbs_dir(), config.import_dir(), config.tmp_dir()] {

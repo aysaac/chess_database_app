@@ -135,12 +135,14 @@ struct Resume {
 
 impl Resume {
     /// Games of the file to pass over when the database has `count` games,
-    /// if that's a state the import was in.
+    /// if that's a state the import was in. A note is made before its
+    /// batch's commit: with no earlier one, the first commit may not have
+    /// made it, and the import starts over.
     fn skip(&self, count: u32) -> Option<u64> {
         match (self.prev, self.next) {
             (_, Some(n)) if n.games == count => Some(n.read),
             (Some(p), _) if p.games == count => Some(p.read),
-            (None, None) if count == self.base => Some(0),
+            (None, _) if count == self.base => Some(0),
             _ => None,
         }
     }
@@ -186,17 +188,28 @@ fn run(state: &AppState, import: &Import, ctx: &JobContext) -> Result<String, Jo
         });
     };
     let resume = ImportResume { skip: import.skip, before_commit: Some(&checkpoint) };
-    let mut summary: ImportSummary = if read_all {
-        ImportSummary::default()
+    let result = if read_all {
+        Ok(ImportSummary::default())
     } else {
         match kind {
             ImportKind::Pgn => import_pgn_resumable(&import.open.db, &path, resume, &guard),
             ImportKind::Cbh => import_cb_resumable(&import.open.db, &path, resume, &guard),
         }
-        .map_err(to_job_error)?
     };
     // Counting what earlier runs imported too.
-    summary.imported = u64::from(import.open.lock().count().saturating_sub(base));
+    let imported = u64::from(import.open.lock().count().saturating_sub(base));
+    let mut summary = match result {
+        Ok(summary) => summary,
+        Err(e) => {
+            // What went in before it failed, in the report too (a TWIC
+            // update goes by it: an issue none of whose games went in is
+            // taken again).
+            let partial = ImportSummary { imported, ..ImportSummary::default() };
+            state.jobs.set_report(ctx.id(), ImportReportDto::new(file, &partial));
+            return Err(to_job_error(e));
+        }
+    };
+    summary.imported = imported;
     state.jobs.set_report(ctx.id(), ImportReportDto::new(file.clone(), &summary));
     let over = guard.over.load(Ordering::Relaxed);
     log::info!(
@@ -536,6 +549,32 @@ mod tests {
         assert_eq!(import_kind(Path::new("a.PGN")), Some(ImportKind::Pgn));
         assert_eq!(import_kind(Path::new("Mega.cbh")), Some(ImportKind::Cbh));
         assert_eq!(import_kind(Path::new("a.txt")), None);
+    }
+
+    #[test]
+    fn imports_go_on_from_the_last_commit_that_made_it() {
+        let mark = |games, read| Some(Mark { games, read });
+        let first = Resume {
+            kind: ImportKind::Pgn,
+            path: PathBuf::from("x.pgn"),
+            file: "x.pgn".into(),
+            upload: true,
+            base: 10,
+            prev: None,
+            next: mark(15, 7),
+            read_all: false,
+        };
+        // Stopped in the first commit: it made it, or nothing did.
+        assert_eq!(first.skip(15), Some(7));
+        assert_eq!(first.skip(10), Some(0));
+        assert_eq!(first.skip(12), None, "someone else's games");
+        let later = Resume { prev: mark(15, 7), next: mark(20, 12), ..first.clone() };
+        assert_eq!(later.skip(20), Some(12));
+        assert_eq!(later.skip(15), Some(7));
+        assert_eq!(later.skip(10), None, "two commits can't both be missing");
+        let none = Resume { next: None, ..first };
+        assert_eq!(none.skip(10), Some(0));
+        assert_eq!(none.skip(11), None);
     }
 
     #[test]

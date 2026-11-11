@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, Weak};
 use chess_core::position;
 use chess_db::{
     CrossSource, Database, DbError, GameId, GameSet, HeaderQuery, Progress, SortSpec, SortedIds, ensure_sort,
-    find_position, merge_page, merged_total, scan_position, search_headers, sorted_subset,
+    find_position, merge_page, merged_total, scan_position, search_headers, subset_in,
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -162,6 +162,9 @@ pub async fn search_databases(
         let mut sources = Vec::with_capacity(dbs.len());
         for (i, (handle, name, db)) in dbs.into_iter().enumerate() {
             let part = Part { ctx, index: i as u64, of };
+            // Read first: a compaction during the search (the ids found may
+            // be from before and after it) makes the results stale too.
+            let compactions = db.lock().expect("db lock").compactions();
             let within = match &pos {
                 Some(pos) => {
                     let hits = find_position(&db, pos).map_err(to_job_error)?;
@@ -175,7 +178,6 @@ pub async fn search_databases(
                 None => None,
             };
             let found = search_headers(&db, &query, within.as_ref(), &part).map_err(to_job_error)?;
-            let compactions = db.lock().expect("db lock").compactions();
             sources.push(Source {
                 handle,
                 name,
@@ -283,13 +285,17 @@ pub async fn cross_sort(
         let mut made = Vec::with_capacity(sources.len());
         for (i, db, found) in sources {
             let part = Part { ctx, index: i as u64, of };
+            // Read first: an order made across a change of the sort orders
+            // is stale (made again when asked).
+            let epoch = db.lock().expect("db lock").sort_epoch();
             let ids = if spec.is_natural_order() {
                 found.iter().rev().copied().collect()
             } else {
-                ensure_sort(&db, spec, &part).map_err(to_job_error)?;
-                sorted_subset(&db.lock().expect("db lock"), spec, &found).map_err(to_job_error)?
+                // The order just made covers every game found; it's used as
+                // it is, whether or not the database kept it.
+                let perm = ensure_sort(&db, spec, &part).map_err(to_job_error)?;
+                subset_in(&perm, &found)
             };
-            let epoch = db.lock().expect("db lock").sort_epoch();
             made.push((i, epoch, Arc::new(ids)));
         }
         let state = app.state::<AppState>();
