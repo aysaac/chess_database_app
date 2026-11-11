@@ -1,0 +1,3 @@
+node_modules/
+# Built by `npm run build` and embedded by server/build.rs.
+/dist/
