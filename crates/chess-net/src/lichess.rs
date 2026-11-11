@@ -1,7 +1,8 @@
 //! Lichess (<https://lichess.org/api>): a player's profile, and their games
 //! as NDJSON, oldest first, each line one game with its PGN (clock times,
 //! evals and the opening's name included). Lichess sends about 20 games a
-//! second to a client that isn't logged in.
+//! second to a client that isn't logged in, and 60 to a user logged in
+//! (NET-11) downloading their own.
 
 use std::io::{self, BufRead, BufReader, Read};
 use std::sync::Arc;
@@ -78,6 +79,17 @@ fn perf_types(speeds: &[Speed]) -> String {
     names.join(",")
 }
 
+/// The logged-in user's token when these are their own games (NET-11):
+/// Lichess sends them 60 a second then, not 20.
+fn own_token(client: &Client, what: &Fetch) -> Vec<(&'static str, String)> {
+    match &client.lichess_login {
+        Some((user, token)) if user.eq_ignore_ascii_case(&what.username) => {
+            vec![("Authorization", token.bearer())]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// One line of the stream, without its end; `None` at the end of it.
 fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<Option<()>> {
     line.clear();
@@ -104,6 +116,7 @@ pub(crate) fn fetch(
     let bad = |reason: String| NetError::BadData { site: Site::Lichess, reason };
     let mut since = what.since.filter(|&s| s >= FIRST_GAME_MS);
     let mut resumes = 0;
+    let mut auth = own_token(client, what);
     loop {
         let mut query = vec![
             ("sort", "dateAsc".to_owned()),
@@ -121,9 +134,15 @@ pub(crate) fn fetch(
             // itself: 1 ms before keeps it (and games sharing that ms).
             query.push(("since", (s - 1).to_string()));
         }
-        let resp = client.get(Site::Lichess, &url, &query, "application/x-ndjson", stop)?;
+        let resp = client.get_with(Site::Lichess, &url, &query, "application/x-ndjson", &auth, stop)?;
         match resp.status().as_u16() {
             200 => {}
+            // A token revoked since: the games come without it.
+            401 if !auth.is_empty() => {
+                log::info!("Lichess didn't take the login: downloading without it");
+                auth.clear();
+                continue;
+            }
             404 => return Err(NetError::NoSuchPlayer { site: Site::Lichess, name: what.username.clone() }),
             _ => return Err(status_error(Site::Lichess, &resp)),
         }

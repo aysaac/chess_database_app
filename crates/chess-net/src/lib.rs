@@ -8,11 +8,16 @@
 //! one as PGN to `chess_db::import_reader`, so they're committed in batches
 //! as they come and a Cancel takes effect at once, even while a server
 //! keeps us waiting. No UI dependencies: blocking HTTP through `ureq`.
+//!
+//! Lichess studies too: logging in (NET-11, [`oauth`]), a study's chapters
+//! into a database and games out to studies (IO-10, NET-12, [`study`]).
 
 mod chesscom;
 mod http;
 pub mod keys;
 mod lichess;
+pub mod oauth;
+pub mod study;
 pub mod time;
 pub mod twic;
 
@@ -28,6 +33,7 @@ use chess_db::{Database, DbError, ImportSummary, Progress, import_reader, scan_t
 
 pub use http::Client;
 use keys::{GameKey, key_of_url, lichess_key};
+pub use oauth::{Login, Token};
 
 /// How often a waiting download looks whether it was cancelled.
 const POLL: Duration = Duration::from_millis(200);
@@ -110,6 +116,41 @@ pub enum NetError {
     Db(#[from] DbError),
     #[error("cancelled")]
     Cancelled,
+    /// NET-11: the browser login didn't finish, and why.
+    #[error("the login to Lichess didn't finish: {0}")]
+    Login(String),
+    #[error("Lichess didn't take the login: it was revoked or has expired. Log in again")]
+    TokenRejected,
+    #[error("the token can't do what the app needs: it lacks {0}. Make one with study:read and study:write")]
+    MissingScopes(String),
+    /// IO-10: a study to import.
+    #[error("\"{0}\" isn't a link to a Lichess study. Paste one like https://lichess.org/study/abcd1234")]
+    NotAStudyLink(String),
+    #[error("Lichess has no study at that link. Check it: the study may have been deleted")]
+    NoSuchStudy,
+    #[error("that study is private or unlisted. Log in to Lichess to import it")]
+    StudyNeedsLogin,
+    #[error("that study is private: only its members can see it")]
+    StudyForbidden,
+    /// NET-12: games to a study.
+    #[error("only the study's owner and contributors can add chapters to it")]
+    NotContributor,
+    #[error("a study's name has 2 to 100 characters")]
+    BadStudyName,
+    #[error(
+        "Lichess refused to make another study. It makes 30 new studies a day per account (60 for coaches and titled players): the rest can be sent tomorrow"
+    )]
+    StudyLimit,
+    #[error(
+        "{games} games need {studies} studies of 64 chapters, and Lichess makes 30 new studies a day per account. Send at most 1,920 games at a time"
+    )]
+    TooManyStudies { games: usize, studies: usize },
+    #[error(
+        "{name} has room for {room} more chapters (a study holds 64). Pick fewer games, or send them to a new study"
+    )]
+    StudyFull { name: String, room: usize },
+    #[error("Lichess refused the games: {0}")]
+    Refused(String),
 }
 
 /// What [`download_into`] did.
@@ -213,19 +254,21 @@ impl Progress for Part<'_> {
     }
 }
 
-/// Tags that say which online game a game is.
-const TAGS: [&str; 2] = ["Link", "GameId"];
+/// Tags that say which online game (or study chapter) a game is.
+const TAGS: [&str; 3] = ["Link", "GameId", "ChapterURL"];
 
-/// The keys of the online games in the database (deleted ones too, until
-/// it's compacted).
+/// The keys of the online games and study chapters in the database
+/// (deleted ones too, until it's compacted). A study's chapter that was an
+/// online game has both.
 fn known_games(db: &Mutex<Database>, progress: &dyn Progress) -> Result<HashSet<GameKey>, DbError> {
     let mut keys = HashSet::new();
     scan_tags(db, &TAGS, progress, &mut |g| {
-        let [link, game_id] = &g.tags[..] else { return };
+        let [link, game_id, chapter] = &g.tags[..] else { return };
         let key = link.as_deref().and_then(key_of_url).or_else(|| key_of_url(&g.row.site)).or_else(|| {
             game_id.as_deref().filter(|_| g.row.site.contains("lichess.org")).and_then(lichess_key)
         });
         keys.extend(key);
+        keys.extend(chapter.as_deref().and_then(key_of_url));
     })?;
     Ok(keys)
 }
