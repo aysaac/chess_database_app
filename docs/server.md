@@ -7,9 +7,16 @@ JSON API, imports, and a web UI for the admin. The code is in `server/`
 (binary crate `chess-server`); conventions for working on it are in
 [`server/AGENTS.md`](../server/AGENTS.md).
 
+Besides reading and imports it has: the games reaching a position (SRCH-03),
+PGN export, searches across databases (SRCH-13), deleting games, duplicates
+(DB-08) and compaction, deleting users, ownership transfers, invites and
+reset links, jobs that survive a restart, online backups, rate limits, an
+audit log, metrics and TWIC updates (NET-06).
+
 Not in phase 1 (see [What's next](#whats-next)): editing games, sync with the
-desktop app, the desktop client, an offline copy of a database, a web UI for
-players (NET-09), encrypted ("sealed") databases.
+desktop app, the desktop client, an offline copy of a database, parallel
+queries on one database, a web UI for players (NET-09), encrypted
+("sealed") databases.
 
 ## Architecture
 
@@ -30,13 +37,18 @@ players (NET-09), encrypted ("sealed") databases.
   UI-free (no async runtime in `crates/`): every call into them, and into
   the metadata store, runs on tokio's blocking pool (`spawn_blocking`).
 - **Databases** are the app's own format (`docs/file-format.md`), one folder
-  each. They're opened on first use and stay open, each behind one
-  `Mutex<Database>` (`server/src/pool.rs`), as the app holds them.
+  each. They're opened on first use, each behind one `Mutex<Database>`
+  (`server/src/pool.rs`), as the app holds them, and closed after a while
+  unused.
 - **Long work** runs as `chess-jobs` jobs with progress and cancel: imports
-  (then the position index), index builds, and the lines of common
-  positions. A job records the database and the user who started it.
+  (then the position index), index builds, the lines of common positions,
+  duplicates, compaction, backups and TWIC checks. A job records the
+  database and the user who started it, and is kept in the store.
 - **Metadata store**: SQLite (`server.sqlite`) for users, sessions, API
-  tokens, databases and shares. Games are never in it.
+  tokens, databases, shares, transfers, invites, reset links, jobs, the
+  audit log and settings. Games are never in it.
+- **Housekeeping** (`server/src/housekeeping.rs`), once a minute: the audit
+  log's retention, idle databases, scheduled backups and TWIC checks.
 - **The admin UI** (Svelte 5, `server/admin/`) is built into `dist/` and
   embedded in the binary (`server/build.rs`); it fetches nothing from the
   network.
@@ -47,7 +59,7 @@ players (NET-09), encrypted ("sealed") databases.
 
 | Path | What |
 |---|---|
-| `server.sqlite` (+ `-wal`, `-shm`) | Users (Argon2id password hashes), sessions and API tokens (their SHA-256 only), databases (name, owner, visibility, quota) and shares |
+| `server.sqlite` (+ `-wal`, `-shm`) | Users (Argon2id password hashes, e-mail addresses), sessions, API tokens, invites and reset links (their SHA-256 only), databases (name, owner, visibility, quota, id epoch), shares and transfers, jobs, the audit log, settings and the TWIC issues taken. Schema version 2 (from 1, migrated at start) |
 | `dbs/<id>.chessdb/` | The databases. `<id>` is 32 random hex digits; the API never takes a path, only an id, checked to be exactly that before a path is built |
 | `import/` | Files the admin imports from: PGN, or ChessBase databases (the `.cbh` with its `.cbg`, `.cbp`, `.cbt`, `.cbc`) |
 | `tmp/` | Uploads being received or imported; one stays until its import ends, also across a restart (the import goes on), and the others are deleted at start |
@@ -590,8 +602,15 @@ must offer them its source) is an open question for the project.
   local one, through an API token), with its DTOs and the server's shared
   in one crate; sync of a user's own databases; an offline copy per
   database.
-- Editing games on the server, and write access beyond imports.
-- Concurrency for many users (above).
+- Editing games on the server (write access beyond imports, deleting and
+  compaction).
+- Permanent game ids, so ids a client keeps survive a compaction (an
+  `idEpoch` only says they changed).
+- Parallel queries on one database (see Limits): several readers per
+  database instead of one mutex.
+- A web UI for players (NET-09); the web UI is the admin's, plus each
+  user's Account page.
 - An encrypted "sealed" visibility, so a database is unreadable on the
   server's disk.
-- Concurrency for many users (above), closing idle databases.
+- Material and pattern search (SRCH-05/06), on the server as in the app.
+- Whether the server should be AGPL-3.0 (see Licence).

@@ -96,6 +96,17 @@ running app, see [`scripts/smoke/README.md`](../scripts/smoke/README.md).
   no notice when done or cancelled (`jobs.svelte.ts`): the tab cancels it
   whenever the board leaves the position, and shows its own progress.
 
+### Searching several databases (SRCH-13)
+- **Its results are a list of their own**, `SearchResults.svelte` (the
+  list pane's Search results tab), not `GameList`, whose selection, drags
+  and menus act on one database's handle. Rows carry their `handle`; open a
+  game with `game.open(row.handle, …)`.
+- **A search holds its databases weakly** (`commands/cross.rs`): one closed,
+  or compacted (its ids change), makes the next page ask to search again,
+  rather than showing other games. Each database's results in a sort order
+  are made by `cross_sort`, as `sort_games` makes the list's; `cross_page`
+  answers `notSorted` until then.
+
 ### Svelte and CSS
 - **Svelte keeps whitespace between template nodes.** `NotationLine.svelte`
   deliberately has no whitespace between nodes and uses explicit `{" "}`,
