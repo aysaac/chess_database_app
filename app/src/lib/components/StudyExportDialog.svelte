@@ -16,6 +16,7 @@
   import { sentence } from "../online";
   import type { Ranges } from "../selection";
   import { count } from "../selection";
+  import { AutoListing, MAX_STUDY_NAME, studyNameProblem } from "../studies";
   import { db } from "../stores/db.svelte";
   import { jobs } from "../stores/jobs.svelte";
   import { lichess } from "../stores/lichess.svelte";
@@ -47,6 +48,9 @@
   let visibility = $state<StudyVisibilityDto>("private");
   let mine = $state<StudyInfoDto[] | null>(null);
   let listing = $state(false);
+  /** Why listing the user's studies failed; "Try again" asks again. */
+  let listError = $state("");
+  const auto = new AutoListing();
   let study = $state("");
   let busy = $state(false);
   let job = $state<number | null>(null);
@@ -70,19 +74,28 @@
     const user = lichess.username;
     if (!user || listing) return;
     listing = true;
-    error = "";
+    listError = "";
+    mine = null;
     try {
       mine = await api.lichessStudies(user);
     } catch (e) {
-      error = errorMessage(e);
+      listError = errorMessage(e);
       void lichess.checkError(e);
     } finally {
       listing = false;
     }
   }
 
+  // The user's studies, once per login while "One of your studies" shows.
+  // Only the login and the choice are read here (the listing itself is
+  // untracked): a failed listing waits for "Try again", never a loop of
+  // requests while Lichess is down or limits the app.
   $effect(() => {
-    if (into === "existing" && lichess.username && mine === null) void listMine();
+    const user = lichess.username;
+    const shown = into === "existing";
+    untrack(() => {
+      if (auto.take(user, shown)) void listMine();
+    });
   });
 
   async function send() {
@@ -93,8 +106,9 @@
       return;
     }
     const n = name.trim();
-    if (into === "new" && (n.length < 2 || n.length > 100)) {
-      error = "A study's name has 2 to 100 characters.";
+    const problem = into === "new" ? studyNameProblem(n) : null;
+    if (problem) {
+      error = problem;
       return;
     }
     if (into === "existing" && !study.trim()) {
@@ -112,7 +126,7 @@
           : { kind: "existing" as const, study: study.trim() };
       let id: number;
       try {
-        id = await api.sendToStudy(info.handle, db.selectionOf(rows), target);
+        id = await api.sendToStudy(info.handle, db.selectionOf(rows), { ...db.sort }, target);
       } catch (e) {
         error = errorMessage(e);
         void lichess.checkError(e);
@@ -163,7 +177,7 @@
       <div class="details">
         <label class="field">
           Name
-          <input bind:value={name} maxlength="100" autocomplete="off" />
+          <input bind:value={name} maxlength={MAX_STUDY_NAME} autocomplete="off" />
         </label>
         <div class="visibility" role="radiogroup" aria-label="Who can see it">
           {#each VISIBILITIES as v (v.value)}
@@ -205,6 +219,11 @@
       <div class="details">
         {#if listing}
           <p class="soft">Listing your studies…</p>
+        {:else if listError}
+          <p class="list-error" role="alert">
+            <span class="error">{sentence(listError)}</span>
+            <button type="button" onclick={listMine}>Try again</button>
+          </p>
         {:else if mine?.length}
           <ul class="studies" aria-label="Your studies">
             {#each mine as s (s.id)}
@@ -439,5 +458,16 @@
 
   .error {
     color: var(--danger);
+  }
+
+  .list-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .list-error button {
+    flex: none;
   }
 </style>

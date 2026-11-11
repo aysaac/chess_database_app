@@ -2,7 +2,8 @@
 //! (IO-10), games out to studies (NET-12). The token is used only where
 //! Lichess needs it: a private or unlisted study, the user's own list of
 //! studies, sending games. A login Lichess no longer takes (revoked on its
-//! site, expired) is forgotten when it says so.
+//! site, expired) is forgotten when it says so, also partway through an
+//! export or a download of the user's own games (NET-01).
 
 use chess_db::GameId;
 use chess_jobs::JobError;
@@ -12,14 +13,13 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::commands::db::{selected_ids, thousands, to_job_error};
 use crate::commands::online::claim_download;
-use crate::dto::ImportReportDto;
-use crate::dto::ListSelectionDto;
 use crate::dto::lichess::{
     LichessAccountDto, LogoutDto, SentStudyDto, StudyExportReportDto, StudyInfoDto, StudyPreviewDto,
     StudyTargetDto,
 };
+use crate::dto::{ImportReportDto, ListSelectionDto, SortSpecDto};
 use crate::error::{AppError, AppResult, ErrorCode};
-use crate::lichess::{self, CLIENT_ID, open_browser};
+use crate::lichess::{self, CLIENT_ID, LookedUp, open_browser};
 use crate::state::AppState;
 
 /// Runs blocking network work off the async runtime.
@@ -31,11 +31,48 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> AppResult<T> + Send 
 
 /// `result`, forgetting the login when Lichess says it no longer takes it.
 fn checked<T>(state: &AppState, login: Option<&Login>, result: Result<T, NetError>) -> Result<T, NetError> {
-    if login.is_some() && matches!(result, Err(NetError::TokenRejected)) {
-        log::info!("Lichess no longer takes the login: forgetting it");
-        lichess::forget(state);
+    if let (Some(login), Err(NetError::TokenRejected)) = (login, &result) {
+        lichess::forget_rejected(state, &login.token);
     }
     result
+}
+
+/// An export's outcome, forgetting the login when Lichess turned its token
+/// down: before anything went (the error), or partway (why it stopped).
+fn checked_export(
+    state: &AppState,
+    login: &Login,
+    result: Result<ExportSummary, NetError>,
+) -> Result<ExportSummary, NetError> {
+    if let Ok(s) = &result
+        && matches!(s.stopped, Some(NetError::TokenRejected))
+    {
+        lichess::forget_rejected(state, &login.token);
+    }
+    checked(state, Some(login), result)
+}
+
+/// Keeps the login of `attempt`, revoking the token of the login it
+/// replaced; a login stopped meanwhile (a Cancel, a Log out) isn't kept,
+/// and its token is revoked when the app made it (`made`: not one pasted
+/// in, which is the user's).
+fn keep(state: &AppState, attempt: u64, login: Login, made: bool) -> AppResult<LichessAccountDto> {
+    let client = state.lichess.client();
+    match lichess::keep(state, attempt, login) {
+        Ok((_, replaced)) => {
+            if let Some(token) = replaced {
+                lichess::revoke_in_background(client, token);
+            }
+            Ok(lichess::account(state))
+        }
+        Err(stopped) => {
+            log::info!("a Lichess login was stopped before it was kept");
+            if made {
+                lichess::revoke_in_background(client, stopped.token);
+            }
+            Err(NetError::Cancelled.into())
+        }
+    }
 }
 
 /// Who is logged in (without reading the OS's credential store).
@@ -46,7 +83,7 @@ pub async fn lichess_account(state: State<'_, AppState>) -> AppResult<LichessAcc
 
 /// Logs in through the browser (OAuth with PKCE): waits until the user lets
 /// the app in on Lichess's page, cancels it there, `lichess_login_cancel`
-/// is called, or 10 minutes pass.
+/// or `lichess_logout` is called, or 10 minutes pass.
 #[tauri::command]
 pub async fn lichess_login(app: AppHandle) -> AppResult<LichessAccountDto> {
     blocking(move || {
@@ -54,55 +91,70 @@ pub async fn lichess_login(app: AppHandle) -> AppResult<LichessAccountDto> {
         let attempt = state.lichess.start_login();
         let stop = || state.lichess.login_stopped(attempt);
         let login = oauth::login(state.lichess.client(), CLIENT_ID, &open_browser, &stop)?;
-        lichess::remember(&state, login);
-        Ok(lichess::account(&state))
+        keep(&state, attempt, login, true)
     })
     .await
 }
 
-/// Stops a login waiting for the browser.
+/// Stops the logins under way. A login kept before it stays (the page asks
+/// who is logged in afterwards).
 #[tauri::command]
-pub async fn lichess_login_cancel(state: State<'_, AppState>) -> AppResult<()> {
-    state.lichess.stop_logins();
-    Ok(())
+pub async fn lichess_login_cancel(app: AppHandle) -> AppResult<()> {
+    blocking(move || {
+        // Waits for a login being kept (its store may ask to be unlocked).
+        app.state::<AppState>().lichess.stop_logins();
+        Ok(())
+    })
+    .await
 }
 
 /// Logs in with a personal access token pasted in, once Lichess says it's
-/// one that can read and write studies.
+/// one that can read and write studies. A Log out meanwhile stops it.
 #[tauri::command]
 pub async fn lichess_use_token(app: AppHandle, token: String) -> AppResult<LichessAccountDto> {
     blocking(move || {
         let state = app.state::<AppState>();
+        let attempt = state.lichess.start_login();
+        let stop = || state.lichess.login_stopped(attempt);
         let client = state.lichess.client().for_lookup();
-        let login = oauth::check_token(&client, &Token::new(&token), &|| false)?;
-        lichess::remember(&state, login);
-        Ok(lichess::account(&state))
+        let login = oauth::check_token(&client, &Token::new(&token), &stop)?;
+        keep(&state, attempt, login, false)
     })
     .await
 }
 
-/// Logs out: forgets the token (in the credential store too) and revokes
-/// it on Lichess. When Lichess can't be reached the token is forgotten all
-/// the same, and `problem` says how to revoke it by hand.
+/// Logs out: stops the logins under way, forgets the token (in the
+/// credential store too) and revokes it on Lichess. When Lichess can't be
+/// reached, or the store can't be read, the app logs out all the same, and
+/// `problem` says how to revoke the token by hand.
 #[tauri::command]
 pub async fn lichess_logout(app: AppHandle) -> AppResult<LogoutDto> {
     blocking(move || {
         let state = app.state::<AppState>();
-        state.lichess.stop_logins();
-        let Some(login) = lichess::forget(&state) else {
-            return Ok(LogoutDto { revoked: false, problem: None });
-        };
-        Ok(match oauth::revoke(state.lichess.client(), &login.token) {
-            Ok(()) => LogoutDto { revoked: true, problem: None },
-            Err(e) => {
-                log::warn!("couldn't revoke the Lichess token: {e}");
-                let page = format!("{}/account/security", state.lichess.client().lichess_url());
-                let problem = format!("Lichess couldn't revoke the token ({e}): revoke it on {page}");
-                LogoutDto { revoked: false, problem: Some(problem) }
-            }
+        let page = format!("{}/account/security", state.lichess.client().lichess_url());
+        Ok(match lichess::logout(&state) {
+            Ok(None) => LogoutDto { revoked: false, problem: None },
+            Ok(Some(login)) => match oauth::revoke(state.lichess.client(), &login.token) {
+                Ok(()) => LogoutDto { revoked: true, problem: None },
+                Err(e) => {
+                    log::warn!("couldn't revoke the Lichess token: {e}");
+                    let problem = format!("Lichess couldn't revoke the token ({e}): revoke it on {page}");
+                    LogoutDto { revoked: false, problem: Some(problem) }
+                }
+            },
+            Err(e) => LogoutDto { revoked: false, problem: Some(unrevoked(&e, &page)) },
         })
     })
     .await
+}
+
+/// What a Log out says when the store couldn't be read: the app is logged
+/// out, but the token it couldn't read wasn't revoked.
+fn unrevoked(e: &lichess::Unreadable, page: &str) -> String {
+    format!(
+        "Logged out, but the app couldn't read its Lichess token from the system's keyring ({}), so Lichess didn't revoke it: revoke it on {page}",
+        e.reason()
+    )
 }
 
 /// Opens a Lichess page in the system browser (never in the app's window):
@@ -124,7 +176,7 @@ pub async fn lichess_studies(app: AppHandle, username: String) -> AppResult<Vec<
     blocking(move || {
         let state = app.state::<AppState>();
         let client = state.lichess.client().for_lookup();
-        let login = lichess::login_of(&state, &username);
+        let login = lichess::login_of(&state, &username)?;
         let studies = study::studies_of(&client, &username, login.as_ref().map(|l| &l.token), &|| false);
         let studies = checked(&state, login.as_ref(), studies)?;
         Ok(studies
@@ -140,27 +192,26 @@ pub async fn lichess_studies(app: AppHandle, username: String) -> AppResult<Vec<
     .await
 }
 
-/// Downloads a study (or one chapter) to show what's in it, and keeps it
-/// for the import. The login goes with it only if the study needs it
-/// (private or unlisted).
+/// Looks a study (or one chapter) up to show what's in it: its light export
+/// (names and main lines, not the comments, variations and clock times the
+/// import downloads), so a large study doesn't take long. The login goes
+/// with it only if the study needs it (private or unlisted).
 #[tauri::command]
 pub async fn lichess_study_lookup(app: AppHandle, link: String) -> AppResult<StudyPreviewDto> {
     blocking(move || {
         let state = app.state::<AppState>();
         let link = study::parse_study_link(&link)?;
         let client = state.lichess.client().for_lookup();
-        let unasked = || NetError::BadData { site: chess_net::Site::Lichess, reason: "a 304 unasked".into() };
-        let (found, private) = match study::fetch_study(&client, &link, None, None, &|| false) {
+        let (found, private) = match study::fetch_study_outline(&client, &link, None, &|| false) {
             Err(NetError::StudyNeedsLogin) => {
-                let Some(login) = lichess::login(&state) else {
+                let Some(login) = lichess::login(&state)? else {
                     return Err(NetError::StudyNeedsLogin.into());
                 };
-                let found = study::fetch_study(&client, &link, Some(&login.token), None, &|| false);
+                let found = study::fetch_study_outline(&client, &link, Some(&login.token), &|| false);
                 (checked(&state, Some(&login), found)?, true)
             }
             other => (other?, false),
         };
-        let found = found.ok_or_else(unasked)?;
         let preview = StudyPreviewDto {
             link: found.link.link(),
             url: found.link.url(&client),
@@ -169,7 +220,8 @@ pub async fn lichess_study_lookup(app: AppHandle, link: String) -> AppResult<Stu
             chapters: found.chapters.iter().map(|c| c.name.clone()).collect(),
             private,
         };
-        *state.lichess.looked_up.lock().expect("lichess lock") = Some((found, private));
+        let looked = LookedUp { link: found.link, name: found.name, private };
+        *state.lichess.looked_up.lock().expect("lichess lock") = Some(looked);
         Ok(preview)
     })
     .await
@@ -211,7 +263,7 @@ fn describe_import(s: &StudyImport) -> String {
 
 /// Imports a study's chapters (or one chapter's) into the open database
 /// `handle` as a job, leaving out those it has (by their `ChapterURL`).
-/// A study just looked up is only asked about again (`If-Modified-Since`).
+/// A study just looked up takes the login at once if its look-up did.
 /// When it had warnings, `import_report` returns them afterwards.
 #[tauri::command]
 pub async fn import_study(
@@ -222,11 +274,9 @@ pub async fn import_study(
 ) -> AppResult<u64> {
     let link = study::parse_study_link(&link)?;
     let db = state.db(handle)?;
-    let looked =
-        state.lichess.looked_up.lock().expect("lichess lock").clone().filter(|(s, _)| s.link == link);
-    // A study whose look-up took the login gets it at once.
-    let (looked, private) = looked.map_or((None, false), |(s, private)| (Some(s), private));
-    let name = looked.as_ref().map_or_else(|| "a study".to_owned(), |s| s.name.clone());
+    let looked = state.lichess.looked_up.lock().expect("lichess lock").clone().filter(|s| s.link == link);
+    let private = looked.as_ref().is_some_and(|s| s.private);
+    let name = looked.map_or_else(|| "a study".to_owned(), |s| s.name);
     let label = format!("Importing {name} from Lichess");
     let slot = claim_download(&app, &label)?;
     state.import_reports.lock().expect("import reports lock").remove(&handle);
@@ -234,19 +284,24 @@ pub async fn import_study(
         let _slot = slot;
         let state = app.state::<AppState>();
         let client = state.lichess.client();
-        let download = |token: Option<&Token>| {
-            study::download_study_into(client, &db, &link, token, looked.as_ref(), ctx)
-        };
-        let with_login = || {
-            let login = lichess::login(&state);
+        let download =
+            |token: Option<&Token>| study::download_study_into(client, &db, &link, token, None, ctx);
+        // The keyring that can't be read fails the job; Lichess's answer is
+        // judged below.
+        let with_login = || -> Result<Result<StudyImport, NetError>, JobError> {
+            let login = lichess::login(&state).map_err(JobError::failed)?;
             let s = download(login.as_ref().map(|l| &l.token));
-            checked(&state, login.as_ref(), s)
+            Ok(checked(&state, login.as_ref(), s))
         };
-        let s = match if private { with_login() } else { download(None) } {
-            Err(NetError::StudyNeedsLogin) if !private && lichess::account(&state).username.is_some() => {
-                with_login()
+        let s = if private {
+            with_login()?
+        } else {
+            match download(None) {
+                Err(NetError::StudyNeedsLogin) if lichess::account(&state).username.is_some() => {
+                    with_login()?
+                }
+                other => other,
             }
-            other => other,
         };
         let s = s.map_err(|e| match e {
             NetError::Cancelled => JobError::Cancelled,
@@ -268,20 +323,19 @@ pub async fn import_study(
 /// The most games one export takes: a day's new studies of 64 chapters.
 const MOST_GAMES: usize = study::DAILY_STUDIES * study::MAX_CHAPTERS;
 
-/// The games of the list as it is: its filter, or all of them; deleted
-/// ones left out.
-fn listed_ids(state: &AppState, handle: u32) -> AppResult<Vec<GameId>> {
+/// The games of the list as it is, in its order (`sort`, as the list
+/// shows them): its filter, or all of them; deleted ones left out.
+fn listed_ids(state: &AppState, handle: u32, sort: SortSpecDto) -> AppResult<Vec<GameId>> {
     let db = state.db(handle)?;
-    let filtered = state.filters.lock().expect("filters lock").get(&handle).map(|f| f.ids.clone());
-    let db = db.lock().expect("db lock");
-    let ids: Vec<GameId> = match &filtered {
-        Some(f) => f.to_vec(),
-        None => (0..db.count()).collect(),
-    };
-    if ids.len() > 100_000 {
-        // Far more than an export takes, deleted or not: it's refused.
-        return Ok(ids);
+    let filtered = state.filters.lock().expect("filters lock").get(&handle).map(|f| f.ids.len());
+    let count = filtered.unwrap_or_else(|| db.lock().expect("db lock").count() as usize);
+    if count > 100_000 {
+        // Far more than an export takes, deleted or not: it's refused, so
+        // their order doesn't matter.
+        return Ok((0..count as GameId).collect());
     }
+    let ids = selected_ids(state, handle, &ListSelectionDto { sort, ranges: vec![(0, count as u32)] })?;
+    let db = db.lock().expect("db lock");
     let mut keep = Vec::with_capacity(ids.len());
     for id in ids {
         if !db.record(id)?.is_deleted() {
@@ -381,17 +435,18 @@ impl From<&ExportSummary> for StudyExportReportDto {
     }
 }
 
-/// Sends the selected games (or the list's: its filter, or all of them) to
-/// Lichess studies as a job, each game a chapter: to new studies of 64
-/// chapters at most ("Name (1/3)"…), or to a study of the user's that has
-/// room. The games in the database don't change. `study_export_report`
-/// says afterwards what went where.
+/// Sends the selected games (or the list's: its filter, or all of them, in
+/// the list's order `sort`) to Lichess studies as a job, each game a
+/// chapter: to new studies of 64 chapters at most ("Name (1/3)"…), or to a
+/// study of the user's that has room. The games in the database don't
+/// change. `study_export_report` says afterwards what went where.
 #[tauri::command]
 pub async fn send_to_study(
     app: AppHandle,
     state: State<'_, AppState>,
     handle: u32,
     selection: Option<ListSelectionDto>,
+    sort: SortSpecDto,
     target: StudyTargetDto,
 ) -> AppResult<u64> {
     let (target, visibility) = match target {
@@ -410,7 +465,7 @@ pub async fn send_to_study(
     };
     let ids = match &selection {
         Some(sel) => selected_ids(&state, handle, sel)?,
-        None => listed_ids(&state, handle)?,
+        None => listed_ids(&state, handle, sort)?,
     };
     let most = match target {
         ExportTarget::New { .. } => MOST_GAMES,
@@ -442,7 +497,9 @@ pub async fn send_to_study(
     Ok(state.jobs.spawn("study", label, move |ctx| {
         let _slot = slot;
         let state = app.state::<AppState>();
-        let login = lichess::login(&state).ok_or_else(|| JobError::failed("log in to Lichess first"))?;
+        let login = lichess::login(&state)
+            .map_err(JobError::failed)?
+            .ok_or_else(|| JobError::failed("log in to Lichess first"))?;
         let mut pgns = Vec::with_capacity(ids.len());
         for chunk in ids.chunks(256) {
             if ctx.is_cancelled() {
@@ -461,7 +518,7 @@ pub async fn send_to_study(
         }
         let client = state.lichess.client();
         let s = study::export_to_studies(client, &login.token, &target, &pgns, ctx);
-        let s = checked(&state, Some(&login), s).map_err(|e| match e {
+        let s = checked_export(&state, &login, s).map_err(|e| match e {
             NetError::Cancelled => JobError::Cancelled,
             NetError::Db(e) => to_job_error(e),
             e => JobError::failed(e),
@@ -563,6 +620,70 @@ mod tests {
             "{msg}"
         );
         assert_eq!(listing(&["a", "b", "c"]), "a, b and c");
+    }
+
+    /// "Send to study…" with the list's games: in the order the list shows
+    /// them (its sort, and its filter's), deleted ones left out, so the
+    /// chapters and the "(1/3)" split follow it.
+    #[test]
+    fn the_lists_games_go_in_its_order() {
+        use crate::dto::SortKeyDto;
+        use crate::state::{ActiveFilter, DbUse};
+        let dir = tempfile::tempdir().unwrap();
+        let pgn = dir.path().join("games.pgn");
+        let game = |white: &str, m: &str| format!("[White \"{white}\"]\n[Black \"X\"]\n\n1. {m} *\n\n");
+        let text = [game("C", "e4"), game("A", "d4"), game("B", "c4"), game("D", "f4")].concat();
+        std::fs::write(&pgn, text).unwrap();
+        let state = AppState::default();
+        let handle = state.add_db(chess_db::Database::create(&dir.path().join("List")).unwrap(), DbUse::List);
+        let db = state.db(handle).unwrap();
+        chess_db::import_pgn(&db, &pgn, &chess_db::NoProgress).unwrap();
+        let by_white = |descending| SortSpecDto { key: SortKeyDto::White, descending };
+        chess_db::build_sort(&db, by_white(false).into(), &chess_db::NoProgress).unwrap();
+        chess_db::build_sort(&db, by_white(true).into(), &chess_db::NoProgress).unwrap();
+        db.lock().unwrap().set_deleted_many(&[1], true).unwrap();
+        // A (1) is deleted: B, C, D.
+        assert_eq!(listed_ids(&state, handle, by_white(false)).unwrap(), [2, 0, 3]);
+        let natural = SortSpecDto { key: SortKeyDto::Id, descending: true };
+        assert_eq!(listed_ids(&state, handle, natural).unwrap(), [3, 2, 0]);
+        state
+            .filters
+            .lock()
+            .unwrap()
+            .insert(handle, ActiveFilter::new(vec![0, 1, 3], "x".into(), Vec::new()));
+        assert_eq!(listed_ids(&state, handle, by_white(true)).unwrap(), [3, 0]);
+    }
+
+    /// A 401 partway through an export (a study made, then the token turned
+    /// down) forgets the login, as one before anything went does.
+    #[test]
+    fn a_token_turned_down_partway_through_an_export_is_forgotten() {
+        let store: std::sync::Arc<keyring_core::CredentialStore> = keyring_core::mock::Store::new().unwrap();
+        let mut state = AppState::default();
+        state.lichess = crate::lichess::Lichess::with_store(store);
+        let login = Login { token: Token::new("lio_1"), username: "Bob".into(), expires: None };
+        let attempt = state.lichess.start_login();
+        crate::lichess::keep(&state, attempt, login.clone()).unwrap();
+        let mut s = summary(vec![sent("A", 0, true)], 3);
+        s.stopped = Some(NetError::StudyLimit);
+        assert!(checked_export(&state, &login, Ok(s)).is_ok());
+        assert_eq!(lichess::account(&state).username.as_deref(), Some("Bob"), "another reason: kept");
+        let mut s = summary(vec![sent("A", 0, true)], 3);
+        s.stopped = Some(NetError::TokenRejected);
+        let s = checked_export(&state, &login, Ok(s)).unwrap();
+        assert!(matches!(s.stopped, Some(NetError::TokenRejected)), "the summary still says why");
+        assert_eq!(lichess::account(&state).username, None, "forgotten");
+    }
+
+    /// A Log out that couldn't read the keyring says the token wasn't
+    /// revoked, and where to revoke it, as one offline does.
+    #[test]
+    fn a_logout_that_cant_read_the_keyring_says_where_to_revoke() {
+        let page = "https://lichess.org/account/security";
+        let msg = unrevoked(&lichess::Unreadable::Failed("the keyring is locked".into()), page);
+        assert!(msg.starts_with("Logged out, but") && msg.contains("(the keyring is locked)"), "{msg}");
+        assert!(msg.ends_with("Lichess didn't revoke it: revoke it on https://lichess.org/account/security"));
+        assert!(unrevoked(&lichess::Unreadable::NoStore, page).contains("(it isn't running)"));
     }
 
     #[test]

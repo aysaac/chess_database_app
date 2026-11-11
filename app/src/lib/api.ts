@@ -263,9 +263,13 @@ export const api = {
   lichessStudyLookup: (link: string) => invoke<StudyPreviewDto>("lichess_study_lookup", { link }),
   /** Imports a study's chapters the database doesn't have, as a job. */
   importStudy: (handle: number, link: string) => invoke<number>("import_study", { handle, link }),
-  /** Sends the selected games (null: the list's) to Lichess studies, as a job. */
-  sendToStudy: (handle: number, selection: ListSelectionDto | null, target: StudyTargetDto) =>
-    invoke<number>("send_to_study", { handle, selection, target }),
+  /** Sends the selected games (null: the list's, in its order `sort`) to Lichess studies, as a job. */
+  sendToStudy: (
+    handle: number,
+    selection: ListSelectionDto | null,
+    sort: SortSpecDto,
+    target: StudyTargetDto,
+  ) => invoke<number>("send_to_study", { handle, selection, sort, target }),
   /** What the last export to studies did. */
   studyExportReport: () => invoke<StudyExportReportDto | null>("study_export_report"),
 };
