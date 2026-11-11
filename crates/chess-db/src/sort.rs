@@ -46,7 +46,7 @@ impl SortSpec {
 }
 
 /// `(unknown, value)`: unknown values sort last in both directions.
-fn sort_value(key: SortKey, r: &IndexRecord, ranks: &[u32]) -> (bool, u64) {
+pub(crate) fn sort_value(key: SortKey, r: &IndexRecord, ranks: &[u32]) -> (bool, u64) {
     let rank = |id: u32| u64::from(ranks.get(id as usize).copied().unwrap_or(u32::MAX));
     match key {
         SortKey::Id => (false, 0),
@@ -80,10 +80,33 @@ pub fn build_sort(
     spec: SortSpec,
     progress: &dyn Progress,
 ) -> Result<Arc<Vec<GameId>>, DbError> {
+    sort_games(db, spec, false, progress)
+}
+
+/// The permutation for `spec` covering every game: like [`build_sort`],
+/// but a cached one that games were appended to since (they're listed
+/// after it in id order, not sorted in) is built again. Searching several
+/// databases at once (SRCH-13) needs every list in true sort order.
+pub fn ensure_sort(
+    db: &Mutex<Database>,
+    spec: SortSpec,
+    progress: &dyn Progress,
+) -> Result<Arc<Vec<GameId>>, DbError> {
+    sort_games(db, spec, true, progress)
+}
+
+fn sort_games(
+    db: &Mutex<Database>,
+    spec: SortSpec,
+    complete: bool,
+    progress: &dyn Progress,
+) -> Result<Arc<Vec<GameId>>, DbError> {
     const CHUNK: u32 = 64 * 1024;
     let (count, ranks, epoch) = {
         let db = db.lock().expect("db lock");
-        if let Some(perm) = db.cached_sort(spec) {
+        if let Some(perm) = db.cached_sort(spec)
+            && (!complete || perm.len() == db.count() as usize)
+        {
             return Ok(perm);
         }
         let ranks = name_kind(spec.key).map(|k| db.names(k).ranks()).unwrap_or_default();
@@ -110,7 +133,9 @@ pub fn build_sort(
     let perm = Arc::new(keyed.into_iter().map(|(_, id)| id).collect::<Vec<_>>());
 
     let mut db = db.lock().expect("db lock");
-    if db.sort_epoch() == epoch {
+    // One covering more games, built meanwhile by another call, stays.
+    let longer = db.cached_sort(spec).is_some_and(|p| p.len() > perm.len());
+    if db.sort_epoch() == epoch && !longer {
         db.store_sort(spec, perm.clone());
     }
     Ok(perm)
@@ -225,6 +250,9 @@ mod tests {
         let extra = read_pgn_str("[White \"Aaron\"]\n1. e4 *").remove(0);
         db.lock().unwrap().append(&extra).unwrap();
         assert_eq!(page_ids(&db.lock().unwrap(), spec, 0, 10).unwrap(), [1, 2, 0, 3, 4]);
+        assert_eq!(build_sort(&db, spec, &NoProgress).unwrap().len(), 4, "build_sort keeps the old one");
+        assert_eq!(*ensure_sort(&db, spec, &NoProgress).unwrap(), [4, 1, 2, 0, 3], "sorted in");
+        assert_eq!(page_ids(&db.lock().unwrap(), spec, 0, 10).unwrap(), [4, 1, 2, 0, 3]);
 
         // Replacing a game invalidates cached sorts.
         let mut g = db.lock().unwrap().read_game(0).unwrap();

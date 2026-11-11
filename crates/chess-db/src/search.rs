@@ -51,6 +51,13 @@ impl GameSet {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+
+    /// The ids in the set, ascending.
+    pub fn ids(&self) -> impl Iterator<Item = GameId> + '_ {
+        self.bits.iter().enumerate().flat_map(|(word, &bits)| {
+            (0..64).filter(move |b| bits & (1u64 << b) != 0).map(move |b| (word * 64 + b) as GameId)
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -289,6 +296,25 @@ pub fn search_headers(
     let guard = db.lock().expect("db lock");
     let compiled = Compiled::new(&guard, query);
     drop(guard);
+    // A few games to look at (the games reaching a position, SRCH-03): read
+    // only their records rather than every one.
+    if let Some(w) = within
+        && u64::from(w.len()) * 32 < u64::from(count)
+    {
+        let ids: Vec<GameId> = w.ids().filter(|&id| id < count).collect();
+        for (i, part) in ids.chunks(4096).enumerate() {
+            progress.check_cancelled()?;
+            let db = db.lock().expect("db lock");
+            for &id in part {
+                if compiled.matches(&db.record(id)?) {
+                    out.push(id);
+                }
+            }
+            drop(db);
+            progress.report(((i + 1) * 4096).min(ids.len()) as u64, ids.len() as u64);
+        }
+        return Ok(out);
+    }
     while start < count {
         progress.check_cancelled()?;
         let records = db.lock().expect("db lock").records(start, CHUNK)?;
@@ -451,5 +477,26 @@ mod tests {
         assert!(search_headers(&db, &q, Some(&within), &NoProgress).unwrap().is_empty());
         assert_eq!(within.len(), 2);
         assert!(within.contains(3) && !within.contains(1) && !within.contains(100_000));
+        assert_eq!(GameSet::from_ids(&[130, 0, 64, 63]).ids().collect::<Vec<_>>(), [0, 63, 64, 130]);
+    }
+
+    /// A few games of many are looked up one by one; the result is the same.
+    #[test]
+    fn search_within_a_few_of_many() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut d = Database::create(&dir.path().join("Many")).unwrap();
+        let games = read_pgn_str(PGN);
+        for i in 0..200 {
+            d.append(&games[i % games.len()]).unwrap();
+        }
+        d.set_deleted(6, true).unwrap();
+        let db = Mutex::new(d);
+        let ids = [2, 3, 6, 7, 150, 199, 5000];
+        let within = GameSet::from_ids(&ids);
+        let q = HeaderQuery { text: "anand".into(), skip_deleted: true, ..HeaderQuery::default() };
+        let all = search_headers(&db, &q, None, &NoProgress).unwrap();
+        let expected: Vec<GameId> = all.into_iter().filter(|id| ids.contains(id)).collect();
+        assert_eq!(search_headers(&db, &q, Some(&within), &NoProgress).unwrap(), expected);
+        assert_eq!(expected, [2, 150]);
     }
 }
