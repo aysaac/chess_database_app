@@ -30,4 +30,9 @@ pub fn once(state: &Arc<AppState>) {
         Ok(n) => log::info!("forgot {n} audit log entries older than {} days", state.config.audit_days),
         Err(e) => log::warn!("couldn't prune the audit log: {}", e.message),
     }
+    if let Some(idle) = state.config.idle_close {
+        for id in state.pool.close_idle(idle, &state.jobs.manager) {
+            log::info!("closed database {id}: unused for {} minutes", idle.as_secs() / 60);
+        }
+    }
 }

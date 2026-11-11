@@ -102,6 +102,7 @@ passes `/api` to a server on 8080.
 | `CHESS_SERVER_SMTP_USER`, `CHESS_SERVER_SMTP_PASSWORD` | none | Its login, if it needs one |
 | `CHESS_SERVER_SMTP_FROM` | (needed with a host) | The sender, e.g. `Chess server <chess@example.com>` |
 | `CHESS_SERVER_AUDIT_DAYS` | 365 | How long the audit log keeps entries |
+| `CHESS_SERVER_IDLE_CLOSE_MINUTES` | 30 | Databases unused this long are closed (`0`: never) |
 | `CHESS_SERVER_RATE_LIMIT_PER_MINUTE` | 1200 | Requests a user may make a minute (a quarter of it at once); `0` turns it off |
 | `CHESS_SERVER_RATE_LIMIT_ANON_PER_MINUTE` | 300 | The same per client address, for requests without a login; `0` turns it off |
 | `RUST_LOG` | `info` | `debug` logs every request |
@@ -446,8 +447,11 @@ million games.
   and lines (32), until the database changes. A header search reads every
   index record (64 bytes a game), never the games themselves.
 - Each open database keeps its files open and its per-game stats in memory
-  (8 bytes a game) once a tree was asked for; nothing closes idle
-  databases yet.
+  (8 bytes a game) once a tree was asked for. **Idle databases close**: one
+  no request or job used for `CHESS_SERVER_IDLE_CLOSE_MINUTES` (30) is
+  closed (its files, its lock and its memory go), never while a request or
+  a job has it, and the next request opens it again (half a second per
+  million games).
 - One process; no horizontal scaling. Data on a local disk.
 - **Rate limits**: a token bucket in memory per user (any session or API
   token of theirs) and per client address for requests without a login (and
@@ -497,7 +501,7 @@ must offer them its source) is an open question for the project.
   in one crate; sync of a user's own databases; an offline copy per
   database.
 - Editing games on the server, and write access beyond imports.
-- A web UI for players (NET-09).
+- Concurrency for many users (above).
 - An encrypted "sealed" visibility, so a database is unreadable on the
   server's disk.
 - Concurrency for many users (above), closing idle databases.

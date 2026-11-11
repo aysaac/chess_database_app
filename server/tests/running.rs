@@ -3,8 +3,37 @@
 
 mod common;
 
+use chess_server::housekeeping;
 use common::TestServer;
 use serde_json::json;
+
+#[test]
+fn idle_databases_close_and_open_again_never_while_in_use() {
+    let s = TestServer::with(|c| c.idle_close = Some(std::time::Duration::from_millis(150)));
+    let admin = s.admin();
+    let db = admin.create_db("Idle", "private");
+    admin.import_fixture(&db, "reference.pgn");
+    admin.get(&format!("/api/databases/{db}/games")).ok();
+    let folder = s.data_dir().join("dbs").join(format!("{db}.chessdb"));
+    // Held (as by a request or a job): it stays, however long.
+    let held = s.state.pool.get(&db).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    housekeeping::once(&s.state);
+    assert!(s.state.pool.get_open(&db).is_some());
+    assert!(matches!(chess_db::Database::open(&folder), Err(chess_db::DbError::Locked(_))));
+    drop(held);
+    // Idle: closed, its lock released.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    housekeeping::once(&s.state);
+    assert!(s.state.pool.get_open(&db).is_none());
+    drop(chess_db::Database::open(&folder).expect("closed: anyone may open it"));
+    // The next request opens it again.
+    assert_eq!(admin.get(&format!("/api/databases/{db}/games")).ok().json()["total"], 56);
+    assert_eq!(admin.get(&format!("/api/databases/{db}/tree")).ok().json()["total"]["games"], 56);
+    // Used just now: it stays.
+    housekeeping::once(&s.state);
+    assert!(s.state.pool.get_open(&db).is_some());
+}
 
 /// Requests until one is refused; the refusal.
 fn until_limited(mut request: impl FnMut() -> common::Res) -> (usize, common::Res) {
