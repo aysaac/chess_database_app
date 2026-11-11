@@ -258,6 +258,9 @@ fn job_row(r: &Row<'_>) -> rusqlite::Result<JobRow> {
     })
 }
 
+/// An issue of TWIC taken (NET-06): (issue, database, when, games or -1).
+pub type TwicIssueRow = (u32, Option<String>, i64, i64);
+
 /// An invite, as the admin sees it (never its token).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteRow {
@@ -1171,7 +1174,7 @@ impl Store {
 
     /// The newest issues taken: (issue, database, when, games or -1 while
     /// importing or if it didn't finish).
-    pub fn twic_issues(&self, limit: u32) -> ApiResult<Vec<(u32, Option<String>, i64, i64)>> {
+    pub fn twic_issues(&self, limit: u32) -> ApiResult<Vec<TwicIssueRow>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT issue, database_id, imported_at, games FROM twic_issues ORDER BY issue DESC LIMIT ?1",
