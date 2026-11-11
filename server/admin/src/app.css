@@ -255,7 +255,9 @@ th.num {
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
+  min-width: 16rem;
 }
 
 td.wrap {
