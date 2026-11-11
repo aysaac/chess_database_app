@@ -9,10 +9,8 @@
 //! app's downloads later without touching them.
 
 use std::io::{Cursor, Read};
-use std::sync::Mutex;
 use std::time::Duration;
 
-use chess_db::{Database, DbError, ImportSummary, Progress, import_reader};
 use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
 
@@ -37,8 +35,6 @@ pub enum TwicError {
     NoIssues,
     #[error("issue {0} can't be read: {1}")]
     BadZip(u32, String),
-    #[error(transparent)]
-    Db(#[from] DbError),
 }
 
 /// Talks to The Week in Chess (or, in tests, a server standing in for it).
@@ -110,28 +106,6 @@ impl Twic {
             .get(&format!("/zips/twic{n}g.zip"), "application/zip,application/octet-stream", ZIP_LIMIT)?
             .ok_or(TwicError::NoSuchIssue(n))?;
         pgn_from_zip(n, &zip)
-    }
-
-    /// Imports issue `n` into `db` (committing as it goes, like any import).
-    pub fn import_issue(
-        &self,
-        db: &Mutex<Database>,
-        n: u32,
-        progress: &dyn Progress,
-    ) -> Result<ImportSummary, TwicError> {
-        let pgn = self.issue_pgn(n)?;
-        let total = pgn.len() as u64;
-        let cursor = std::rc::Rc::new(std::cell::Cell::new(0u64));
-        struct Counting<'a>(Cursor<&'a [u8]>, std::rc::Rc<std::cell::Cell<u64>>);
-        impl Read for Counting<'_> {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                let n = self.0.read(buf)?;
-                self.1.set(self.1.get() + n as u64);
-                Ok(n)
-            }
-        }
-        let read = Counting(Cursor::new(&pgn), cursor.clone());
-        Ok(import_reader(db, read, total, &|| cursor.get(), progress)?)
     }
 }
 

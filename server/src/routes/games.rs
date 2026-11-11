@@ -18,7 +18,7 @@ use crate::access::require;
 use crate::auth::Auth;
 use crate::error::{ApiError, ApiResult};
 use crate::jobs::{thousands, to_job_error};
-use crate::listing::{Listing, listing, parse_fen};
+use crate::listing::{ListFor, Listing, compacted_since, listing, parse_fen, renumbered};
 use crate::pool::{LinesKey, OpenDb, writer_busy};
 use crate::store::{DbMeta, User};
 use crate::wire::{
@@ -26,21 +26,6 @@ use crate::wire::{
     ReferenceDto, ReferenceLinesDto, lines_dto, notation_of, reference_dto,
 };
 use crate::{AppState, blocking};
-
-/// The list `q` asks for, built again once if a sort order went meanwhile
-/// (a compaction drops them). Blocking.
-pub fn listing_of(
-    state: &AppState,
-    open: &Arc<OpenDb>,
-    meta: &DbMeta,
-    user: &User,
-    q: &GamesQuery,
-) -> ApiResult<Listing> {
-    match listing(state, open, meta, user, q) {
-        Err(e) if e.code == "notSorted" => listing(state, open, meta, user, q),
-        other => other,
-    }
-}
 
 /// A page of the game list: `?sort=white&desc=true&offset=0&limit=50`, plus
 /// any header criteria (`white=`, `black=`, `text=`, `yearFrom=`…), `fen=`
@@ -54,14 +39,26 @@ pub async fn page(
     blocking(move || {
         let (meta, _) = require(&state.store, &auth.user, &id, Access::Read)?;
         let open = state.open_db(&id)?;
-        let ids = match listing_of(&state, &open, &meta, &auth.user, &q)? {
-            Listing::Ready(ids) => ids,
-            Listing::Job(job) => return Ok(Json(GamesAnswer::Job { job })),
-        };
-        let offset = q.offset as usize;
-        let page = ids.slice(offset, offset.saturating_add(q.page_limit() as usize));
-        let rows = open.lock().rows(&page)?.into_iter().map(GameRowDto::from).collect();
-        Ok(Json(GamesAnswer::Ready(GamePage { total: ids.len() as u32, offset: q.offset, rows })))
+        // Made again once if a compaction renumbered the games meanwhile.
+        for _ in 0..2 {
+            let list = match listing(&state, &open, &meta, &auth.user, &q, ListFor::Page)? {
+                Listing::Ready(list) => list,
+                Listing::Job(job) => return Ok(Json(GamesAnswer::Job { job })),
+            };
+            let offset = q.offset as usize;
+            let page = list.slice(offset, offset.saturating_add(q.page_limit() as usize));
+            let db = open.lock();
+            if compacted_since(&db, &list) {
+                continue;
+            }
+            let rows = db.rows(&page)?.into_iter().map(GameRowDto::from).collect();
+            return Ok(Json(GamesAnswer::Ready(GamePage {
+                total: list.len() as u32,
+                offset: q.offset,
+                rows,
+            })));
+        }
+        Err(renumbered())
     })
     .await
 }

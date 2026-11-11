@@ -364,6 +364,149 @@ fn a_position_search_waits_for_an_index_far_behind() {
     assert_eq!((page.total, page.rows.iter().map(|r| r.id).collect::<Vec<_>>()), (10_001, vec![0, 2, 4]));
 }
 
+/// Holds `db`'s writer slot with a job of `kind` (of no database for a
+/// backup) until the sender is dropped, as an import or a backup does.
+fn hold_writer(s: &TestServer, db: &str, kind: &str) -> std::sync::mpsc::Sender<()> {
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let user = s.state.store.user_by_name("admin").unwrap().unwrap().0;
+    let of = if kind == "backup" { ("", "") } else { (db, "Held") };
+    let job = s.state.jobs.spawn(kind, "Holding the database".into(), of, &user, move |_| {
+        let _ = hold.recv();
+        Ok(String::new())
+    });
+    *s.state.pool.get(db).unwrap().writer.lock().unwrap() = Some(job);
+    release
+}
+
+/// (database, game id) of each row of a search's answer.
+fn search_rows(answer: &serde_json::Value) -> Vec<(String, u32)> {
+    answer["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["database"].as_str().unwrap().to_owned(), r["row"]["id"].as_u64().unwrap() as u32))
+        .collect()
+}
+
+/// While a write job adds games, a database's own sorted list keeps them
+/// (after the sorted ones, without sorting every game again at each
+/// batch), and a search across databases still merges every list in true
+/// sort order.
+#[test]
+fn lists_keep_the_games_a_write_job_adds() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let a = admin.create_db("Growing", "private");
+    let b = admin.create_db("Other", "private");
+    admin.import_fixture(&a, "lichess.pgn");
+    admin.import_fixture(&b, "crosstable.pgn");
+    let total = |q: &str| {
+        admin.get(&format!("/api/databases/{a}/games?{q}&limit=500")).ok().json()["total"].as_u64().unwrap()
+    };
+    // Sort orders built (and kept) before the job.
+    assert_eq!(total("sort=white"), 1);
+    assert_eq!(total("sort=black&text=a"), total("text=a"));
+    let both = format!("db={a}&db={b}");
+    admin.get(&format!("/api/search?{both}&sort=white")).ok();
+
+    // A write job holds the database and appends games, as an import's batches do.
+    let release = hold_writer(&s, &a, "import");
+    let added = chess_core::pgn::read_pgn_str(&String::from_utf8(fixture_bytes("reference.pgn")).unwrap());
+    let open = s.state.pool.get(&a).unwrap();
+    for g in &added {
+        open.lock().append(g).unwrap();
+    }
+    let count = u64::from(open.lock().count());
+    assert_eq!(count, 1 + added.len() as u64);
+
+    // Its own list: every game, the ones added after the sorted one, in id order.
+    assert_eq!(total("sort=white"), count);
+    let page: GamePage = admin.get(&format!("/api/databases/{a}/games?sort=white&limit=500")).ok().parse();
+    assert_eq!(page.rows.iter().map(|r| r.id).collect::<Vec<_>>(), (0..count as u32).collect::<Vec<_>>());
+    let page: GamePage =
+        admin.get(&format!("/api/databases/{a}/games?sort=white&offset=50&limit=3")).ok().parse();
+    assert_eq!(page.rows.iter().map(|r| r.id).collect::<Vec<_>>(), [50, 51, 52]);
+    assert_eq!(total("sort=black&text=a"), total("text=a"));
+
+    // Across databases: the same games, merged in true order, as chess-db
+    // merges copies of the databases.
+    let tmp = tempfile::tempdir().unwrap();
+    for dir in ["a", "b"] {
+        std::fs::create_dir_all(tmp.path().join(dir)).unwrap();
+    }
+    let local_a = local_db(&tmp.path().join("a"), &[]);
+    import_pgn(&local_a, &fixture("lichess.pgn"), &NoProgress).unwrap();
+    for g in &added {
+        local_a.lock().unwrap().append(g).unwrap();
+    }
+    let local_b = local_db(&tmp.path().join("b"), &["crosstable.pgn"]);
+    let ids = [a.clone(), b.clone()];
+    for (params, query, spec) in [
+        ("&sort=white", HeaderQuery::default(), SortSpec::new(SortKey::White, false)),
+        ("&sort=date&desc=true", HeaderQuery::default(), SortSpec::new(SortKey::Date, true)),
+        (
+            "&text=a&sort=black",
+            HeaderQuery { text: "a".into(), ..HeaderQuery::default() },
+            SortSpec::new(SortKey::Black, false),
+        ),
+    ] {
+        let query = HeaderQuery { skip_deleted: true, ..query };
+        let want =
+            chess_db::search_many(&[&local_a, &local_b], &query, None, spec, 0, 500, &NoProgress).unwrap();
+        let expected: Vec<(String, u32)> = want.rows.iter().map(|(i, r)| (ids[*i].clone(), r.id)).collect();
+        let got = admin.get(&format!("/api/search?{both}&limit=500{params}")).ok().json();
+        assert_eq!(got["total"].as_u64(), Some(want.total), "{params}");
+        assert_eq!(search_rows(&got), expected, "{params}");
+        // Pages cut the same list: no row twice, none left out.
+        let mut paged = Vec::new();
+        for offset in (0..want.total).step_by(7) {
+            let page = admin.get(&format!("/api/search?{both}&offset={offset}&limit=7{params}")).ok().json();
+            paged.extend(search_rows(&page));
+        }
+        assert_eq!(paged, expected, "{params}");
+    }
+    drop(release);
+}
+
+/// The position index far behind while a backup holds the database's
+/// writer slot: "busy", not the backup's job (which the caller can't see).
+#[test]
+fn a_position_search_is_busy_while_a_backup_holds_the_database() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let db = alice.create_db("Behind", "private");
+    let open = s.state.pool.get(&db).unwrap();
+    let games = chess_core::pgn::read_pgn_str("[White \"A\"]\n1. e4 e5 2. Nf3 *\n\n[White \"C\"]\n1. d4 *");
+    let prepared: Vec<_> = games.iter().map(chess_db::PreparedGame::new).collect();
+    for _ in 0..10_001 {
+        open.lock().append_prepared(&prepared).unwrap();
+    }
+    drop(open);
+    let release = hold_writer(&s, &db, "backup");
+    for path in
+        [format!("/api/databases/{db}/games?fen={AFTER_NF3}"), format!("/api/search?db={db}&fen={AFTER_NF3}")]
+    {
+        let r = alice.get(&path);
+        assert_eq!((r.status, r.code().as_str()), (503, "busy"), "{}", r.body);
+        assert!(r.header("retry-after").is_some());
+    }
+    drop(release);
+    // Once it's done: the index job, which they can follow.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let r = loop {
+        let r = alice.get(&format!("/api/databases/{db}/games?fen={AFTER_NF3}"));
+        if r.status != 503 {
+            break r.ok().json();
+        }
+        assert!(std::time::Instant::now() < deadline, "still busy");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(r["kind"], "job", "{r}");
+    let job = alice.wait_job(r["job"].as_u64().unwrap());
+    assert_eq!(job["kind"], "index");
+}
+
 #[test]
 fn trees_and_lines_give_what_chess_db_gives() {
     let s = TestServer::start();

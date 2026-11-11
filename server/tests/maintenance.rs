@@ -170,3 +170,83 @@ fn compaction_is_the_owners_renumbers_games_and_rebuilds_the_index() {
     );
     assert_eq!(r.status, 409);
 }
+
+/// A change taking ids that waited for the database while a compaction
+/// ran (it checked the epoch before) is refused: the ids are other games
+/// now.
+#[test]
+fn marking_games_after_a_compaction_refuses_the_old_ids() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let db = alice.create_db("Raced", "private");
+    alice.import_fixture(&db, "reference.pgn");
+    let path = format!("/api/databases/{db}/deleted");
+    alice.post(&path, json!({ "games": [0], "deleted": true, "idEpoch": 0 })).ok();
+
+    // The database held, as by a slow query; the request waits for it with epoch 0 checked.
+    let open = s.state.pool.get(&db).unwrap();
+    let mut held = open.lock();
+    let (c, p) = (alice.same(), path.clone());
+    let request =
+        std::thread::spawn(move || c.post(&p, json!({ "games": [5], "deleted": true, "idEpoch": 0 })));
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    // Then a compaction takes it, as its job does: the epoch first, then the games renumbered.
+    s.state.store.bump_id_epoch(&db).unwrap();
+    held.compact(&NoProgress).unwrap();
+    drop(held);
+    let r = request.join().unwrap();
+    assert_eq!((r.status, r.code().as_str()), (409, "staleIds"), "{}", r.body);
+    assert_eq!(total(&alice, &db, "deleted=only"), 0, "no game marked by an old id");
+}
+
+/// Games enough that an export doesn't fit the buffers between the
+/// server's reading thread and a client that stops reading.
+fn many_games(n: usize) -> String {
+    let moves: String = (1..=30).map(|i| format!("{}. Nf3 Nf6 {}. Ng1 Ng8 ", 2 * i - 1, 2 * i)).collect();
+    (0..n).map(|i| format!("[White \"Player {i}\"]\n[Black \"B\"]\n\n{moves}*\n\n")).collect()
+}
+
+/// An export a compaction comes in the middle of stops with an error: the
+/// client gets a broken download, not a file mixing games from before and
+/// after the renumbering.
+#[test]
+fn an_export_stops_when_a_compaction_renumbers_the_games() {
+    use std::io::Read;
+    let s = TestServer::start();
+    let admin = s.admin();
+    let db = admin.create_db("Big", "private");
+    let r =
+        admin.upload(&format!("/api/databases/{db}/import?filename=many.pgn"), many_games(12_000).as_bytes());
+    assert_eq!(r.status, 202, "{}", r.body);
+    assert_eq!(admin.wait_job(r.json()["job"].as_u64().unwrap())["state"], "done");
+    admin.post(&format!("/api/databases/{db}/deleted"), json!({ "games": [0], "deleted": true })).ok();
+
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let resp = agent
+        .get(admin.url(&format!("/api/databases/{db}/export.pgn")))
+        .header("Cookie", format!("chessdb_session={}", admin.cookie.as_deref().unwrap()))
+        .call()
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    let mut body = resp.into_body().into_with_config().limit(1 << 30).reader();
+    let mut start = vec![0u8; 64 * 1024];
+    body.read_exact(&mut start).unwrap();
+    assert!(String::from_utf8_lossy(&start).contains("Player 1\""), "game 0 is left out, deleted");
+
+    let r = admin.post(&format!("/api/databases/{db}/compact"), json!({}));
+    assert_eq!(r.status, 202, "{}", r.body);
+    assert_eq!(admin.wait_job(r.json()["job"].as_u64().unwrap())["state"], "done");
+    let mut rest = Vec::new();
+    let read = body.read_to_end(&mut rest);
+    assert!(read.is_err(), "the export went on across the compaction ({} more bytes)", rest.len());
+    // What came before the error is games 1, 2, 3… with none skipped (game
+    // n + 1 read by id n after the renumbering).
+    start.extend_from_slice(&rest);
+    let text = String::from_utf8_lossy(&start);
+    let players: Vec<u32> =
+        text.split("[White \"Player ").skip(1).filter_map(|p| p.split('"').next()?.parse().ok()).collect();
+    assert!(players.len() > 100, "{}", players.len());
+    let skipped = players.iter().zip(1..).find(|&(&p, n)| p != n);
+    assert!(skipped.is_none(), "(game sent, game due): {skipped:?}");
+}

@@ -48,7 +48,7 @@ pub use reference::{
     game_mainline, reference_lines, reference_overview,
 };
 pub use search::{EloMode, GameSet, HeaderQuery, ResultFilter, fold, games_with_name, search_headers};
-pub use sort::{SortKey, SortSpec, build_sort, ensure_sort, page_ids, sorted_subset};
+pub use sort::{SortKey, SortSpec, build_sort, ensure_sort, page_ids, sorted_subset, subset_in};
 pub use tags::{TaggedGame, scan_tags};
 
 /// Zero-based index of a game in its database.

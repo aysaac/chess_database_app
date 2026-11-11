@@ -267,3 +267,38 @@ fn requests_are_limited_per_user_and_per_address_without_a_login() {
     assert_eq!(anon.with_bearer("cdb_nothing").get("/api/me").status, 429);
     bob.get("/api/me").ok();
 }
+
+/// The routes anyone may call (login, setup, sign-up…) never look at
+/// credentials: with some, working or not, a request there still counts
+/// against the address.
+#[test]
+fn credentials_dont_get_round_the_address_limit() {
+    let s = TestServer::with(|c| c.rate_anon = Some(60));
+    let anon = s.client().with_bearer("cdb_nothing");
+    let (n, r) = until_limited(|| anon.get("/api/setup"));
+    assert!(n <= 16, "{n}");
+    assert_eq!(r.code(), "rateLimited");
+    // The same bucket as without credentials.
+    assert_eq!(s.client().get("/api/setup").status, 429);
+    let r = anon.post("/api/login", json!({ "username": "x", "password": "y" }));
+    assert_eq!(r.status, 429, "{}", r.body);
+}
+
+/// A second server on the same data directory is refused: it would take
+/// the first one's running imports for interrupted ones and delete their
+/// uploads.
+#[test]
+fn one_server_per_data_directory() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let db = admin.create_db("Mine", "private");
+    admin.import_fixture(&db, "lichess.pgn");
+    let again = |dir: std::path::PathBuf| chess_server::AppState::new(chess_server::config::Config::new(dir));
+    let err = again(s.data_dir()).err().expect("refused");
+    assert!(err.contains("another chess-server"), "{err}");
+    admin.get(&format!("/api/databases/{db}/games")).ok();
+    // A stopped server lets it go: the next one starts there.
+    let s = s.restart();
+    assert!(again(s.data_dir()).is_err());
+    s.client().get("/api/health").ok();
+}

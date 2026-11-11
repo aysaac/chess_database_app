@@ -31,7 +31,7 @@ fn issue(n: u32) -> String {
         .collect()
 }
 
-/// A stand-in site whose newest issue is `latest`.
+/// A stand-in site whose newest issue is `latest` (0: the site is down).
 fn site(latest: Arc<AtomicU32>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -54,6 +54,7 @@ fn site(latest: Arc<AtomicU32>) -> String {
                 .and_then(|p| p.strip_suffix("g.zip"))
                 .and_then(|n| n.parse().ok());
             let (status, body): (&str, Vec<u8>) = match (path.as_str(), zip) {
+                _ if newest == 0 => ("500 Internal Server Error", Vec::new()),
                 ("/twic", _) => {
                     let links: String = (newest - 3..=newest)
                         .map(|n| format!("<a href='/zips/twic{n}g.zip'>{n}</a>"))
@@ -139,6 +140,7 @@ fn new_issues_go_into_the_admins_database_once_each() {
     assert_eq!(jobs.as_array().unwrap().iter().filter(|j| j["kind"] == "twic").count(), 3);
     admin.put("/api/admin/twic", json!({ "database": db, "everyDays": 7 })).ok();
     s.state.store.set_setting("twic.last_check", Some("0")).unwrap();
+    s.state.store.set_setting("twic.last_try", Some("0")).unwrap();
     latest.store(1605, Ordering::SeqCst);
     housekeeping::once(&s.state);
     let jobs = admin.get("/api/admin/jobs").ok().json();
@@ -149,4 +151,51 @@ fn new_issues_go_into_the_admins_database_once_each() {
     // Turned off.
     admin.put("/api/admin/twic", json!({ "database": null })).ok();
     assert_eq!(admin.post("/api/admin/twic/check", json!({})).status, 409);
+}
+
+/// An issue whose import can't start is given back (taken at the next
+/// check); a check that failed doesn't count for the schedule and is tried
+/// again within the hour.
+#[test]
+fn issues_that_failed_are_taken_again() {
+    let latest = Arc::new(AtomicU32::new(0));
+    let base = site(latest.clone());
+    let s = TestServer::with(|c| c.twic_url = base.clone());
+    let admin = s.admin();
+    let db = admin.create_db("TWIC", "server");
+    admin.put("/api/admin/twic", json!({ "database": db, "everyDays": 7 })).ok();
+    let view = || admin.get("/api/admin/twic").ok().json();
+    let games = || admin.get(&format!("/api/databases/{db}")).ok().json()["games"].as_u64().unwrap();
+
+    // TWIC unreachable: nothing taken, and not a week before the next try.
+    assert_eq!(check(&admin)["state"], "failed");
+    assert!(view()["lastCheck"].is_null(), "{}", view());
+    assert!(!housekeeping_due(&s), "not again at once");
+    s.state.store.set_setting("twic.last_try", Some("0")).unwrap();
+    assert!(housekeeping_due(&s), "an hour later");
+
+    // The database at its quota: the import can't start (507), the issue is given back.
+    latest.store(1600, Ordering::SeqCst);
+    admin.patch(&format!("/api/admin/databases/{db}"), json!({ "quotaBytes": 1 })).ok();
+    let job = check(&admin);
+    assert_eq!(job["state"], "failed", "{job}");
+    assert!(job.to_string().contains("quota"), "{job}");
+    assert_eq!(view()["issues"].as_array().unwrap().len(), 0, "{}", view());
+    assert!(view()["lastIssue"].is_null() && view()["lastCheck"].is_null());
+    assert!(s.data_dir().join("tmp").read_dir().unwrap().next().is_none(), "no download left behind");
+    assert_eq!(games(), 0);
+
+    // Room again: the next check takes it.
+    admin.patch(&format!("/api/admin/databases/{db}"), json!({ "quotaBytes": null })).ok();
+    assert_eq!(check(&admin)["state"], "done");
+    assert_eq!(games(), 1);
+    let v = view();
+    assert_eq!((v["lastIssue"].as_u64(), v["issues"][0]["games"].as_u64()), (Some(1600), Some(1)));
+    assert!(v["lastCheck"].as_i64().is_some());
+    s.state.store.set_setting("twic.last_try", Some("0")).unwrap();
+    assert!(!housekeeping_due(&s), "a week after the last check that worked");
+}
+
+fn housekeeping_due(s: &TestServer) -> bool {
+    chess_server::twic::due(&s.state)
 }
