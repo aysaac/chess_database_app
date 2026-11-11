@@ -106,6 +106,36 @@ fn a_private_database_is_its_owners_alone_not_even_the_admins() {
         }
     }
     assert_eq!(alice.get(&format!("/api/databases/{db}/games?deleted=only")).ok().json()["total"], 0);
+    // Transfers: only the owner offers; nobody else accepts what isn't offered to them.
+    alice.put(&format!("/api/databases/{db}/transfer"), json!({ "username": "bob" })).ok();
+    for (who, c) in [("bob", &bob), ("the admin", &admin)] {
+        for r in [
+            c.put(&format!("/api/databases/{db}/transfer"), json!({ "username": "admin" })),
+            c.put(&format!("/api/databases/{db}/transfer"), json!({ "nonsense": true })),
+            c.delete(&format!("/api/databases/{db}/transfer")),
+        ] {
+            assert_eq!((r.status, r.code().as_str()), (404, "notFound"), "{who}: {}", r.body);
+        }
+    }
+    for path in [format!("/api/transfers/{db}/accept"), format!("/api/transfers/{db}/decline")] {
+        assert_eq!(admin.post(&path, json!({})).status, 404, "{path}");
+    }
+    // Bob sees the offer (it's made to him), and still nothing of its games until he takes it.
+    assert_eq!(bob.get("/api/transfers").ok().json()["incoming"][0]["database"], db.as_str());
+    assert_eq!(bob.get(&format!("/api/databases/{db}/games")).status, 404);
+    alice.delete(&format!("/api/databases/{db}/transfer")).ok();
+    assert_eq!(bob.post(&format!("/api/transfers/{db}/accept"), json!({})).status, 404);
+    // The admin's audit log and jobs view name the database, nothing of its games.
+    let audit = admin.get("/api/admin/audit?limit=500").ok().json().to_string();
+    assert!(
+        audit.contains("Prep") && !audit.contains("Carlsen") && !audit.contains("reference.pgn"),
+        "{audit}"
+    );
+    let jobs = admin.get("/api/admin/jobs").ok().body;
+    assert!(!jobs.contains("reference.pgn") && !jobs.contains("Importing"), "{jobs}");
+    // Backups are the admin's, and never downloadable by anyone.
+    assert_eq!(bob.get("/api/admin/backups").status, 403);
+    assert_eq!(bob.post("/api/admin/backups", json!({})).status, 403);
     // The admin's own import route is permission-checked the same way.
     std::fs::write(s.data_dir().join("import/more.pgn"), &pgn).unwrap();
     let r = admin.post(&format!("/api/databases/{db}/import-file"), json!({ "path": "more.pgn" }));
