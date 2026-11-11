@@ -9,7 +9,7 @@ use chess_server::config::Config;
 use chess_server::secret::{check_new_password, hash_password};
 use chess_server::store::Store;
 use chess_server::wire::Role;
-use chess_server::{AppState, serve};
+use chess_server::{AppState, check_username, serve};
 
 const USAGE: &str = "\
 chess-server: several users' chess databases, and searches on them
@@ -117,6 +117,9 @@ fn read_password() -> Result<String, String> {
 
 /// Makes admin `name` (`create`), or sets the password of user `name`.
 fn set_user(config: &Config, name: &str, create: bool) -> Result<(), String> {
+    if create {
+        check_username(name).map_err(|e| e.message)?;
+    }
     std::fs::create_dir_all(&config.data_dir).map_err(|e| format!("{}: {e}", config.data_dir.display()))?;
     let store = Store::open(&config.store_path()).map_err(|e| e.to_string())?;
     let existing = store.user_by_name(name).map_err(|e| e.message)?;
@@ -131,11 +134,6 @@ fn set_user(config: &Config, name: &str, create: bool) -> Result<(), String> {
     let hash = hash_password(&password)?;
     match existing {
         None => {
-            if !(1..=32).contains(&name.len())
-                || !name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-            {
-                return Err("a username has 1 to 32 letters, digits, '.', '_' or '-'".into());
-            }
             store.create_user(name, &hash, Role::Admin).map_err(|e| e.message)?;
             eprintln!("Made admin {name}.");
         }

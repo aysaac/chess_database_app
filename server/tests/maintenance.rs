@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
 use chess_db::{Database, DuplicateOptions, NoProgress, find_duplicates, import_pgn};
-use common::{TestServer, fixture};
+use common::{TestServer, fixture, many_games};
 use serde_json::json;
 
 fn total(c: &common::Client, db: &str, params: &str) -> u64 {
@@ -200,13 +200,6 @@ fn marking_games_after_a_compaction_refuses_the_old_ids() {
     assert_eq!(total(&alice, &db, "deleted=only"), 0, "no game marked by an old id");
 }
 
-/// Games enough that an export doesn't fit the buffers between the
-/// server's reading thread and a client that stops reading.
-fn many_games(n: usize) -> String {
-    let moves: String = (1..=30).map(|i| format!("{}. Nf3 Nf6 {}. Ng1 Ng8 ", 2 * i - 1, 2 * i)).collect();
-    (0..n).map(|i| format!("[White \"Player {i}\"]\n[Black \"B\"]\n\n{moves}*\n\n")).collect()
-}
-
 /// An export a compaction comes in the middle of stops with an error: the
 /// client gets a broken download, not a file mixing games from before and
 /// after the renumbering.
@@ -216,8 +209,7 @@ fn an_export_stops_when_a_compaction_renumbers_the_games() {
     let s = TestServer::start();
     let admin = s.admin();
     let db = admin.create_db("Big", "private");
-    let r =
-        admin.upload(&format!("/api/databases/{db}/import?filename=many.pgn"), many_games(12_000).as_bytes());
+    let r = admin.upload(&format!("/api/databases/{db}/import?filename=many.pgn"), &many_games(30_000));
     assert_eq!(r.status, 202, "{}", r.body);
     assert_eq!(admin.wait_job(r.json()["job"].as_u64().unwrap())["state"], "done");
     admin.post(&format!("/api/databases/{db}/deleted"), json!({ "games": [0], "deleted": true })).ok();
@@ -232,7 +224,7 @@ fn an_export_stops_when_a_compaction_renumbers_the_games() {
     let mut body = resp.into_body().into_with_config().limit(1 << 30).reader();
     let mut start = vec![0u8; 64 * 1024];
     body.read_exact(&mut start).unwrap();
-    assert!(String::from_utf8_lossy(&start).contains("Player 1\""), "game 0 is left out, deleted");
+    assert!(String::from_utf8_lossy(&start).contains("[White \"White 1\"]"), "game 0 is left out, deleted");
 
     let r = admin.post(&format!("/api/databases/{db}/compact"), json!({}));
     assert_eq!(r.status, 202, "{}", r.body);
@@ -245,7 +237,7 @@ fn an_export_stops_when_a_compaction_renumbers_the_games() {
     start.extend_from_slice(&rest);
     let text = String::from_utf8_lossy(&start);
     let players: Vec<u32> =
-        text.split("[White \"Player ").skip(1).filter_map(|p| p.split('"').next()?.parse().ok()).collect();
+        text.split("[White \"White ").skip(1).filter_map(|p| p.split('"').next()?.parse().ok()).collect();
     assert!(players.len() > 100, "{}", players.len());
     let skipped = players.iter().zip(1..).find(|&(&p, n)| p != n);
     assert!(skipped.is_none(), "(game sent, game due): {skipped:?}");

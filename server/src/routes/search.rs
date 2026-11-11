@@ -107,7 +107,7 @@ pub async fn search(
 /// The page `q` asks for of the databases' games together; None when a
 /// compaction came meanwhile (the ids changed). Blocking.
 fn page_of(
-    state: &AppState,
+    state: &Arc<AppState>,
     user: &User,
     metas: &[DbMeta],
     opens: &[Arc<OpenDb>],

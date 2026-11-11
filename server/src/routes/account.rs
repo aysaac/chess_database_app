@@ -77,20 +77,25 @@ pub async fn setup(
     Ok((StatusCode::CREATED, Json(me_dto(&user, None))))
 }
 
-pub async fn login(
-    State(state): State<Arc<AppState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    Json(req): Json<LoginRequest>,
-) -> ApiResult<Response> {
-    let ip = client_ip(&state.config, &headers, peer);
-    let account_key = format!("user:{}", req.username.to_lowercase());
+/// User `username` if `password` is theirs (disabled or not), throttled as
+/// logins are, per account and per client address (`ip`): the attempt
+/// counts as a failure before it's hashed, so concurrent guesses each count
+/// and a burst gets no more than the limit. A right password takes it back
+/// and clears the account's failures. Every check of a password goes
+/// through this.
+pub async fn verify_throttled(
+    state: &Arc<AppState>,
+    username: &str,
+    password: String,
+    ip: &str,
+) -> ApiResult<Option<User>> {
+    let account_key = format!("user:{}", username.to_lowercase());
     let keys = [account_key.clone(), format!("ip:{ip}")];
-    state.throttle.check(&keys)?;
+    state.throttle.attempt(&keys)?;
     let found = {
         let _permit = state.hashing.acquire().await.map_err(ApiError::internal)?;
         let st = state.clone();
-        let (username, password) = (req.username.clone(), req.password);
+        let username = username.to_owned();
         blocking(move || {
             Ok(match st.store.user_by_name(&username)? {
                 Some((user, hash)) => secret::verify_password(&password, &hash).then_some(user),
@@ -102,8 +107,21 @@ pub async fn login(
         })
         .await?
     };
-    let Some(user) = found else {
-        state.throttle.fail(&keys);
+    if found.is_some() {
+        state.throttle.undo(&keys);
+        state.throttle.clear(&account_key);
+    }
+    Ok(found)
+}
+
+pub async fn login(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<LoginRequest>,
+) -> ApiResult<Response> {
+    let ip = client_ip(&state.config, &headers, peer);
+    let Some(user) = verify_throttled(&state, &req.username, req.password, &ip).await? else {
         log::info!("failed login as {:?} from {ip}", req.username);
         let (name, client) = (req.username.clone(), ip.clone());
         note(&state, move |s| s.audit("login.failed", None, Target::Name(&name), None, Some(&client))).await;
@@ -118,7 +136,6 @@ pub async fn login(
         .await;
         return Err(ApiError::forbidden("This account is disabled"));
     }
-    state.throttle.clear(&account_key);
     log::info!("{} logged in from {ip}", user.username);
     let (u, client) = (user.clone(), ip.clone());
     note(&state, move |s| s.audit("login", Some(&u), Target::None, None, Some(&client))).await;
@@ -149,11 +166,10 @@ pub fn page_link(config: &crate::config::Config, page: &str, token: &str) -> Str
 }
 
 /// Counts a request against `keys` (each one counts, not only failures)
-/// and refuses it past the limit, as failed logins are.
+/// and refuses it past the limit, as failed logins are: checked and
+/// counted at once, so requests made at the same time each count.
 fn throttle_every(state: &AppState, keys: &[String]) -> ApiResult<()> {
-    state.throttle.check(keys)?;
-    state.throttle.fail(keys);
-    Ok(())
+    state.throttle.attempt(keys)
 }
 
 /// What an invite makes, while it can be used (no login). Wrong tokens are
@@ -350,26 +366,15 @@ pub async fn account(State(state): State<Arc<AppState>>, auth: Auth) -> ApiResul
 }
 
 /// Sets one's e-mail address (or removes it), with one's password: it's
-/// where reset links go.
+/// where reset links go. Wrong passwords are throttled as failed logins
+/// are (the same account's).
 pub async fn change_email(
     State(state): State<Arc<AppState>>,
     auth: Auth,
     Json(req): Json<EmailChange>,
 ) -> ApiResult<StatusCode> {
     let email = check_email(req.email)?;
-    let ok = {
-        let _permit = state.hashing.acquire().await.map_err(ApiError::internal)?;
-        let st = state.clone();
-        let (name, current) = (auth.user.username.clone(), req.current_password);
-        blocking(move || {
-            Ok(st
-                .store
-                .user_by_name(&name)?
-                .is_some_and(|(_, hash)| secret::verify_password(&current, &hash)))
-        })
-        .await?
-    };
-    if !ok {
+    if verify_throttled(&state, &auth.user.username, req.current_password, &auth.client).await?.is_none() {
         return Err(ApiError::forbidden("The current password is wrong"));
     }
     let id = auth.user.id;
@@ -398,25 +403,17 @@ pub async fn me(auth: Auth) -> Json<MeDto> {
     Json(me_dto(&auth.user, auth.session.map(|s| s.csrf)))
 }
 
-/// Changes one's password; one's other sessions end.
+/// Changes one's password; one's other sessions end. Wrong current
+/// passwords are throttled as failed logins are (the same account's).
 pub async fn change_password(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     auth: Auth,
     Json(req): Json<PasswordChange>,
 ) -> ApiResult<StatusCode> {
-    let ok = {
-        let _permit = state.hashing.acquire().await.map_err(ApiError::internal)?;
-        let st = state.clone();
-        let (name, current) = (auth.user.username.clone(), req.current_password);
-        blocking(move || {
-            Ok(st
-                .store
-                .user_by_name(&name)?
-                .is_some_and(|(_, hash)| secret::verify_password(&current, &hash)))
-        })
-        .await?
-    };
-    if !ok {
+    let ip = client_ip(&state.config, &headers, peer);
+    if verify_throttled(&state, &auth.user.username, req.current_password, &ip).await?.is_none() {
         return Err(ApiError::forbidden("The current password is wrong"));
     }
     let hash = hash(&state, req.new_password).await?;

@@ -329,6 +329,17 @@ fn quota(q: Option<u64>) -> Option<i64> {
     q.map(|q| i64::try_from(q).unwrap_or(i64::MAX))
 }
 
+fn active_admins(conn: &Connection) -> rusqlite::Result<u64> {
+    conn.query_row("SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0", [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map(|n| n as u64)
+}
+
+/// A token's `last_used_at` is written when it's older than this (seconds),
+/// not at every request (each write is an fsync under the store's lock).
+pub const TOKEN_USE_PRECISION: i64 = 60;
+
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Store> {
         let conn = Connection::open(path)?;
@@ -437,13 +448,12 @@ impl Store {
 
     /// Enabled admins.
     pub fn active_admins(&self) -> ApiResult<u64> {
-        Ok(self.conn().query_row(
-            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0",
-            [],
-            |r| r.get::<_, i64>(0),
-        )? as u64)
+        Ok(active_admins(&self.conn())?)
     }
 
+    /// Changes a user. Refused (409) when it would leave no enabled admin
+    /// where there was one: counted and changed in one transaction, so two
+    /// admins demoting or disabling each other at once can't both succeed.
     pub fn update_user(
         &self,
         id: i64,
@@ -451,16 +461,23 @@ impl Store {
         disabled: Option<bool>,
         quota_bytes: Option<Option<u64>>,
     ) -> ApiResult<()> {
-        let conn = self.conn();
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let admins = active_admins(&tx)?;
         if let Some(role) = role {
-            conn.execute("UPDATE users SET role = ?1 WHERE id = ?2", params![role.as_str(), id])?;
+            tx.execute("UPDATE users SET role = ?1 WHERE id = ?2", params![role.as_str(), id])?;
         }
         if let Some(disabled) = disabled {
-            conn.execute("UPDATE users SET disabled = ?1 WHERE id = ?2", params![disabled as i64, id])?;
+            tx.execute("UPDATE users SET disabled = ?1 WHERE id = ?2", params![disabled as i64, id])?;
         }
         if let Some(q) = quota_bytes {
-            conn.execute("UPDATE users SET quota_bytes = ?1 WHERE id = ?2", params![quota(q), id])?;
+            tx.execute("UPDATE users SET quota_bytes = ?1 WHERE id = ?2", params![quota(q), id])?;
         }
+        if admins > 0 && active_admins(&tx)? == 0 {
+            // Dropping the transaction rolls it back.
+            return Err(ApiError::conflict("The server needs an enabled admin"));
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -562,27 +579,30 @@ impl Store {
             > 0)
     }
 
-    /// The token's user, if they aren't disabled; notes when it was used.
+    /// The token's user, if they aren't disabled; notes when it was used (to
+    /// the minute: [`TOKEN_USE_PRECISION`]).
     pub fn token_user(&self, token_hash: &[u8]) -> ApiResult<Option<User>> {
         let conn = self.conn();
-        let user = conn
+        let found = conn
             .query_row(
                 &format!(
-                    "SELECT {} FROM api_tokens t JOIN users u ON u.id = t.user_id
+                    "SELECT {}, t.last_used_at FROM api_tokens t JOIN users u ON u.id = t.user_id
                      WHERE t.token_hash = ?1 AND u.disabled = 0",
                     USER_COLUMNS.split(", ").map(|c| format!("u.{c}")).collect::<Vec<_>>().join(", ")
                 ),
                 [token_hash],
-                user_row,
+                |r| Ok((user_row(r)?, r.get::<_, Option<i64>>(6)?)),
             )
             .optional()?;
-        if user.is_some() {
+        let Some((user, last_used)) = found else { return Ok(None) };
+        let now = now();
+        if last_used.is_none_or(|t| now - t >= TOKEN_USE_PRECISION) {
             conn.execute(
                 "UPDATE api_tokens SET last_used_at = ?1 WHERE token_hash = ?2",
-                params![now(), token_hash],
+                params![now, token_hash],
             )?;
         }
-        Ok(user)
+        Ok(Some(user))
     }
 
     // ---- databases ---------------------------------------------------------
@@ -1254,11 +1274,37 @@ mod tests {
         let (found, hash) = s.user_by_name("ALICE").unwrap().unwrap();
         assert_eq!((found.id, hash.as_str()), (a.id, "h"));
         assert_eq!(s.active_admins().unwrap(), 1);
+        // The only enabled admin stays, with nothing of the change made.
+        assert_eq!(s.update_user(a.id, None, Some(true), Some(Some(10))).unwrap_err().status, 409);
+        assert_eq!(s.update_user(a.id, Some(Role::User), None, None).unwrap_err().status, 409);
+        assert_eq!(s.user(a.id).unwrap().unwrap(), a);
+        let b = s.create_user("Bea", "h", Role::Admin).unwrap();
         s.update_user(a.id, None, Some(true), Some(Some(10))).unwrap();
         let a = s.user(a.id).unwrap().unwrap();
         assert!(a.disabled);
         assert_eq!(a.quota_bytes, Some(10));
-        assert_eq!(s.active_admins().unwrap(), 0);
+        assert_eq!(s.active_admins().unwrap(), 1);
+        assert_eq!(s.update_user(b.id, Some(Role::User), None, None).unwrap_err().status, 409);
+    }
+
+    #[test]
+    fn token_use_is_noted_to_the_minute() {
+        let (_dir, s) = store();
+        let u = s.create_user("bob", "h", Role::User).unwrap();
+        s.create_token(u.id, "laptop", b"k").unwrap();
+        let last_used = || s.tokens(u.id).unwrap()[0].last_used_at.unwrap();
+        let set = |t: i64| {
+            s.conn().execute("UPDATE api_tokens SET last_used_at = ?1", [t]).unwrap();
+        };
+        s.token_user(b"k").unwrap().unwrap();
+        assert!(now() - last_used() <= 1);
+        let recent = now() - TOKEN_USE_PRECISION / 2;
+        set(recent);
+        s.token_user(b"k").unwrap().unwrap();
+        assert_eq!(last_used(), recent, "not written again within the minute");
+        set(now() - TOKEN_USE_PRECISION);
+        s.token_user(b"k").unwrap().unwrap();
+        assert!(now() - last_used() <= 1);
     }
 
     #[test]

@@ -54,6 +54,10 @@ pub struct Cache {
     lines: VecDeque<(LinesKey, LinesDto)>,
     /// Jobs counting lines, with the games each reads.
     lines_jobs: Vec<(LinesKey, JobId, u32)>,
+    /// The room the database had (`routes::imports::room`) when an index
+    /// build last stopped at the quota: none starts on its own again until
+    /// it has more.
+    pub index_stopped_at: Option<u64>,
 }
 
 fn put<T>(queue: &mut VecDeque<T>, item: T, cap: usize) {
@@ -195,8 +199,12 @@ impl Pool {
         self.dir.join(format!("{id}.{EXTENSION}"))
     }
 
-    fn slot(&self, id: &str) -> Slot {
-        self.slots.lock().expect("pool lock").entry(id.to_owned()).or_default().clone()
+    /// The slot of `id`, refused once it's deleted (checked under the pool's
+    /// lock, so no slot is made for a database `remove` took out).
+    fn slot(&self, id: &str) -> Result<Slot, DbError> {
+        let mut slots = self.slots.lock().expect("pool lock");
+        self.check_not_deleted(id)?;
+        Ok(slots.entry(id.to_owned()).or_default().clone())
     }
 
     fn check_not_deleted(&self, id: &str) -> Result<(), DbError> {
@@ -207,9 +215,9 @@ impl Pool {
     }
 
     pub fn create(&self, id: &str) -> Result<Arc<OpenDb>, DbError> {
-        self.check_not_deleted(id)?;
-        let slot = self.slot(id);
+        let slot = self.slot(id)?;
         let mut slot = slot.lock().expect("pool slot lock");
+        self.check_not_deleted(id)?;
         let open = Arc::new(OpenDb::new(id, Database::create(&self.path(id))?));
         *slot = Some(open.clone());
         Ok(open)
@@ -219,9 +227,10 @@ impl Pool {
     /// a moment (half a second for a million games); only requests for that
     /// database wait.
     pub fn get(&self, id: &str) -> Result<Arc<OpenDb>, DbError> {
-        self.check_not_deleted(id)?;
-        let slot = self.slot(id);
+        let slot = self.slot(id)?;
         let mut slot = slot.lock().expect("pool slot lock");
+        // `remove` may have emptied this slot since: never open it again.
+        self.check_not_deleted(id)?;
         if let Some(open) = &*slot {
             *open.last_used.lock().expect("last used lock") = Instant::now();
             return Ok(open.clone());
@@ -298,6 +307,12 @@ impl Pool {
             while Arc::strong_count(&open) > 1 && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
             }
+            if Arc::strong_count(&open) > 1 {
+                log::error!(
+                    "database {id}: still in use after 30 seconds ({} holders); deleting its files anyway",
+                    Arc::strong_count(&open) - 1
+                );
+            }
             drop(open);
         }
         let path = self.path(id);
@@ -327,6 +342,35 @@ mod tests {
         pool.remove(&id).unwrap();
         assert!(!pool.path(&id).exists());
         assert!(pool.get(&id).is_err(), "a deleted id isn't opened again");
+    }
+
+    #[test]
+    fn a_database_being_removed_is_not_opened_again() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let pool = Arc::new(Pool::new(dir.path().to_path_buf()));
+        for _ in 0..20 {
+            let id = new_db_id();
+            drop(pool.create(&id).unwrap());
+            let stop = Arc::new(AtomicBool::new(false));
+            let getters: Vec<_> = (0..4)
+                .map(|_| {
+                    let (pool, id, stop) = (pool.clone(), id.clone(), stop.clone());
+                    std::thread::spawn(move || {
+                        while !stop.load(Ordering::Relaxed) {
+                            drop(pool.get(&id));
+                        }
+                    })
+                })
+                .collect();
+            pool.remove(&id).unwrap();
+            stop.store(true, Ordering::Relaxed);
+            for g in getters {
+                g.join().unwrap();
+            }
+            assert!(!pool.slots.lock().unwrap().contains_key(&id), "a slot made after the removal");
+            assert!(!pool.path(&id).exists());
+        }
     }
 
     #[test]

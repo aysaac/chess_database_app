@@ -13,8 +13,8 @@ use axum::body::Body;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use chess_db::{
-    Checkpoint, ImportResume, ImportSummary, Progress, import_cb_resumable, import_pgn_resumable,
-    update_position_index,
+    Checkpoint, DbError, ImportResume, ImportSummary, IndexSummary, Progress, import_cb_resumable,
+    import_pgn_resumable, update_position_index,
 };
 use chess_jobs::{JobContext, JobError};
 use http_body_util::BodyExt;
@@ -33,47 +33,91 @@ use crate::wire::{Access, ImportFileRequest, ImportKind, ImportReportDto, JobSta
 use crate::{AppState, blocking};
 
 /// How much more the database may grow: the least of its own quota and its
-/// owner's (less their other databases). None when neither has one.
-/// Blocking.
-fn room(state: &AppState, meta: &DbMeta) -> ApiResult<Option<u64>> {
+/// owner's (less all their databases, as big as they are now: imports
+/// running into them included). None when neither has one. Sizes are read
+/// from the folders, never from a database (an import checking this may
+/// hold its lock). Blocking.
+pub fn room(state: &AppState, meta: &DbMeta) -> ApiResult<Option<u64>> {
     let size = dir_size(&state.pool.path(&meta.id));
     let mut room = meta.quota_bytes.map(|q| q.saturating_sub(size));
     let owner = state.store.user(meta.owner_id)?.ok_or_else(ApiError::not_found)?;
     if let Some(q) = owner.quota_bytes {
         let used: u64 =
-            state.store.databases_owned_by(owner.id)?.iter().map(|d| state.pool.stats(&d.id).1).sum();
+            state.store.databases_owned_by(owner.id)?.iter().map(|d| dir_size(&state.pool.path(&d.id))).sum();
         let left = q.saturating_sub(used);
         room = Some(room.map_or(left, |r| r.min(left)));
     }
     Ok(room)
 }
 
-/// Passes progress to the job, and stops the import once the database
-/// outgrows its quota (checked every half second).
-struct Guarded<'a> {
+/// Passes progress to the job, and stops it (an import, an index build)
+/// once the database or its owner has no room left: [`room`] again every
+/// half second, so imports running at once into one owner's databases share
+/// the owner's quota instead of each counting on all of it.
+pub struct Guarded<'a> {
     ctx: &'a JobContext,
-    dir: PathBuf,
-    /// The size the database may reach.
-    limit: Option<u64>,
+    state: &'a AppState,
+    meta: &'a DbMeta,
     over: AtomicBool,
     checked: Mutex<Instant>,
+}
+
+impl<'a> Guarded<'a> {
+    pub fn new(state: &'a AppState, meta: &'a DbMeta, ctx: &'a JobContext) -> Guarded<'a> {
+        // The first report checks at once: a small file is one batch.
+        let long_ago = Instant::now().checked_sub(Duration::from_secs(1)).unwrap_or_else(Instant::now);
+        Guarded { ctx, state, meta, over: AtomicBool::new(false), checked: Mutex::new(long_ago) }
+    }
+
+    /// Whether it stopped the job at the quota.
+    pub fn over(&self) -> bool {
+        self.over.load(Ordering::Relaxed)
+    }
 }
 
 impl Progress for Guarded<'_> {
     fn report(&self, done: u64, total: u64) {
         self.ctx.progress(done, total);
-        let Some(limit) = self.limit else { return };
         let mut checked = self.checked.lock().expect("quota check lock");
         if checked.elapsed() >= Duration::from_millis(500) {
             *checked = Instant::now();
-            if dir_size(&self.dir) > limit {
-                self.over.store(true, Ordering::Relaxed);
+            match room(self.state, self.meta) {
+                Ok(Some(0)) => self.over.store(true, Ordering::Relaxed),
+                Ok(_) => {}
+                Err(e) => log::warn!("database {}: quota check: {}", self.meta.id, e.message),
             }
         }
     }
 
     fn is_cancelled(&self) -> bool {
-        self.ctx.is_cancelled() || self.over.load(Ordering::Relaxed)
+        self.ctx.is_cancelled() || self.over()
+    }
+}
+
+/// Brings the position index up to date under the quota ([`Guarded`]): the
+/// index counts toward it. A build stopped there is noted, so
+/// `games::ensure_index` doesn't start another until the database has more
+/// room. Blocking.
+pub fn index_within_quota(
+    state: &AppState,
+    open: &OpenDb,
+    meta: &DbMeta,
+    ctx: &JobContext,
+) -> Result<IndexSummary, JobError> {
+    let before = room(state, meta).map_err(|e| JobError::Failed(e.message))?;
+    let guard = Guarded::new(state, meta, ctx);
+    let result = update_position_index(&open.db, &guard);
+    let mut cache = open.cache.lock().expect("cache lock");
+    match result {
+        Err(DbError::Cancelled) if guard.over() && !ctx.is_cancelled() => {
+            cache.index_stopped_at = Some(before.unwrap_or(0));
+            Err(JobError::Failed("Stopped indexing the positions: the database reached its quota".into()))
+        }
+        Ok(summary) => {
+            cache.index_stopped_at = None;
+            Ok(summary)
+        }
+        Err(e) => Err(to_job_error(e)),
     }
 }
 
@@ -156,7 +200,6 @@ struct Import {
     skip: u64,
     /// The upload to delete afterwards.
     _temp: TempFile,
-    limit: Option<u64>,
 }
 
 impl Import {
@@ -168,14 +211,7 @@ impl Import {
 }
 
 fn run(state: &AppState, import: &Import, ctx: &JobContext) -> Result<String, JobError> {
-    let guard = Guarded {
-        ctx,
-        dir: state.pool.path(&import.meta.id),
-        limit: import.limit,
-        over: AtomicBool::new(false),
-        // The first report checks at once: a small file is one batch.
-        checked: Mutex::new(Instant::now().checked_sub(Duration::from_secs(1)).unwrap_or_else(Instant::now)),
-    };
+    let guard = Guarded::new(state, &import.meta, ctx);
     let (kind, path, file, read_all, base) = {
         let r = import.resume.lock().expect("resume lock");
         (r.kind, r.path.clone(), r.file.clone(), r.read_all, r.base)
@@ -211,7 +247,7 @@ fn run(state: &AppState, import: &Import, ctx: &JobContext) -> Result<String, Jo
     };
     summary.imported = imported;
     state.jobs.set_report(ctx.id(), ImportReportDto::new(file.clone(), &summary));
-    let over = guard.over.load(Ordering::Relaxed);
+    let over = guard.over();
     log::info!(
         "imported {} games from {} into {} ({} skipped{})",
         summary.imported,
@@ -233,8 +269,6 @@ fn run(state: &AppState, import: &Import, ctx: &JobContext) -> Result<String, Jo
     if !summary.cancelled {
         import.note(state, ctx.id(), |r| r.read_all = true);
     }
-    ctx.progress_msg(0, 0, "Indexing positions");
-    let indexed = update_position_index(&import.open.db, ctx).map_err(to_job_error)?;
     let mut msg = match summary.imported {
         1 => "Imported 1 game".to_owned(),
         n => format!("Imported {} games", thousands(n)),
@@ -247,8 +281,14 @@ fn run(state: &AppState, import: &Import, ctx: &JobContext) -> Result<String, Jo
         ));
     }
     if over {
+        // No room for their index either: it waits for more (`games::ensure_index`).
         return Err(JobError::Failed(format!("{msg}, then stopped: the database reached its quota")));
     }
+    ctx.progress_msg(0, 0, "Indexing positions");
+    let indexed = index_within_quota(state, &import.open, &import.meta, ctx).map_err(|e| match e {
+        JobError::Failed(why) => JobError::Failed(format!("{msg}. {why}")),
+        cancelled => cancelled,
+    })?;
     if indexed.games > 0 {
         msg.push_str(&format!("; indexed the positions of {} games", thousands(u64::from(indexed.games))));
     }
@@ -277,12 +317,10 @@ pub(crate) fn start(
     file: String,
     temp: TempFile,
 ) -> ApiResult<u64> {
-    let limit_left = room(state, &meta)?;
-    if limit_left == Some(0) {
+    if room(state, &meta)? == Some(0) {
         return Err(quota_exceeded());
     }
     let open = state.open_db(&meta.id)?;
-    let size = dir_size(&state.pool.path(&meta.id));
     let mut writer = open.writer.lock().expect("writer lock");
     if writer_busy(&writer, &state.jobs.manager) {
         return Err(busy());
@@ -299,14 +337,7 @@ pub(crate) fn start(
         next: None,
         read_all: false,
     };
-    let import = Import {
-        limit: limit_left.map(|l| size + l),
-        open: open.clone(),
-        meta,
-        resume: Mutex::new(resume),
-        skip: 0,
-        _temp: temp,
-    };
+    let import = Import { open: open.clone(), meta, resume: Mutex::new(resume), skip: 0, _temp: temp };
     let st = state.clone();
     let db = (import.meta.id.clone(), import.meta.name.clone());
     let job =
@@ -376,8 +407,6 @@ fn go_on(state: &Arc<AppState>, row: &JobRow, resume: Option<Resume>) -> Result<
     let open = state.pool.get(&meta.id).map_err(|e| e.to_string())?;
     let count = open.lock().count();
     let skip = resume.skip(count).ok_or_else(|| format!("{STOPPED}, and the database changed since"))?;
-    let limit_left = room(state, &meta).map_err(|e| e.message)?;
-    let size = dir_size(&state.pool.path(&meta.id));
     let temp = TempFile { path: resume.upload.then(|| resume.path.clone()), stopping: state.jobs.stopping() };
     log::info!(
         "going on with job {} for {}: importing {} into {} from game {} of the file",
@@ -387,14 +416,7 @@ fn go_on(state: &Arc<AppState>, row: &JobRow, resume: Option<Resume>) -> Result<
         meta.id,
         skip + 1
     );
-    let import = Import {
-        limit: limit_left.map(|l| size + l),
-        open: open.clone(),
-        meta,
-        resume: Mutex::new(resume),
-        skip,
-        _temp: temp,
-    };
+    let import = Import { open: open.clone(), meta, resume: Mutex::new(resume), skip, _temp: temp };
     let st = state.clone();
     let mut writer = open.writer.lock().expect("writer lock");
     let job = state.jobs.spawn_kept(row, move |ctx| run(&st, &import, ctx));
@@ -424,10 +446,11 @@ pub async fn upload(
     body: Body,
 ) -> ApiResult<(StatusCode, Json<JobStarted>)> {
     // Permissions first: nothing is read from someone who may not import,
-    // or into a database that can't take it now (`start` checks again).
+    // or into a database that can't take it now. All of it is checked again
+    // once the body is in (below).
     let st = state.clone();
     let (user, db) = (auth.user.clone(), id.clone());
-    let meta = blocking(move || {
+    blocking(move || {
         let (meta, _) = require(&st.store, &user, &db, Access::Write)?;
         if room(&st, &meta)? == Some(0) {
             return Err(quota_exceeded());
@@ -437,7 +460,7 @@ pub async fn upload(
         {
             return Err(busy());
         }
-        Ok(meta)
+        Ok(())
     })
     .await?;
     let max = state.config.max_upload;
@@ -473,7 +496,16 @@ pub async fn upload(
     }
 
     let name = upload_name(&q);
-    let job = blocking(move || start(&state, &auth, meta, ImportKind::Pgn, path, name, temp)).await?;
+    let job = blocking(move || {
+        // A long upload: the user may have been disabled, or lost their
+        // share, since it began.
+        let user =
+            state.store.user(auth.user.id)?.filter(|u| !u.disabled).ok_or_else(ApiError::unauthorized)?;
+        let (meta, _) = require(&state.store, &user, &id, Access::Write)?;
+        let auth = Auth { user, ..auth };
+        start(&state, &auth, meta, ImportKind::Pgn, path, name, temp)
+    })
+    .await?;
     Ok((StatusCode::ACCEPTED, Json(JobStarted { job })))
 }
 

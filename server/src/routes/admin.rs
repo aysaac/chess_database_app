@@ -98,9 +98,7 @@ pub async fn update_user(
         if user.id == auth.user.id && (demoted || disabled) {
             return Err(ApiError::conflict("You can't disable yourself or take away your own admin role"));
         }
-        if user.is_admin() && !user.disabled && (demoted || disabled) && state.store.active_admins()? <= 1 {
-            return Err(ApiError::conflict("The server needs an enabled admin"));
-        }
+        // Refused there if no enabled admin would be left (409).
         state.store.update_user(user.id, req.role, req.disabled, req.quota_bytes)?;
         if disabled {
             state.store.delete_sessions_of(user.id, None)?;
