@@ -432,6 +432,44 @@ pub enum GamesAnswer {
     Job { job: u64 },
 }
 
+/// A row of a search across databases (SRCH-13): the game's row and the
+/// database it's in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchRowDto {
+    pub database: String,
+    pub database_name: String,
+    pub row: GameRowDto,
+}
+
+/// A database searched, and how many of its games matched.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchDatabaseDto {
+    pub id: String,
+    pub name: String,
+    pub total: u32,
+}
+
+/// A page of a search across databases, in one sort order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchPage {
+    pub total: u64,
+    pub offset: u32,
+    pub databases: Vec<SearchDatabaseDto>,
+    pub rows: Vec<SearchRowDto>,
+}
+
+/// The page, or the job one of the databases waits for (its position
+/// index is far behind): ask again when it's done.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SearchAnswer {
+    Ready(SearchPage),
+    Job { job: u64, database: String },
+}
+
 /// Rows per page at most.
 pub const MAX_PAGE: u32 = 500;
 

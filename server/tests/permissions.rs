@@ -66,6 +66,27 @@ fn a_private_database_is_its_owners_alone_not_even_the_admins() {
             assert_eq!(r.status, 404, "{who}: {}", r.body);
         }
     }
+    // Searching several databases: naming it fails the whole search as "not
+    // found", with a database of one's own beside it too; all=true leaves it out.
+    let theirs = |c: &common::Client, name: &str| c.create_db(name, "private");
+    for (who, c) in [("bob", &bob), ("the admin", &admin)] {
+        let own = theirs(c, &format!("{who}'s"));
+        for path in [
+            format!("/api/search?db={db}"),
+            format!("/api/search?db={own}&db={db}"),
+            format!("/api/search?db={db}&db={own}&white=a&fen=x&sort=nonsense"),
+            format!("/api/databases/{db}/export.pgn"),
+            format!("/api/databases/{db}/export.pgn?fen=x"),
+        ] {
+            let r = c.get(&path);
+            assert_eq!((r.status, r.code().as_str()), (404, "notFound"), "{who}: {path}: {}", r.body);
+        }
+        let all = c.get("/api/search?all=true&limit=500").ok().json();
+        let searched: Vec<&str> =
+            all["databases"].as_array().unwrap().iter().map(|d| d["id"].as_str().unwrap()).collect();
+        assert!(!searched.contains(&db.as_str()) && searched.contains(&own.as_str()), "{who}: {all}");
+        assert!(!all.to_string().contains("Prep"), "{who}: {all}");
+    }
     // The admin's own import route is permission-checked the same way.
     std::fs::write(s.data_dir().join("import/more.pgn"), &pgn).unwrap();
     let r = admin.post(&format!("/api/databases/{db}/import-file"), json!({ "path": "more.pgn" }));
