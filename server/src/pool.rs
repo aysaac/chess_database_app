@@ -13,7 +13,7 @@ use chess_db::{Database, DbError, EXTENSION, GameId, HeaderQuery, SortSpec};
 use chess_jobs::{JobId, JobManager};
 
 use crate::secret::is_db_id;
-use crate::wire::LinesDto;
+use crate::wire::{DeletedFilter, LinesDto};
 
 /// Search results kept per database, and orders of them.
 const SEARCHES_CACHED: usize = 8;
@@ -29,16 +29,27 @@ pub struct LinesKey {
     pub indexed: GameId,
 }
 
-/// A search's results in a sort order: (query, order, generation, sort
+/// What a list shows, sort order and paging aside: header criteria, the
+/// position its games reach (by hash), and the games marked as deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListKey {
+    pub header: HeaderQuery,
+    pub position: Option<u64>,
+    pub deleted: DeletedFilter,
+}
+
+/// A search's results in a sort order: (list, order, generation, sort
 /// epoch, ids).
-type Ordered = (HeaderQuery, SortSpec, u64, u64, Arc<Vec<GameId>>);
+type Ordered = (ListKey, SortSpec, u64, u64, Arc<Vec<GameId>>);
 
 /// Results kept per database, valid for its generation (every change to
 /// the games bumps it).
 #[derive(Default)]
 pub struct Cache {
-    searches: VecDeque<(HeaderQuery, u64, Arc<Vec<GameId>>)>,
+    searches: VecDeque<(ListKey, u64, Arc<Vec<GameId>>)>,
     orders: VecDeque<Ordered>,
+    /// Whether some game is marked as deleted, at a generation.
+    any_deleted: Option<(u64, bool)>,
     lines: VecDeque<(LinesKey, LinesDto)>,
     /// Jobs counting lines, with the games each reads.
     lines_jobs: Vec<(LinesKey, JobId, u32)>,
@@ -50,17 +61,25 @@ fn put<T>(queue: &mut VecDeque<T>, item: T, cap: usize) {
 }
 
 impl Cache {
-    pub fn search(&self, q: &HeaderQuery, generation: u64) -> Option<Arc<Vec<GameId>>> {
+    pub fn search(&self, q: &ListKey, generation: u64) -> Option<Arc<Vec<GameId>>> {
         self.searches.iter().find(|(k, g, _)| k == q && *g == generation).map(|(_, _, ids)| ids.clone())
     }
 
-    pub fn put_search(&mut self, q: HeaderQuery, generation: u64, ids: Arc<Vec<GameId>>) {
+    pub fn put_search(&mut self, q: ListKey, generation: u64, ids: Arc<Vec<GameId>>) {
         put(&mut self.searches, (q, generation, ids), SEARCHES_CACHED);
+    }
+
+    pub fn any_deleted(&self, generation: u64) -> Option<bool> {
+        self.any_deleted.filter(|(g, _)| *g == generation).map(|(_, any)| any)
+    }
+
+    pub fn put_any_deleted(&mut self, generation: u64, any: bool) {
+        self.any_deleted = Some((generation, any));
     }
 
     pub fn order(
         &self,
-        q: &HeaderQuery,
+        q: &ListKey,
         spec: SortSpec,
         generation: u64,
         epoch: u64,
@@ -73,7 +92,7 @@ impl Cache {
 
     pub fn put_order(
         &mut self,
-        q: HeaderQuery,
+        q: ListKey,
         spec: SortSpec,
         generation: u64,
         epoch: u64,
@@ -269,12 +288,18 @@ mod tests {
     #[test]
     fn caches_follow_the_generation() {
         let mut c = Cache::default();
-        let q = HeaderQuery { white: "a".into(), ..HeaderQuery::default() };
+        let key = |white: String| ListKey {
+            header: HeaderQuery { white, ..HeaderQuery::default() },
+            position: None,
+            deleted: DeletedFilter::Hide,
+        };
+        let q = key("a".into());
         c.put_search(q.clone(), 1, Arc::new(vec![1, 2]));
         assert_eq!(c.search(&q, 1).as_deref(), Some(&vec![1, 2]));
         assert!(c.search(&q, 2).is_none());
+        assert!(c.search(&ListKey { position: Some(5), ..q.clone() }, 1).is_none());
         for i in 0..20 {
-            c.put_search(HeaderQuery { white: i.to_string(), ..HeaderQuery::default() }, 1, Arc::default());
+            c.put_search(key(i.to_string()), 1, Arc::default());
         }
         assert!(c.search(&q, 1).is_none(), "the oldest went");
     }

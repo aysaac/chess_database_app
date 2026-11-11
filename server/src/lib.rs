@@ -11,6 +11,7 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod jobs;
+pub mod listing;
 pub mod pool;
 mod routes;
 pub mod secret;

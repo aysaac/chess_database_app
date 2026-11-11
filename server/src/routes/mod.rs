@@ -3,7 +3,7 @@
 mod account;
 mod admin;
 mod databases;
-mod games;
+pub(crate) mod games;
 mod imports;
 mod jobs;
 

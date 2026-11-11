@@ -257,7 +257,14 @@ desktop client can share the types later.
 `site`, `annotator`, `yearFrom`, `yearTo`, `ecoFrom`, `ecoTo`, `result`
 (`whiteWins`, `blackWins`, `draw`, `decisive`), `eloMin`, `eloMax`,
 `eloMode` (`both`, `either`, `average`), `movesMin`, `movesMax`,
-`annotatedOnly`. The answer is `{total, offset, rows}`.
+`annotatedOnly`; `fen` for the games reaching a position (SRCH-03, through
+the position index, so within its first 50 plies; with any of the other
+criteria); and `deleted` (`hide`, the default, `show`, or `only` the games
+marked as deleted). The answer is `{"kind": "ready", total, offset, rows}`.
+With `fen` while the position index is far behind (over 20,000 games not
+indexed, as during a big import), it's `{"kind": "job", "job": N}`: the job
+bringing the index up to date, as `/lines` answers; ask again when it's
+done.
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \

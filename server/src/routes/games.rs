@@ -11,79 +11,57 @@ use chess_core::position;
 use chess_core::shakmaty::Chess;
 use chess_db::reference::LINES_JOB_GAMES;
 use chess_db::{
-    DbError, GameId, HeaderQuery, IndexPlan, NoProgress, build_sort, find_position, page_ids,
-    reference_lines, reference_overview, search_headers, sorted_subset, update_position_index,
+    GameId, IndexPlan, NoProgress, find_position, reference_lines, reference_overview, update_position_index,
 };
 
 use crate::access::require;
 use crate::auth::Auth;
 use crate::error::{ApiError, ApiResult};
 use crate::jobs::{thousands, to_job_error};
+use crate::listing::{Listing, listing, parse_fen};
 use crate::pool::{LinesKey, OpenDb, writer_busy};
 use crate::store::{DbMeta, User};
 use crate::wire::{
-    Access, FenQuery, GameDto, GamePage, GameRowDto, GamesQuery, HeadersDto, OpeningDto, ReferenceDto,
-    ReferenceLinesDto, lines_dto, notation_of, reference_dto,
+    Access, FenQuery, GameDto, GamePage, GameRowDto, GamesAnswer, GamesQuery, HeadersDto, OpeningDto,
+    ReferenceDto, ReferenceLinesDto, lines_dto, notation_of, reference_dto,
 };
 use crate::{AppState, blocking};
 
-/// The ids of rows `offset..offset + limit` of the list `q` asks for, and
-/// the list's length. Blocking.
-fn page_of(open: &OpenDb, q: &GamesQuery) -> Result<(Vec<GameId>, u32), DbError> {
-    let spec = q.sort_spec();
-    if !open.lock().has_sort(spec) {
-        build_sort(&open.db, spec, &NoProgress)?;
+/// The list `q` asks for, built again once if a sort order went meanwhile
+/// (a compaction drops them). Blocking.
+pub fn listing_of(
+    state: &AppState,
+    open: &Arc<OpenDb>,
+    meta: &DbMeta,
+    user: &User,
+    q: &GamesQuery,
+) -> ApiResult<Listing> {
+    match listing(state, open, meta, user, q) {
+        Err(e) if e.code == "notSorted" => listing(state, open, meta, user, q),
+        other => other,
     }
-    let (offset, limit) = (q.offset, q.page_limit());
-    let header = q.header_query();
-    if header == (HeaderQuery { skip_deleted: true, ..HeaderQuery::default() }) {
-        let db = open.lock();
-        return Ok((page_ids(&db, spec, offset, limit)?, db.count()));
-    }
-    let generation = open.lock().generation();
-    let cached = open.cache.lock().expect("cache lock").search(&header, generation);
-    let found = match cached {
-        Some(ids) => ids,
-        None => {
-            let ids = Arc::new(search_headers(&open.db, &header, None, &NoProgress)?);
-            open.cache.lock().expect("cache lock").put_search(header.clone(), generation, ids.clone());
-            ids
-        }
-    };
-    let db = open.lock();
-    let epoch = db.sort_epoch();
-    let cached = open.cache.lock().expect("cache lock").order(&header, spec, generation, epoch);
-    let ordered = match cached {
-        Some(ids) => ids,
-        None => {
-            let ids = Arc::new(sorted_subset(&db, spec, &found)?);
-            open.cache.lock().expect("cache lock").put_order(header, spec, generation, epoch, ids.clone());
-            ids
-        }
-    };
-    let end = offset.saturating_add(limit).min(ordered.len() as u32);
-    let ids = ordered.get(offset as usize..end as usize).map(<[GameId]>::to_vec).unwrap_or_default();
-    Ok((ids, ordered.len() as u32))
 }
 
 /// A page of the game list: `?sort=white&desc=true&offset=0&limit=50`, plus
-/// any header criteria (`white=`, `black=`, `text=`, `yearFrom=`…).
+/// any header criteria (`white=`, `black=`, `text=`, `yearFrom=`…), `fen=`
+/// for the games reaching a position (SRCH-03) and `deleted=`.
 pub async fn page(
     State(state): State<Arc<AppState>>,
     auth: Auth,
     Path(id): Path<String>,
     Query(q): Query<GamesQuery>,
-) -> ApiResult<Json<GamePage>> {
+) -> ApiResult<Json<GamesAnswer>> {
     blocking(move || {
-        require(&state.store, &auth.user, &id, Access::Read)?;
+        let (meta, _) = require(&state.store, &auth.user, &id, Access::Read)?;
         let open = state.pool.get(&id)?;
-        let (ids, total) = match page_of(&open, &q) {
-            // A game replaced since the sort was built (not in phase 1, which only appends).
-            Err(DbError::NotSorted) => page_of(&open, &q)?,
-            other => other?,
+        let ids = match listing_of(&state, &open, &meta, &auth.user, &q)? {
+            Listing::Ready(ids) => ids,
+            Listing::Job(job) => return Ok(Json(GamesAnswer::Job { job })),
         };
-        let rows = open.lock().rows(&ids)?.into_iter().map(GameRowDto::from).collect();
-        Ok(Json(GamePage { total, offset: q.offset, rows }))
+        let offset = q.offset as usize;
+        let page = ids.slice(offset, offset.saturating_add(q.page_limit() as usize));
+        let rows = open.lock().rows(&page)?.into_iter().map(GameRowDto::from).collect();
+        Ok(Json(GamesAnswer::Ready(GamePage { total: ids.len() as u32, offset: q.offset, rows })))
     })
     .await
 }
@@ -118,11 +96,8 @@ pub async fn game(
     .await
 }
 
-fn parse_fen(q: &FenQuery) -> ApiResult<Chess> {
-    match q.fen.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
-        None => Ok(Chess::default()),
-        Some(fen) => position::from_fen(fen).map_err(|e| ApiError::bad_request(format!("Bad FEN: {e}"))),
-    }
+fn fen_position(q: &FenQuery) -> ApiResult<Chess> {
+    parse_fen(q.fen.as_deref())
 }
 
 /// Starts bringing the position index up to date when it isn't (after a
@@ -158,7 +133,7 @@ pub async fn tree(
     Path(id): Path<String>,
     Query(q): Query<FenQuery>,
 ) -> ApiResult<Json<ReferenceDto>> {
-    let pos = parse_fen(&q)?;
+    let pos = fen_position(&q)?;
     blocking(move || {
         let (meta, _) = require(&state.store, &auth.user, &id, Access::Read)?;
         let open = state.pool.get(&id)?;
@@ -180,7 +155,7 @@ pub async fn lines(
     Path(id): Path<String>,
     Query(q): Query<FenQuery>,
 ) -> ApiResult<Json<ReferenceLinesDto>> {
-    let pos = parse_fen(&q)?;
+    let pos = fen_position(&q)?;
     blocking(move || {
         let (meta, _) = require(&state.store, &auth.user, &id, Access::Read)?;
         let open = state.pool.get(&id)?;

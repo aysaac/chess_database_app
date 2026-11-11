@@ -153,6 +153,90 @@ fn searches_and_sorts_give_what_chess_db_gives() {
     assert_eq!(alice.get(&format!("/api/databases/{db}/games?sort=nonsense")).status, 400);
 }
 
+/// After 1.e4 e5 2.Nf3, URL-encoded.
+const AFTER_NF3: &str =
+    "rnbqkbnr%2Fpppp1ppp%2F8%2F4p3%2F4P3%2F5N2%2FPPPP1PPP%2FRNBQKB1R%20b%20KQkq%20-%201%202";
+
+#[test]
+fn games_reaching_a_position_with_criteria_sort_and_paging() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let fixtures = ["crosstable.pgn", "reference.pgn", "variations.pgn"];
+    let db = alice.create_db("Mixed", "private");
+    for f in fixtures {
+        alice.import_fixture(&db, f);
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let local = local_db(tmp.path(), &fixtures);
+    let mut pos = Chess::default();
+    for uci in ["e2e4", "e7e5", "g1f3"] {
+        let m = position::parse_uci(&pos, uci).unwrap();
+        pos.play_unchecked(m);
+    }
+    let hits: Vec<u32> = find_position(&local, &pos).unwrap().entries.iter().map(|e| e.game).collect();
+    assert!(hits.len() > 5, "{hits:?}");
+    let set = chess_db::GameSet::from_ids(&hits);
+    for (params, query) in [
+        ("", HeaderQuery::default()),
+        ("&text=pine", HeaderQuery { text: "pine".into(), ..HeaderQuery::default() }),
+        (
+            "&result=whiteWins",
+            HeaderQuery { result: Some(ResultFilter::WhiteWins), ..HeaderQuery::default() },
+        ),
+    ] {
+        let query = HeaderQuery { skip_deleted: true, ..query };
+        let found = search_headers(&local, &query, Some(&set), &NoProgress).unwrap();
+        for (sort_params, spec) in
+            [("", SortSpec::NATURAL), ("&sort=white&desc=true", SortSpec::new(SortKey::White, true))]
+        {
+            build_sort(&local, spec, &NoProgress).unwrap();
+            let expected = sorted_subset(&local.lock().unwrap(), spec, &found).unwrap();
+            let r = alice
+                .get(&format!("/api/databases/{db}/games?limit=500&fen={AFTER_NF3}{params}{sort_params}"));
+            assert_eq!(r.ok().json()["kind"], "ready");
+            let page: GamePage = alice
+                .get(&format!("/api/databases/{db}/games?limit=500&fen={AFTER_NF3}{params}{sort_params}"))
+                .parse();
+            assert_eq!(page.rows.iter().map(|r| r.id).collect::<Vec<_>>(), expected, "{params}{sort_params}");
+            let page: GamePage = alice
+                .get(&format!(
+                    "/api/databases/{db}/games?offset=2&limit=3&fen={AFTER_NF3}{params}{sort_params}"
+                ))
+                .ok()
+                .parse();
+            assert_eq!(page.total as usize, expected.len());
+            let want: Vec<u32> = expected.iter().skip(2).take(3).copied().collect();
+            assert_eq!(page.rows.iter().map(|r| r.id).collect::<Vec<_>>(), want);
+        }
+    }
+    assert_eq!(alice.get(&format!("/api/databases/{db}/games?fen=nonsense")).status, 400);
+}
+
+#[test]
+fn a_position_search_waits_for_an_index_far_behind() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let db = admin.create_db("Behind", "private");
+    // More games than a search replays (20,000), added without indexing.
+    let open = s.state.pool.get(&db).unwrap();
+    let games = chess_core::pgn::read_pgn_str(
+        "[White \"A\"][Black \"B\"]\n1. e4 e5 2. Nf3 *\n\n[White \"C\"]\n1. d4 *",
+    );
+    let prepared: Vec<_> = games.iter().map(chess_db::PreparedGame::new).collect();
+    for _ in 0..10_001 {
+        open.lock().append_prepared(&prepared).unwrap();
+    }
+    drop(open);
+    let r = admin.get(&format!("/api/databases/{db}/games?fen={AFTER_NF3}")).ok().json();
+    assert_eq!(r["kind"], "job", "{r}");
+    let job = admin.wait_job(r["job"].as_u64().unwrap());
+    assert_eq!((job["state"].as_str(), job["kind"].as_str()), (Some("done"), Some("index")), "{job}");
+    let page: GamePage =
+        admin.get(&format!("/api/databases/{db}/games?fen={AFTER_NF3}&limit=3")).ok().parse();
+    assert_eq!((page.total, page.rows.iter().map(|r| r.id).collect::<Vec<_>>()), (10_001, vec![0, 2, 4]));
+}
+
 #[test]
 fn trees_and_lines_give_what_chess_db_gives() {
     let s = TestServer::start();
