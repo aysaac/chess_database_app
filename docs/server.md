@@ -247,6 +247,7 @@ desktop client can share the types later.
 | `GET /api/databases/{id}/lines?fen=` | read | The main line and lines (`reference_lines`): `{"kind":"ready","lines":…}`, or from 50,000 games `{"kind":"job","job":N,"games":…}`: ask again when the job is done |
 | `POST /api/databases/{id}/import?filename=` | write | The request body is a PGN file (at most `CHESS_SERVER_MAX_UPLOAD_MB`) → `202 {"job": N}` |
 | `POST /api/databases/{id}/import-file` | write, admin | `{path}`: a `.pgn` or `.cbh` under `import/` → `202 {"job": N}` |
+| `GET /api/search?db=A&db=B…` | read on each | SRCH-13: the games of several databases in one list, with the game list's criteria (`fen=` too), sort and paging; `all=true` instead of `db=` searches every database one may read (at most 64). Naming a database one may not read answers 404 for the whole search, as every route does for it. `{"kind":"ready", total, offset, databases: [{id, name, total}], rows: [{database, databaseName, row}]}`, or `{"kind":"job", job, database}` while a database's position index is far behind |
 | `GET /api/jobs/{n}` | read on its database | Its state and progress; its import `report` for who started it and the owner |
 | `POST /api/jobs/{n}/cancel` | who started it, or the owner | |
 

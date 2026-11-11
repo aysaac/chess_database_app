@@ -262,6 +262,85 @@ fn exports_stream_the_listed_games_as_pgn() {
 }
 
 #[test]
+fn searching_several_databases_merges_their_lists() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let sets: [&[&str]; 3] =
+        [&["crosstable.pgn"], &["reference.pgn", "setup.pgn"], &["variations.pgn", "lichess.pgn"]];
+    let mut ids = Vec::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let mut locals = Vec::new();
+    for (i, fixtures) in sets.iter().enumerate() {
+        let db = alice.create_db(&format!("Set {i}"), "private");
+        for f in *fixtures {
+            alice.import_fixture(&db, f);
+        }
+        ids.push(db);
+        let dir = tmp.path().join(i.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        locals.push(local_db(&dir, fixtures));
+    }
+    let dbs = ids.iter().map(|d| format!("db={d}")).collect::<Vec<_>>().join("&");
+    let local_refs: Vec<&Mutex<Database>> = locals.iter().collect();
+    for (params, query, spec) in [
+        ("", HeaderQuery::default(), SortSpec::NATURAL),
+        ("&sort=white", HeaderQuery::default(), SortSpec::new(SortKey::White, false)),
+        ("&sort=date&desc=true", HeaderQuery::default(), SortSpec::new(SortKey::Date, true)),
+        (
+            "&text=a&sort=black",
+            HeaderQuery { text: "a".into(), ..HeaderQuery::default() },
+            SortSpec::new(SortKey::Black, false),
+        ),
+        (
+            "&sort=whiteElo&desc=true&eloMin=1",
+            HeaderQuery { elo_min: Some(1), ..HeaderQuery::default() },
+            SortSpec::new(SortKey::WhiteElo, true),
+        ),
+    ] {
+        let query = HeaderQuery { skip_deleted: true, ..query };
+        let want = chess_db::search_many(&local_refs, &query, None, spec, 0, 500, &NoProgress).unwrap();
+        let got = alice.get(&format!("/api/search?{dbs}&limit=500{params}")).ok().json();
+        assert_eq!(got["kind"], "ready");
+        assert_eq!(got["total"].as_u64(), Some(want.total), "{params}");
+        let rows: Vec<(String, u32)> = got["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["database"].as_str().unwrap().to_owned(), r["row"]["id"].as_u64().unwrap() as u32))
+            .collect();
+        let expected: Vec<(String, u32)> = want.rows.iter().map(|(i, r)| (ids[*i].clone(), r.id)).collect();
+        assert_eq!(rows, expected, "{params}");
+        assert_eq!(got["rows"][0]["databaseName"].as_str().unwrap(), format!("Set {}", want.rows[0].0));
+        assert_eq!(got["databases"].as_array().unwrap().len(), 3);
+        // Pages cut the same list.
+        let page = alice.get(&format!("/api/search?{dbs}&offset=37&limit=11{params}")).ok().json();
+        let got: Vec<(String, u32)> = page["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["database"].as_str().unwrap().to_owned(), r["row"]["id"].as_u64().unwrap() as u32))
+            .collect();
+        assert_eq!(got, expected.iter().skip(37).take(11).cloned().collect::<Vec<_>>(), "{params}");
+    }
+    // With a position too.
+    let page = alice.get(&format!("/api/search?{dbs}&fen={AFTER_NF3}&limit=500")).ok().json();
+    let mut pos = Chess::default();
+    for uci in ["e2e4", "e7e5", "g1f3"] {
+        let m = position::parse_uci(&pos, uci).unwrap();
+        pos.play_unchecked(m);
+    }
+    let hits: u64 = locals.iter().map(|l| find_position(l, &pos).unwrap().entries.len() as u64).sum();
+    assert_eq!(page["total"].as_u64(), Some(hits));
+    // all=true is every database one may read; nothing names none.
+    let all = alice.get("/api/search?all=true&limit=1").ok().json();
+    assert_eq!(all["databases"].as_array().unwrap().len(), 3);
+    assert_eq!(alice.get("/api/search").status, 400);
+    assert_eq!(alice.get(&format!("/api/search?all=true&db={}", ids[0])).status, 400);
+    assert_eq!(alice.get(&format!("/api/search?db={}&sort=nonsense", ids[0])).status, 400);
+}
+
+#[test]
 fn a_position_search_waits_for_an_index_far_behind() {
     let s = TestServer::start();
     let admin = s.admin();

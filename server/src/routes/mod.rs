@@ -7,6 +7,7 @@ mod export;
 pub(crate) mod games;
 mod imports;
 mod jobs;
+mod search;
 
 use std::sync::Arc;
 
@@ -39,6 +40,7 @@ pub fn api() -> Router<Arc<AppState>> {
         // The upload limits itself (`Config::max_upload`).
         .route("/databases/{db}/import", post(imports::upload).layer(DefaultBodyLimit::disable()))
         .route("/databases/{db}/import-file", post(imports::import_file))
+        .route("/search", get(search::search))
         .route("/jobs/{job}", get(jobs::job))
         .route("/jobs/{job}/cancel", post(jobs::cancel))
         .route("/admin/users", get(admin::users).post(admin::create_user))
