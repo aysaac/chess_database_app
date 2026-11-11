@@ -15,7 +15,7 @@ log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio", "matched-path"] }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "io-util", "sync", "time"] }
 http-body-util = "0.1.5"
 http-body = "1.1"

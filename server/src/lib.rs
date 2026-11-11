@@ -15,6 +15,7 @@ pub mod housekeeping;
 pub mod jobs;
 pub mod listing;
 pub mod mail;
+pub mod metrics;
 pub mod pool;
 pub mod ratelimit;
 mod routes;
@@ -48,6 +49,7 @@ pub struct AppState {
     pub jobs: Jobs,
     pub throttle: Throttle,
     pub limits: ratelimit::RateLimits,
+    pub metrics: metrics::Metrics,
     /// Argon2id hashes computed at once.
     pub hashing: tokio::sync::Semaphore,
     /// While no user exists: the one-time token that makes the first admin
@@ -70,6 +72,7 @@ impl AppState {
             jobs: Jobs::new(store.clone()).map_err(|e| e.message)?,
             throttle: Throttle::new(config.login_attempts, config.login_window),
             limits: ratelimit::RateLimits::default(),
+            metrics: metrics::Metrics::default(),
             hashing: tokio::sync::Semaphore::new(config.hash_concurrency.max(1)),
             setup_token: Mutex::new(no_users.then(secret::new_token)),
             store,
@@ -178,7 +181,8 @@ async fn log_request(req: Request, next: Next) -> Response {
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .nest("/api", routes::api())
+        .nest("/api", routes::api(state.clone()))
+        .route("/metrics", axum::routing::get(metrics::serve))
         .fallback(ui::serve)
         .layer(middleware::from_fn_with_state(state.clone(), check_origin))
         .layer(middleware::from_fn_with_state(state.clone(), client_addr))
