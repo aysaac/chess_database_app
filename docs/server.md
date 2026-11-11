@@ -327,6 +327,28 @@ million games.
 - Opening a database the first time takes about half a second per million
   games (the first request to it waits).
 
+## Measured
+
+Release build on the development laptop (16 threads), the server capped at
+4 GB of memory, one client on 127.0.0.1, Nov 2026. Times are whole HTTP
+requests.
+
+| | Lichess, first 1M games (2.3 GB PGN) | Mega Database 2019 (`.cbh`, 7.6M games), as the admin's private database |
+|---|---|---|
+| Folder import, then the position index | 61 s (52 s + 9 s); 1.4 GB on disk, 740 MB of it the index | 472 s (384 s + 88 s), 7,623,531 games (166 skipped, as importing it directly); 7.2 GB, 5.8 GB of it the index |
+| Tree at the start | 84 ms the first time (loads the per-game stats), then 21 ms | 590 ms, then 293 ms |
+| Tree after 1.e4 / after 5...a6 (Najdorf) | 23 ms / 2 ms (3,101 games) | 147 ms / 20 ms (189,080 games) |
+| Lines after 5...a6 | 269 ms | A job (over 50,000 games); then from the cache in under 1 ms |
+| First page by White (sorts every game) / next pages | 262 ms / 8 ms | 1.6 s / 4 ms |
+| `text=magnus` by date / its next page | 577 ms (1,501 games) / 5 ms | 1.8 s (8,073 games) / 5 ms |
+| One game (PGN and move tree) | 5 ms | 7 ms |
+| 8 trees after 1.e4 at once | 174 ms: they wait for the database's lock in turn | 1.2 s |
+| Server memory after the import | 630 MB resident | 1.0 GB with both databases open |
+
+A cold header search or sort reads every index record, so on millions of
+games it takes a second or two; repeating it, or paging through it, comes
+from the cache.
+
 ## Licence
 
 The server is part of the workspace and under its GPL-3.0-or-later. Whether
