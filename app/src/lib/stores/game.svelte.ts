@@ -623,9 +623,10 @@ class GameStore {
    * Saves the game as a new one in the database at `path`: the open one or
    * the reference database as they are, any other opened first (it becomes
    * the open database, so the game stays saved in what the list shows),
-   * or created first with `create`.
+   * or created first with `create`. With `headers`, the game takes them
+   * first (the details the save dialog asked for).
    */
-  async saveInto(path: string, create = false) {
+  async saveInto(path: string, create = false, headers: HeadersDto | null = null) {
     if (this.session === null) return;
     try {
       let handle = [db.info, db.reference?.info].find((i) => i && i.path === path)?.handle;
@@ -635,6 +636,7 @@ class GameStore {
         handle = db.info?.handle;
       }
       if (handle === undefined) return;
+      if (headers) await this.setHeaders(headers);
       await this.#saveAs("new", handle);
       // The reference database's tree and index have a game more.
       if (handle === db.reference?.info?.handle) await db.loadReference();
@@ -643,13 +645,13 @@ class GameStore {
     }
   }
 
-  /** The "Save in…" dialog's last choice: a new database, through a file dialog. */
-  async saveIntoNew() {
+  /** Where a new database for the game goes, from a file dialog (null if cancelled). */
+  async newDatabasePath(): Promise<string | null> {
     const path = await save({
       title: "Save the game in a new database",
       defaultPath: await inDocuments("My games.chessdb"),
     });
-    if (path) await this.saveInto(path, true);
+    return path ?? null;
   }
 
   async #saveAs(mode: "replace" | "new", handle: number) {

@@ -132,7 +132,27 @@
     await until(() => shown(dialog()), "the dialog from Save as new with a database open");
     expect(db.info.games === 1, "nothing saved before choosing, got " + db.info.games);
     $$("[role='dialog'] button.target").find((b) => text($(".name strong", b)) === "other").click();
-    await until(() => db.info.games === 2, "the open database picked: one game more");
+    // Then the game's details: Cancel goes back to the databases, nothing saved.
+    await until(() => $("[role='dialog']")?.getAttribute("aria-label") === "Game details", "the details step");
+    $$("[role='dialog'] button").find((b) => text(b) === "Cancel").click();
+    await until(() => targets().length > 0, "back to the databases after Cancel");
+    expect(db.info.games === 1, "nothing saved by cancelling the details, got " + db.info.games);
+    $$("[role='dialog'] button.target").find((b) => text($(".name strong", b)) === "other").click();
+    await until(() => $("[role='dialog']")?.getAttribute("aria-label") === "Game details", "the details step again");
+    const field = (label) => $$("[role='dialog'] label").find((l) => text(l).startsWith(label));
+    const fill = (label, value) => {
+      const input = $("input, select", field(label));
+      input.value = value;
+      input.dispatchEvent(new Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+    };
+    await shot("save-details");
+    fill("White", "Smoke, Alice");
+    fill("Black", "Test, Bob");
+    fill("Result", "1-0");
+    $$("[role='dialog'] button").find((b) => text(b) === "Save game").click();
+    await until(() => db.info.games === 2 && !shown(dialog()), "the open database picked: one game more");
+    const h = game.view.headers;
+    expect(h.white === "Smoke, Alice" && h.black === "Test, Bob" && h.result === "1-0", "the details saved, got " + JSON.stringify([h.white, h.black, h.result]));
     // The ribbon's button asks again, so another database can follow.
     rb("Save as new…").click();
     await until(() => shown(dialog()), "the dialog from the ribbon button");
@@ -141,6 +161,8 @@
     await shot("save-dialog-open");
     // Pick the reference: saved there with the list left alone.
     $$("[role='dialog'] button.target").find((b) => text($(".name strong", b)) === "ref").click();
+    await until(() => $("[role='dialog']")?.getAttribute("aria-label") === "Game details", "the details step for ref");
+    $$("[role='dialog'] button").find((b) => text(b) === "Save game").click();
     await until(() => game.view.source?.db === db.reference.info.handle && !game.view.dirty, "saved into ref");
     expect(db.info.name === "other", "the list still on other");
     await until(() => db.reference.info.games === before + 2, "ref with another game, got " + db.reference.info.games);

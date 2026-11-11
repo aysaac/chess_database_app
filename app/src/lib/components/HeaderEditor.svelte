@@ -6,7 +6,15 @@
     headers,
     onSave,
     onCancel,
-  }: { headers: HeadersDto; onSave: (h: HeadersDto) => void; onCancel: () => void } = $props();
+    title = "Game details",
+    saveLabel = "Save details",
+  }: {
+    headers: HeadersDto;
+    onSave: (h: HeadersDto) => void;
+    onCancel: () => void;
+    title?: string;
+    saveLabel?: string;
+  } = $props();
 
   // Edit a copy; Elo fields are strings while typing.
   // svelte-ignore state_referenced_locally
@@ -32,7 +40,7 @@
   }
 </script>
 
-<Modal title="Game details" onClose={onCancel} width="620px">
+<Modal {title} onClose={onCancel} width="620px">
   <form
     onsubmit={(e) => {
       e.preventDefault();
@@ -66,7 +74,8 @@
       <div class="tag">
         <input bind:value={tag.k} placeholder="Tag" aria-label="Tag name" />
         <input bind:value={tag.v} placeholder="Value" aria-label="Tag value" />
-        <button type="button" title="Remove tag" onclick={() => h.extra.splice(i, 1)}>Remove</button>
+        <button type="button" title="Remove tag" onclick={() => h.extra.splice(i, 1)}>Remove</button
+        >
       </div>
     {/each}
     <button type="button" onclick={() => h.extra.push({ k: "", v: "" })}>Add tag</button>
@@ -74,7 +83,7 @@
   </form>
   {#snippet actions()}
     <button onclick={onCancel}>Cancel</button>
-    <button class="primary" onclick={save}>Save details</button>
+    <button class="primary" onclick={save}>{saveLabel}</button>
   {/snippet}
 </Modal>
 
