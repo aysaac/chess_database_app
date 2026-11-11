@@ -68,6 +68,50 @@ fn lichess_fixture_keeps_clock_and_eval() {
     assert_round_trip(g);
 }
 
+/// IO-10: a study's export as Lichess writes it: chapters with study tags,
+/// comments over several lines (a blank one and one starting with `[`
+/// included), arrows and squares, a comment and then a clock in two
+/// comments after one move, a chapter from a position, an empty one.
+#[test]
+fn lichess_study_fixture() {
+    let parsed = fixture("lichess-study.pgn");
+    assert!(
+        parsed.iter().all(|p| p.warnings.is_empty()),
+        "{:?}",
+        parsed.iter().map(|p| &p.warnings).collect::<Vec<_>>()
+    );
+    let gs = games(&parsed);
+    assert_eq!(gs.len(), 4);
+    let italian = gs[0];
+    assert_eq!(italian.headers.get_extra("ChapterURL"), Some("https://lichess.org/study/FxStudy1/ChapItal"));
+    assert_eq!(italian.headers.get_extra("StudyName"), Some("Fixture study"));
+    assert_eq!(italian.headers.get_extra("Orientation"), Some("white"));
+    assert_eq!(italian.headers.annotator, "https://lichess.org/@/FixtureCoach");
+    assert!(
+        italian.root().comment_after.contains("[This line starts with a bracket]"),
+        "{:?}",
+        italian.root()
+    );
+    assert_eq!(italian.mainline_len(), 24);
+    assert!(italian.has_variations());
+    let nf3 = italian.node(italian.root().children[0]);
+    let nf3 = italian.node(italian.node(nf3.children[0]).children[0]);
+    let arrow = |from, to, color| Shape { color, from, to: Some(to) };
+    assert_eq!(
+        nf3.shapes,
+        [arrow(Square::G1, Square::F3, ShapeColor::Green), arrow(Square::F3, Square::E5, ShapeColor::Red)]
+    );
+    assert_eq!(nf3.commands, [("clk".to_string(), "0:04:58".to_string())]);
+    let king = gs[1];
+    assert_eq!(king.headers.get_extra("Orientation"), Some("black"));
+    assert!(king.setup.is_some());
+    assert_eq!(king.mainline_len(), 9);
+    assert_eq!(gs[2].mainline_len(), 0, "an empty chapter");
+    assert_eq!(gs[3].mainline_len(), 26);
+    assert_eq!(gs[3].headers.white_elo, Some(1900));
+    gs.iter().for_each(|g| assert_round_trip(g));
+}
+
 #[test]
 fn malformed_fixture_is_tolerated() {
     let parsed = fixture("malformed.pgn");

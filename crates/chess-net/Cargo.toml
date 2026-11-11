@@ -1,6 +1,6 @@
 [package]
 name = "chess-net"
-description = "Online game sources: a player's games from Lichess and Chess.com, into a database (NET-01)"
+description = "Online game sources: a player's games from Lichess and Chess.com, into a database (NET-01); Lichess login and studies (NET-11, IO-10, NET-12)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,6 +17,11 @@ serde_json.workspace = true
 # Blocking HTTPS (no async runtime): rustls with ring, gzip, and the OS's
 # certificate store through the platform verifier.
 ureq = { version = "3.4", features = ["platform-verifier"] }
+# NET-11's PKCE: the challenge is the verifier's SHA-256, and the verifier
+# and state are random.
+sha2 = "0.10"
+getrandom = "0.3"
 
 [dev-dependencies]
+chess-core.workspace = true
 tempfile.workspace = true

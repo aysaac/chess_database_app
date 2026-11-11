@@ -30,12 +30,25 @@ serde_json.workspace = true
 log.workspace = true
 thiserror.workspace = true
 ts-rs = "12"
+# NET-11: the system browser for Lichess's login page, and the OS's
+# credential store for its token (one store per OS, below).
+open = "5"
+keyring-core = "1"
+
+# The Secret Service over D-Bus (libdbus, which tao links already); it
+# always encrypts the session, here with RustCrypto.
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
 # WebView2 settings Tauri has no option for (browser shortcuts); the versions
-# Tauri itself uses.
+# Tauri itself uses. The Credential Manager for NET-11's token.
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
 windows-core = "0.61"
+windows-native-keyring-store = { version = "1", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true
