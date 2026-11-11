@@ -210,13 +210,10 @@ impl Merger<'_, '_> {
             }
             if ranks.iter().map(|&r| r as u64).sum::<u64>() < n {
                 // The pivot is before the cut, and so is all that sorts before it.
-                for s in 0..k {
-                    lo[s] = if s == ps { pm + 1 } else { ranks[s] };
-                }
+                lo.copy_from_slice(&ranks);
+                lo[ps] = pm + 1;
             } else {
-                for s in 0..k {
-                    hi[s] = ranks[s];
-                }
+                hi.copy_from_slice(&ranks);
             }
         }
     }

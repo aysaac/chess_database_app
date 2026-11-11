@@ -26,7 +26,7 @@ use crate::dto::{
     SearchStartDto, SortSpecDto,
 };
 use crate::error::{AppError, AppResult};
-use crate::state::AppState;
+use crate::state::{AppState, SharedDb};
 
 /// Searches kept at once; older ones go.
 const KEPT: usize = 4;
@@ -109,7 +109,7 @@ struct Part<'a> {
 
 impl Progress for Part<'_> {
     fn report(&self, done: u64, total: u64) {
-        let share = if total == 0 { 0 } else { done.min(total) * 1000 / total };
+        let share = (done.min(total) * 1000).checked_div(total).unwrap_or(0);
         self.ctx.progress(self.index * 1000 + share, self.of * 1000);
     }
 
@@ -237,11 +237,7 @@ fn live(state: &AppState, s: &Source) -> AppResult<Arc<Mutex<Database>>> {
 
 /// Each source's results in `spec` order if they're all made (and still
 /// valid): (database, ids).
-fn ordered(
-    state: &AppState,
-    search: u32,
-    spec: SortSpec,
-) -> AppResult<Option<Vec<(Arc<Mutex<Database>>, SortedIds)>>> {
+fn ordered(state: &AppState, search: u32, spec: SortSpec) -> AppResult<Option<Vec<(SharedDb, SortedIds)>>> {
     let sources: Vec<Source> = state.cross.lock().expect("cross lock").get(search)?.sources.clone();
     let mut out = Vec::with_capacity(sources.len());
     for src in sources {
@@ -273,7 +269,7 @@ pub async fn cross_sort(
     if ordered(&state, search, spec)?.is_some() {
         return Ok(None);
     }
-    let sources: Vec<(usize, Arc<Mutex<Database>>, Arc<Vec<GameId>>)> = {
+    let sources: Vec<(usize, SharedDb, Arc<Vec<GameId>>)> = {
         let cross = state.cross.lock().expect("cross lock");
         let s = cross.get(search)?;
         let mut out = Vec::new();

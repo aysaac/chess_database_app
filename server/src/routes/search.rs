@@ -26,8 +26,11 @@ use crate::{AppState, blocking};
 pub const MAX_DATABASES: usize = 64;
 
 /// The `db=` values, `all=`, and the rest of the query (the games route's).
-fn split(raw: &str) -> ApiResult<(Vec<String>, bool, Vec<(String, String)>)> {
-    let pairs: Vec<(String, String)> =
+/// Query pairs, as given.
+type Pairs = Vec<(String, String)>;
+
+fn split(raw: &str) -> ApiResult<(Vec<String>, bool, Pairs)> {
+    let pairs: Pairs =
         serde_urlencoded::from_str(raw).map_err(|e| ApiError::bad_request(format!("Bad query: {e}")))?;
     let mut dbs = Vec::new();
     let mut all = false;
