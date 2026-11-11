@@ -20,6 +20,7 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, header};
 
+use crate::audit::ClientAddr;
 use crate::config::Config;
 use crate::error::{ApiError, ApiResult};
 use crate::secret::{ct_eq, token_digest};
@@ -42,6 +43,8 @@ pub struct Auth {
     pub user: User,
     /// None for an API token.
     pub session: Option<Session>,
+    /// The client's address (for the audit log).
+    pub client: String,
 }
 
 /// An authenticated admin (403 for other users).
@@ -74,10 +77,11 @@ impl FromRequestParts<Arc<AppState>> for Auth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &Arc<AppState>) -> ApiResult<Auth> {
+        let client = parts.extensions.get::<ClientAddr>().map(|c| c.0.clone()).unwrap_or_default();
         if let Some(token) = bearer(&parts.headers) {
             let st = state.clone();
             let user = blocking(move || st.store.token_user(&token_digest(&token))).await?;
-            return user.map(|user| Auth { user, session: None }).ok_or_else(ApiError::unauthorized);
+            return user.map(|user| Auth { user, session: None, client }).ok_or_else(ApiError::unauthorized);
         }
         let token = cookie(&parts.headers, SESSION_COOKIE).ok_or_else(ApiError::unauthorized)?;
         let token_hash = token_digest(&token);
@@ -91,7 +95,7 @@ impl FromRequestParts<Arc<AppState>> for Auth {
                 return Err(ApiError::forbidden("Missing or wrong CSRF token (X-CSRF-Token)"));
             }
         }
-        Ok(Auth { user, session: Some(Session { token_hash, csrf }) })
+        Ok(Auth { user, session: Some(Session { token_hash, csrf }), client })
     }
 }
 

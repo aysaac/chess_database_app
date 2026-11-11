@@ -6,10 +6,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{ConnectInfo, Path, State};
+use axum::extract::{ConnectInfo, Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
+use crate::audit::{ClientAddr, Target, note};
 use crate::auth::{Auth, client_ip, session_cookie};
 use crate::error::{ApiError, ApiResult};
 use crate::routes::{check_name, check_username};
@@ -49,6 +50,7 @@ pub async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<
 /// Makes the first admin, with the setup token from the log.
 pub async fn setup(
     State(state): State<Arc<AppState>>,
+    Extension(client): Extension<ClientAddr>,
     Json(req): Json<SetupRequest>,
 ) -> ApiResult<(StatusCode, Json<MeDto>)> {
     let expected = state.setup_token().ok_or_else(|| ApiError::conflict("The server is set up already"))?;
@@ -66,6 +68,12 @@ pub async fn setup(
     .await?;
     *state.setup_token.lock().expect("setup token lock") = None;
     log::info!("first admin {} made with the setup token", user.username);
+    let u = user.clone();
+    note(&state, move |s| {
+        let detail = Some("the first admin, with the setup token".to_owned());
+        s.audit("user.create", Some(&u), Target::User(u.id, &u.username), detail, Some(&client.0));
+    })
+    .await;
     Ok((StatusCode::CREATED, Json(me_dto(&user, None))))
 }
 
@@ -97,13 +105,23 @@ pub async fn login(
     let Some(user) = found else {
         state.throttle.fail(&keys);
         log::info!("failed login as {:?} from {ip}", req.username);
+        let (name, client) = (req.username.clone(), ip.clone());
+        note(&state, move |s| s.audit("login.failed", None, Target::Name(&name), None, Some(&client))).await;
         return Err(ApiError::new(StatusCode::UNAUTHORIZED, "badLogin", "Wrong username or password"));
     };
     if user.disabled {
+        let (u, client) = (user.clone(), ip.clone());
+        note(&state, move |s| {
+            let detail = Some("the account is disabled".to_owned());
+            s.audit("login.failed", None, Target::User(u.id, &u.username), detail, Some(&client));
+        })
+        .await;
         return Err(ApiError::forbidden("This account is disabled"));
     }
     state.throttle.clear(&account_key);
     log::info!("{} logged in from {ip}", user.username);
+    let (u, client) = (user.clone(), ip.clone());
+    note(&state, move |s| s.audit("login", Some(&u), Target::None, None, Some(&client))).await;
     start_session(&state, &headers, &user, StatusCode::OK).await
 }
 
@@ -216,6 +234,13 @@ pub async fn signup(
         user.role.as_str(),
         if req.invite.is_some() { "invited" } else { "open sign-up" }
     );
+    let (u, invited) = (user.clone(), req.invite.is_some());
+    note(&state, move |s| {
+        let how = if invited { "with an invite" } else { "open sign-up" };
+        let detail = Some(format!("{}, {how}", u.role.as_str()));
+        s.audit("user.create", Some(&u), Target::User(u.id, &u.username), detail, Some(&ip));
+    })
+    .await;
     start_session(&state, &headers, &user, StatusCode::CREATED).await
 }
 
@@ -235,7 +260,8 @@ pub async fn reset_password(
     headers: HeaderMap,
     Json(req): Json<ResetRequest>,
 ) -> ApiResult<StatusCode> {
-    let keys = [format!("token-ip:{}", client_ip(&state.config, &headers, peer))];
+    let ip = client_ip(&state.config, &headers, peer);
+    let keys = [format!("token-ip:{ip}")];
     state.throttle.check(&keys)?;
     let hash = hash(&state, req.password).await?;
     let st = state.clone();
@@ -243,6 +269,8 @@ pub async fn reset_password(
     match blocking(move || st.store.reset_password(&token, &hash)).await? {
         Some(user) => {
             log::info!("{} set a new password with a reset link", user.username);
+            note(&state, move |s| s.audit("password.reset", Some(&user), Target::None, None, Some(&ip)))
+                .await;
             Ok(StatusCode::NO_CONTENT)
         }
         None => {
@@ -273,7 +301,7 @@ pub async fn forgot_password(
         let st = state.clone();
         // Not awaited: the answer takes as long whether a message goes or not.
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = send_reset(&st, &login) {
+            if let Err(e) = send_reset(&st, &login, &ip) {
                 log::warn!("couldn't e-mail a reset link: {e}");
             }
         });
@@ -281,7 +309,7 @@ pub async fn forgot_password(
     Ok(StatusCode::ACCEPTED)
 }
 
-fn send_reset(state: &AppState, login: &str) -> Result<(), String> {
+fn send_reset(state: &AppState, login: &str, client: &str) -> Result<(), String> {
     let Some((user, Some(email))) = state.store.user_by_login(login).map_err(|e| e.message)? else {
         return Ok(());
     };
@@ -300,6 +328,7 @@ fn send_reset(state: &AppState, login: &str) -> Result<(), String> {
         lifetime / 60,
     )?;
     log::info!("e-mailed {} a reset link", user.username);
+    state.audit("password.email", None, Target::User(user.id, &user.username), None, Some(client));
     Ok(())
 }
 
@@ -344,8 +373,11 @@ pub async fn change_email(
         return Err(ApiError::forbidden("The current password is wrong"));
     }
     let id = auth.user.id;
-    blocking(move || state.store.set_email(id, email.as_deref())).await?;
+    let st = state.clone();
+    blocking(move || st.store.set_email(id, email.as_deref())).await?;
     log::info!("{} changed their e-mail address", auth.user.username);
+    note(&state, move |s| s.audit("email.change", Some(&auth.user), Target::None, None, Some(&auth.client)))
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -397,6 +429,10 @@ pub async fn change_password(
     })
     .await?;
     log::info!("{} changed their password", auth.user.username);
+    note(&state, move |s| {
+        s.audit("password.change", Some(&auth.user), Target::None, None, Some(&auth.client))
+    })
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -423,7 +459,18 @@ pub async fn create_token(
     let name = check_name(&req.name)?;
     let token = secret::new_api_token();
     let hash = token_digest(&token);
-    let row = blocking(move || state.store.create_token(auth.user.id, &name, &hash)).await?;
+    let row = blocking(move || {
+        let row = state.store.create_token(auth.user.id, &name, &hash)?;
+        state.audit(
+            "token.create",
+            Some(&auth.user),
+            Target::Token(row.id, &row.name),
+            None,
+            Some(&auth.client),
+        );
+        Ok(row)
+    })
+    .await?;
     Ok((StatusCode::CREATED, Json(NewTokenDto { id: row.id, name: row.name, token })))
 }
 
@@ -433,9 +480,13 @@ pub async fn delete_token(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let id: i64 = id.parse().map_err(|_| ApiError::not_found())?;
-    if blocking(move || state.store.delete_token(auth.user.id, id)).await? {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::not_found())
-    }
+    let deleted = blocking(move || {
+        let deleted = state.store.delete_token(auth.user.id, id)?;
+        if deleted {
+            state.audit("token.delete", Some(&auth.user), Target::Token(id, ""), None, Some(&auth.client));
+        }
+        Ok(deleted)
+    })
+    .await?;
+    if deleted { Ok(StatusCode::NO_CONTENT) } else { Err(ApiError::not_found()) }
 }

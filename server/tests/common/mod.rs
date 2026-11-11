@@ -49,6 +49,9 @@ impl TestServer {
 
     fn start_in(dir: tempfile::TempDir, change: impl FnOnce(&mut Config)) -> TestServer {
         let mut config = Config::new(dir.path().join("data"));
+        // Tests poll fast; a test of the limits sets them.
+        config.rate_user = None;
+        config.rate_anon = None;
         change(&mut config);
         let state = AppState::new(config).expect("server state");
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();

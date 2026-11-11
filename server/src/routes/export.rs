@@ -18,6 +18,7 @@ use http_body::Frame;
 use tokio::sync::mpsc;
 
 use crate::access::require;
+use crate::audit::Target;
 use crate::auth::Auth;
 use crate::error::ApiResult;
 use crate::listing::Listing;
@@ -85,6 +86,7 @@ pub async fn export(
         let open = st.open_db(&id)?;
         let listing = listing_of(&st, &open, &meta, &auth.user, &q)?;
         log::info!("{} exports database {}", auth.user.username, meta.id);
+        st.audit("export", Some(&auth.user), Target::Database(&meta), None, Some(&auth.client));
         Ok((meta, open, listing))
     })
     .await?;

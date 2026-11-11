@@ -101,6 +101,7 @@ passes `/api` to a server on 8080.
 | `CHESS_SERVER_SMTP_TLS` | `starttls` | `starttls`, `tls` (from the start), or `none` (only for a relay on the same machine or network) |
 | `CHESS_SERVER_SMTP_USER`, `CHESS_SERVER_SMTP_PASSWORD` | none | Its login, if it needs one |
 | `CHESS_SERVER_SMTP_FROM` | (needed with a host) | The sender, e.g. `Chess server <chess@example.com>` |
+| `CHESS_SERVER_AUDIT_DAYS` | 365 | How long the audit log keeps entries |
 | `RUST_LOG` | `info` | `debug` logs every request |
 
 ### In a container, behind Caddy
@@ -351,6 +352,27 @@ curl -H "Authorization: Bearer $TOKEN" --data-binary @twic1600.pgn \
 | `GET /api/admin/jobs`, `POST /api/admin/jobs/{n}/cancel` | |
 | `GET /api/admin/disk` | Free space, and what the databases, the store, uploads and the import folder take |
 | `GET /api/admin/import-files` | The `.pgn` and `.cbh` files in `import/` |
+| `GET /api/admin/audit` | The audit log, newest first: `?action=` (an action, or a group such as `login`), `who=` (a username, as who did it or to whom), `from=`, `to=` (Unix seconds), `offset=`, `limit=` (100, at most 500) |
+
+## The audit log
+
+Security-relevant events go to the metadata store, each with who did it
+(none for a failed login), what it was done to, when and the client's
+address: logins and failed logins; users made (by the admin, an invite,
+open sign-up or the setup token), their role changed, disabled, enabled,
+given a quota, deleted; passwords changed, set by the admin, reset links
+made, used or e-mailed; invites made and withdrawn; API tokens made and
+deleted; databases made, renamed, deleted, made private, shared or
+server-wide, given a quota; shares; transfers offered, withdrawn,
+accepted, declined; imports started, exports, games deleted or restored,
+duplicates deleted, compactions, backups, TWIC updates; jobs cancelled.
+The admin's Audit log page shows them, with filters. Entries are kept
+`CHESS_SERVER_AUDIT_DAYS` (365 by default).
+
+**It never holds game content, search criteria, positions or file names**
+(of uploads or imports): an entry says an import of an upload started into
+a database, not from what file; an export, not of which games. Database
+names and usernames are in it, as in the admin's other pages.
 
 ## Keeping a database in order
 

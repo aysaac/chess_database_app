@@ -22,12 +22,13 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
 use crate::access::require;
+use crate::audit::Target;
 use crate::auth::{AdminAuth, Auth};
 use crate::error::{ApiError, ApiResult};
 use crate::jobs::{thousands, to_job_error};
 use crate::pool::{OpenDb, dir_size, writer_busy};
 use crate::secret;
-use crate::store::{DbMeta, JobRow, User};
+use crate::store::{DbMeta, JobRow};
 use crate::wire::{Access, ImportFileRequest, ImportKind, ImportReportDto, JobStarted, UploadQuery};
 use crate::{AppState, blocking};
 
@@ -251,7 +252,7 @@ fn busy() -> ApiError {
 /// Checks the database may take an import now, and starts it. Blocking.
 fn start(
     state: &Arc<AppState>,
-    user: &User,
+    auth: &Auth,
     meta: DbMeta,
     kind: ImportKind,
     path: PathBuf,
@@ -269,11 +270,12 @@ fn start(
         return Err(busy());
     }
     let label = format!("Importing {file} into {}", meta.name);
+    let upload = temp.path.is_some();
     let resume = Resume {
         kind,
         path,
         file,
-        upload: temp.path.is_some(),
+        upload,
         base: open.lock().count(),
         prev: None,
         next: None,
@@ -289,8 +291,23 @@ fn start(
     };
     let st = state.clone();
     let db = (import.meta.id.clone(), import.meta.name.clone());
-    let job = state.jobs.spawn("import", label, (&db.0, &db.1), user, move |ctx| run(&st, &import, ctx));
+    let job =
+        state.jobs.spawn("import", label, (&db.0, &db.1), &auth.user, move |ctx| run(&st, &import, ctx));
     *writer = Some(job);
+    let detail = match (upload, kind) {
+        (true, _) => "an upload",
+        (false, ImportKind::Pgn) => "a PGN file of the import folder",
+        (false, ImportKind::Cbh) => "a ChessBase database of the import folder",
+    };
+    if let Some(meta) = state.store.database(&db.0)? {
+        state.audit(
+            "import.start",
+            Some(&auth.user),
+            Target::Database(&meta),
+            Some(detail.to_owned()),
+            Some(&auth.client),
+        );
+    }
     Ok(job)
 }
 
@@ -438,7 +455,7 @@ pub async fn upload(
     }
 
     let name = upload_name(&q);
-    let job = blocking(move || start(&state, &auth.user, meta, ImportKind::Pgn, path, name, temp)).await?;
+    let job = blocking(move || start(&state, &auth, meta, ImportKind::Pgn, path, name, temp)).await?;
     Ok((StatusCode::ACCEPTED, Json(JobStarted { job })))
 }
 
@@ -483,7 +500,7 @@ pub async fn import_file(
         let path = resolve_in(&state.config.import_dir(), &req.path)?;
         let kind = import_kind(&path).ok_or_else(|| ApiError::bad_request("Import a .pgn or a .cbh file"))?;
         let temp = TempFile::none(&state);
-        start(&state, &auth.user, meta, kind, path, req.path.clone(), temp)
+        start(&state, &auth, meta, kind, path, req.path.clone(), temp)
     })
     .await?;
     Ok((StatusCode::ACCEPTED, Json(JobStarted { job })))

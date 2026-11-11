@@ -15,6 +15,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use crate::access::access;
+use crate::audit::Target;
 use crate::auth::AdminAuth;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::account::{hash, page_link};
@@ -22,10 +23,11 @@ use crate::routes::check_username;
 use crate::routes::databases::delete_now;
 use crate::routes::imports::import_kind;
 use crate::secret::{is_db_id, new_token, token_digest};
-use crate::store::{DbMeta, Store, User, now};
+use crate::store::{AuditFilter, DbMeta, Store, User, now};
 use crate::wire::{
-    AdminDatabaseDto, AdminJobDto, AdminUpdateDatabase, Confirm, CreateInvite, CreateUser, DiskDto,
-    ImportFileDto, InviteDto, LinkDto, OwnedDatabaseDto, Role, SetPassword, UpdateUser, UserDto,
+    AdminDatabaseDto, AdminJobDto, AdminUpdateDatabase, AuditEntryDto, AuditPage, AuditQuery, Confirm,
+    CreateInvite, CreateUser, DiskDto, ImportFileDto, InviteDto, LinkDto, OwnedDatabaseDto, Role,
+    SetPassword, UpdateUser, UserDto,
 };
 use crate::{AppState, blocking};
 
@@ -62,6 +64,14 @@ pub async fn create_user(
     blocking(move || {
         let user = state.store.create_user(&req.username, &hash, req.role.unwrap_or(Role::User))?;
         log::info!("{} made user {} ({})", auth.user.username, user.username, user.role.as_str());
+        let detail = Some(user.role.as_str().to_owned());
+        state.audit(
+            "user.create",
+            Some(&auth.user),
+            Target::User(user.id, &user.username),
+            detail,
+            Some(&auth.client),
+        );
         Ok((StatusCode::CREATED, Json(user_dto(&state, user)?)))
     })
     .await
@@ -95,6 +105,29 @@ pub async fn update_user(
             state.store.delete_sessions_of(user.id, None)?;
         }
         log::info!("{} changed user {}: {:?}", auth.user.username, user.username, req);
+        let who = || Target::User(user.id, &user.username);
+        if let Some(role) = req.role.filter(|r| *r != user.role) {
+            state.audit(
+                "user.role",
+                Some(&auth.user),
+                who(),
+                Some(role.as_str().to_owned()),
+                Some(&auth.client),
+            );
+        }
+        match req.disabled {
+            Some(true) if !user.disabled => {
+                state.audit("user.disable", Some(&auth.user), who(), None, Some(&auth.client))
+            }
+            Some(false) if user.disabled => {
+                state.audit("user.enable", Some(&auth.user), who(), None, Some(&auth.client))
+            }
+            _ => {}
+        }
+        if let Some(q) = req.quota_bytes {
+            let detail = Some(q.map_or_else(|| "none".to_owned(), |q| format!("{q} bytes")));
+            state.audit("user.quota", Some(&auth.user), who(), detail, Some(&auth.client));
+        }
         let user = state.store.user(user.id)?.ok_or_else(ApiError::not_found)?;
         Ok(Json(user_dto(&state, user)?))
     })
@@ -115,6 +148,13 @@ pub async fn set_password(
         state.store.set_password(user.id, &hash)?;
         state.store.delete_sessions_of(user.id, None)?;
         log::info!("{} set a new password for {}", auth.user.username, user.username);
+        state.audit(
+            "password.set",
+            Some(&auth.user),
+            Target::User(user.id, &user.username),
+            None,
+            Some(&auth.client),
+        );
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -176,6 +216,14 @@ pub async fn delete_user(
         }
         state.store.delete_user(user.id)?;
         log::info!("{} deleted user {} and their {} databases", auth.user.username, user.username, dbs.len());
+        let detail = Some(format!("with {} databases", dbs.len()));
+        state.audit(
+            "user.delete",
+            Some(&auth.user),
+            Target::User(user.id, &user.username),
+            detail,
+            Some(&auth.client),
+        );
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -194,6 +242,13 @@ pub async fn reset_link(
         let expires_at = now() + state.config.reset_lifetime.as_secs() as i64;
         state.store.create_reset(user.id, &token_digest(&token), expires_at)?;
         log::info!("{} made a reset link for {}", auth.user.username, user.username);
+        state.audit(
+            "password.reset_link",
+            Some(&auth.user),
+            Target::User(user.id, &user.username),
+            None,
+            Some(&auth.client),
+        );
         let url = page_link(&state.config, "reset", &token);
         Ok((StatusCode::CREATED, Json(LinkDto { token, url, expires_at, id: None })))
     })
@@ -225,6 +280,13 @@ pub async fn create_invite(
             expires_at,
         )?;
         log::info!("{} made an invite ({})", auth.user.username, role.as_str());
+        state.audit(
+            "invite.create",
+            Some(&auth.user),
+            Target::Invite(id),
+            Some(role.as_str().to_owned()),
+            Some(&auth.client),
+        );
         let url = page_link(&state.config, "invite", &token);
         Ok((StatusCode::CREATED, Json(LinkDto { token, url, expires_at, id: Some(id) })))
     })
@@ -265,6 +327,7 @@ pub async fn delete_invite(
             return Err(ApiError::not_found());
         }
         log::info!("{} withdrew invite {id}", auth.user.username);
+        state.audit("invite.delete", Some(&auth.user), Target::Invite(id), None, Some(&auth.client));
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -320,6 +383,14 @@ pub async fn update_database(
         if let Some(q) = req.quota_bytes {
             state.store.set_database_quota(&meta.id, q)?;
             log::info!("{} set the quota of database {} to {q:?}", auth.user.username, meta.id);
+            let detail = Some(q.map_or_else(|| "none".to_owned(), |q| format!("{q} bytes")));
+            state.audit(
+                "database.quota",
+                Some(&auth.user),
+                Target::Database(&meta),
+                detail,
+                Some(&auth.client),
+            );
         }
         Ok(Json(db_dto(&state, &auth.user, database(&state.store, &id)?)?))
     })
@@ -335,7 +406,7 @@ pub async fn delete_database(
 ) -> ApiResult<StatusCode> {
     blocking(move || {
         let meta = database(&state.store, &id)?;
-        delete_now(&state, &meta, &auth.user, &confirm.confirm)?;
+        delete_now(&state, &meta, &auth.user, &confirm.confirm, Some(&auth.client))?;
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -378,7 +449,43 @@ pub async fn cancel_job(
     }
     state.jobs.manager.cancel(id);
     log::info!("{} cancelled job {id}", auth.user.username);
+    crate::audit::note(&state, move |s| {
+        s.audit("job.cancel", Some(&auth.user), Target::Job(id), None, Some(&auth.client));
+    })
+    .await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The audit log, newest first, filtered by action, username and dates.
+pub async fn audit(
+    State(state): State<Arc<AppState>>,
+    _: AdminAuth,
+    Query(q): Query<AuditQuery>,
+) -> ApiResult<Json<AuditPage>> {
+    blocking(move || {
+        let blank = |s: Option<String>| s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+        let filter = AuditFilter { action: blank(q.action), who: blank(q.who), from: q.from, to: q.to };
+        let (total, rows) = state.store.audit_entries(&filter, q.offset, q.limit.unwrap_or(100).min(500))?;
+        Ok(Json(AuditPage {
+            total,
+            offset: q.offset,
+            days: state.config.audit_days,
+            entries: rows
+                .into_iter()
+                .map(|r| AuditEntryDto {
+                    at: r.at,
+                    actor: r.actor,
+                    action: r.action,
+                    target_kind: r.target_kind,
+                    target_id: r.target_id,
+                    target: r.target,
+                    detail: r.detail,
+                    client: r.client,
+                })
+                .collect(),
+        }))
+    })
+    .await
 }
 
 /// Total and free bytes of the file system holding `path`.

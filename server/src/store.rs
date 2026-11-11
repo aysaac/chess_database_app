@@ -173,6 +173,33 @@ pub struct DbMeta {
     pub id_epoch: u64,
 }
 
+/// An entry of the audit log: who did what to what, when, from where.
+/// Never game content, search criteria, positions or file names.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuditRow {
+    pub at: i64,
+    pub actor_id: Option<i64>,
+    pub actor: Option<String>,
+    pub action: String,
+    /// `user`, `database`, `invite`, `token`, `job`, `backup`.
+    pub target_kind: Option<String>,
+    pub target_id: Option<String>,
+    pub target: Option<String>,
+    pub detail: Option<String>,
+    pub client: Option<String>,
+}
+
+/// What the admin's audit page filters by.
+#[derive(Debug, Clone, Default)]
+pub struct AuditFilter {
+    /// An action, or a group of them (`login` takes `login.failed` too).
+    pub action: Option<String>,
+    /// A username, as the actor or the target.
+    pub who: Option<String>,
+    pub from: Option<i64>,
+    pub to: Option<i64>,
+}
+
 /// Who and what a job is for, as the store keeps it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobMetaRow {
@@ -1049,6 +1076,63 @@ impl Store {
             conn.prepare(&format!("SELECT {JOB_COLUMNS} FROM jobs WHERE state = 'running' ORDER BY id"))?;
         let rows = stmt.query_map([], job_row)?.collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    // ---- the audit log -----------------------------------------------------------
+
+    pub fn audit(&self, e: &AuditRow) -> ApiResult<()> {
+        self.conn().execute(
+            "INSERT INTO audit (at, actor_id, actor, action, target_kind, target_id, target, detail, client)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                e.at,
+                e.actor_id,
+                e.actor,
+                e.action,
+                e.target_kind,
+                e.target_id,
+                e.target,
+                e.detail,
+                e.client
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Entries matching the filters, newest first, and how many there are.
+    pub fn audit_entries(&self, f: &AuditFilter, offset: u32, limit: u32) -> ApiResult<(u64, Vec<AuditRow>)> {
+        let conn = self.conn();
+        let filter = "(?1 IS NULL OR action = ?1 OR action LIKE ?1 || '.%')
+             AND (?2 IS NULL OR actor = ?2 COLLATE NOCASE OR target = ?2 COLLATE NOCASE)
+             AND (?3 IS NULL OR at >= ?3) AND (?4 IS NULL OR at < ?4)";
+        let args = params![f.action, f.who, f.from, f.to];
+        let total: i64 =
+            conn.query_row(&format!("SELECT COUNT(*) FROM audit WHERE {filter}"), args, |r| r.get(0))?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT at, actor_id, actor, action, target_kind, target_id, target, detail, client FROM audit
+             WHERE {filter} ORDER BY id DESC LIMIT ?5 OFFSET ?6"
+        ))?;
+        let rows = stmt
+            .query_map(params![f.action, f.who, f.from, f.to, limit, offset], |r| {
+                Ok(AuditRow {
+                    at: r.get(0)?,
+                    actor_id: r.get(1)?,
+                    actor: r.get(2)?,
+                    action: r.get(3)?,
+                    target_kind: r.get(4)?,
+                    target_id: r.get(5)?,
+                    target: r.get(6)?,
+                    detail: r.get(7)?,
+                    client: r.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((total.max(0) as u64, rows))
+    }
+
+    /// Forgets entries older than `before` (unix seconds); how many went.
+    pub fn prune_audit(&self, before: i64) -> ApiResult<usize> {
+        Ok(self.conn().execute("DELETE FROM audit WHERE at < ?1", [before])?)
     }
 
     // ---- settings ----------------------------------------------------------------
