@@ -561,7 +561,11 @@ pub async fn set_deleted_rows(
 }
 
 /// The game ids of the selected rows, in list order.
-fn selected_ids(state: &AppState, handle: u32, selection: &ListSelectionDto) -> AppResult<Vec<GameId>> {
+pub(crate) fn selected_ids(
+    state: &AppState,
+    handle: u32,
+    selection: &ListSelectionDto,
+) -> AppResult<Vec<GameId>> {
     let db = state.db(handle)?;
     let mut filters = state.filters.lock().expect("filters lock");
     let db = db.lock().expect("db lock");

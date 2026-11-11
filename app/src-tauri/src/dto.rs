@@ -1,6 +1,9 @@
 //! Serializable types shared with the frontend. TypeScript definitions are
 //! generated into `app/src/lib/bindings/` by `npm run bindings`.
 
+/// Lichess: the login, studies in and out (NET-11, IO-10, NET-12).
+pub mod lichess;
+
 use std::collections::{BTreeMap, HashMap};
 
 use chess_core::game::{GameResult, Headers, Shape, ShapeColor};

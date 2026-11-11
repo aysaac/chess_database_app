@@ -9,6 +9,7 @@
   import { db } from "../stores/db.svelte";
   import { drag, type GamesDrag } from "../stores/drag.svelte";
   import { game } from "../stores/game.svelte";
+  import { lichess } from "../stores/lichess.svelte";
   import { notices } from "../stores/notify.svelte";
   import { onboarding } from "../stores/onboarding.svelte";
   import { online } from "../stores/online.svelte";
@@ -651,6 +652,9 @@
     </button>
     <button role="menuitem" onclick={() => { menu = null; copyDialog = { ranges: $state.snapshot(picked), mode: "move" }; }}>
       Move {pickedCount > 1 ? what : "game"} to database…
+    </button>
+    <button role="menuitem" onclick={() => { menu = null; lichess.exportDialog = { ranges: $state.snapshot(picked) }; }}>
+      Send {pickedCount > 1 ? what : "game"} to a Lichess study…
     </button>
     <hr />
     <button role="menuitem" onclick={() => { menu = null; db.setDeletedRows($state.snapshot(picked), !row.deleted); }}>

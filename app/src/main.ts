@@ -56,6 +56,7 @@ async function exposeStores() {
     { library },
     { appearance },
     { online },
+    { lichess },
     { api },
     { invoke },
   ] = await Promise.all([
@@ -73,13 +74,14 @@ async function exposeStores() {
     import("./lib/stores/library.svelte"),
     import("./lib/stores/appearance.svelte"),
     import("./lib/stores/online.svelte"),
+    import("./lib/stores/lichess.svelte"),
     import("./lib/api"),
     import("@tauri-apps/api/core"),
   ]);
   Object.assign(window, {
     __chessdb: {
       db, game, jobs, analysis, prefs, tree, panels, dock, reference, onboarding, notices, library, appearance,
-      online, api, invoke,
+      online, lichess, api, invoke,
       win: getCurrentWindow(),
       LogicalSize,
     },

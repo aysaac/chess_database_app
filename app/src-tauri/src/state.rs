@@ -246,8 +246,11 @@ pub struct AppState {
     pub analysis: Mutex<Option<Analysis>>,
     /// The download of online games running (NET-01), by its label: one at a
     /// time, so two can't add the same games to a database twice, and each
-    /// server gets one request at a time.
+    /// server gets one request at a time. A study's import or export
+    /// (IO-10, NET-12) takes it too.
     pub download: Mutex<Option<String>>,
+    /// The Lichess login (NET-11), and what the study commands keep.
+    pub lichess: crate::lichess::Lichess,
     /// The last import into each database (by handle), while it had warnings.
     pub import_reports: Mutex<HashMap<u32, ImportReportDto>>,
     /// The searches for duplicate games (DB-08) in each database in the

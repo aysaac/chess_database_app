@@ -78,12 +78,27 @@ fn describe(s: &DownloadSummary, first: bool) -> String {
 }
 
 /// Frees the one download's place (`AppState::download`) when its job ends.
-struct DownloadSlot(AppHandle);
+pub(crate) struct DownloadSlot(AppHandle);
 
 impl Drop for DownloadSlot {
     fn drop(&mut self) {
         *self.0.state::<AppState>().download.lock().expect("download lock") = None;
     }
+}
+
+/// Takes the one download's place for `label`, or says what has it. A
+/// Lichess study's import or export (IO-10, NET-12) takes it too, so
+/// Lichess gets one request at a time.
+pub(crate) fn claim_download(app: &AppHandle, label: &str) -> AppResult<DownloadSlot> {
+    let state = app.state::<AppState>();
+    let mut running = state.download.lock().expect("download lock");
+    if let Some(other) = running.as_deref() {
+        return Err(AppError::invalid(format!(
+            "Another download is running ({other}). Downloads go one at a time: wait for it to end, or stop it in the status bar"
+        )));
+    }
+    *running = Some(label.to_owned());
+    Ok(DownloadSlot(app.clone()))
 }
 
 /// Downloads the player's games into the open database `handle` as a job,
@@ -110,20 +125,21 @@ pub async fn download_games(
     let first = request.period == PeriodDto::NewOnly && new_from.is_none();
     let req = request.to_request(new_from)?;
     let label = format!("Downloading {name}'s {} games", req.site.name());
-    {
-        let mut running = state.download.lock().expect("download lock");
-        if let Some(other) = running.as_deref() {
-            return Err(AppError::invalid(format!(
-                "Another download is running ({other}). Downloads go one at a time: wait for it to end, or stop it in the status bar"
-            )));
-        }
-        *running = Some(label.clone());
-    }
-    let slot = DownloadSlot(app.clone());
+    let slot = claim_download(&app, &label)?;
     state.import_reports.lock().expect("import reports lock").remove(&handle);
     Ok(state.jobs.spawn("download", label, move |ctx| {
         let _slot = slot;
-        let s = chess_net::download_into(client(), &db, &req, ctx).map_err(|e| match e {
+        // The user's own Lichess games come 3 times as fast with their
+        // login (NET-11); reading its token may ask to unlock the store.
+        let own = match req.site {
+            chess_net::Site::Lichess => crate::lichess::login_of(&app.state::<AppState>(), &name),
+            chess_net::Site::ChessCom => None,
+        };
+        let client = match own {
+            Some(login) => client().clone().with_lichess_login(&login.username, login.token),
+            None => client().clone(),
+        };
+        let s = chess_net::download_into(&client, &db, &req, ctx).map_err(|e| match e {
             NetError::Cancelled => JobError::Cancelled,
             NetError::Db(e) => to_job_error(e),
             e => JobError::failed(e),
