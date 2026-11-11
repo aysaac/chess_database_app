@@ -50,7 +50,7 @@ players (NET-09), encrypted ("sealed") databases.
 | `server.sqlite` (+ `-wal`, `-shm`) | Users (Argon2id password hashes), sessions and API tokens (their SHA-256 only), databases (name, owner, visibility, quota) and shares |
 | `dbs/<id>.chessdb/` | The databases. `<id>` is 32 random hex digits; the API never takes a path, only an id, checked to be exactly that before a path is built |
 | `import/` | Files the admin imports from: PGN, or ChessBase databases (the `.cbh` with its `.cbg`, `.cbp`, `.cbt`, `.cbc`) |
-| `tmp/` | Uploads being received or imported; emptied at start |
+| `tmp/` | Uploads being received or imported; one stays until its import ends, also across a restart (the import goes on), and the others are deleted at start |
 
 **It must be a local disk**, not NFS or SMB: databases are locked with
 `File::try_lock` and rely on `fsync` for crash safety, which network file
@@ -388,8 +388,20 @@ curl -H "Authorization: Bearer $TOKEN" --data-binary @twic1600.pgn \
   second): the games so far stay and the job fails with "reached its
   quota". The size counts the position index, which the import builds
   after, so a database can end up somewhat over.
-- Jobs live in memory: a restart forgets finished jobs, and a running
-  import stops between two batches (keeping what it committed).
+- **Jobs are kept in the metadata store** (the newest 1,000 finished
+  ones, with their reports), so they survive a restart; their ids go on
+  from the highest kept. A stop (a shutdown, a crash, `kill -9`) leaves the
+  jobs it interrupted marked so at the next start, except imports: **an
+  import goes on by itself** from what it committed. Before each batch it
+  notes where the file and the database will be once the batch is in; at
+  start the database's game count says which of the last two notes made it,
+  so no game is imported twice and none is left out (tested by killing the
+  server mid-import, `server/tests/restart.rs`). Its upload stays in `tmp/`
+  until the import ends or is discarded (an import that can't go on: its
+  database or file gone); other files there are deleted at start. A
+  resumed import is the same job, which who started it, the database's
+  owner or the admin (jobs view) can cancel. A search for duplicates' groups
+  are kept in memory only: find them again after a restart.
 
 ## Limits, and what changes for many users
 

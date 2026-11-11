@@ -25,7 +25,7 @@ use crate::secret::{is_db_id, new_token, token_digest};
 use crate::store::{DbMeta, Store, User, now};
 use crate::wire::{
     AdminDatabaseDto, AdminJobDto, AdminUpdateDatabase, Confirm, CreateInvite, CreateUser, DiskDto,
-    ImportFileDto, InviteDto, LinkDto, OwnedDatabaseDto, Role, SetPassword, UpdateUser, UserDto, job_state,
+    ImportFileDto, InviteDto, LinkDto, OwnedDatabaseDto, Role, SetPassword, UpdateUser, UserDto,
 };
 use crate::{AppState, blocking};
 
@@ -350,11 +350,10 @@ pub async fn jobs(State(state): State<Arc<AppState>>, _: AdminAuth) -> ApiResult
                 .jobs
                 .all()
                 .into_iter()
-                .rev()
                 .map(|(s, m)| AdminJobDto {
                     id: s.id,
                     kind: s.kind,
-                    state: job_state(&s.state).0,
+                    state: s.state,
                     done: s.done,
                     total: s.total,
                     database: m.db,

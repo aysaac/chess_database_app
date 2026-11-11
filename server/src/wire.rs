@@ -1207,6 +1207,8 @@ pub enum JobStateDto {
     Done,
     Failed,
     Cancelled,
+    /// The server stopped while it ran (and it couldn't go on after).
+    Interrupted,
 }
 
 /// A background job, as the app's `JobDto`.

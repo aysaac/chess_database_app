@@ -4,7 +4,7 @@
 export type Role = "admin" | "user";
 export type Visibility = "private" | "shared" | "server";
 export type Access = "read" | "write" | "owner";
-export type JobState = "running" | "done" | "failed" | "cancelled";
+export type JobState = "running" | "done" | "failed" | "cancelled" | "interrupted";
 
 export interface Me {
   id: number;

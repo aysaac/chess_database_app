@@ -177,6 +177,31 @@ impl JobManager {
         F: FnOnce(&JobContext) -> Result<String, JobError> + Send + 'static,
     {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        self.spawn_as(id, kind, label, work)
+    }
+
+    /// Ids [`spawn`](Self::spawn) gives from now on start at `next` (or
+    /// after the highest given so far): a server that keeps its jobs makes
+    /// new ones after those it kept (NET-03).
+    pub fn reserve_until(&self, next: JobId) {
+        self.inner.next_id.fetch_max(next, Ordering::Relaxed);
+    }
+
+    /// A new id for [`spawn_as`](Self::spawn_as), from the same sequence as
+    /// [`spawn`](Self::spawn)'s.
+    pub fn next_id(&self) -> JobId {
+        self.inner.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Runs `work` under `id`: one [`next_id`](Self::next_id) gave, or a job
+    /// kept from before that runs again (a resumed import). Panics if a job
+    /// with that id is known.
+    pub fn spawn_as<F>(&self, id: JobId, kind: &str, label: impl Into<String>, work: F) -> JobId
+    where
+        F: FnOnce(&JobContext) -> Result<String, JobError> + Send + 'static,
+    {
+        self.reserve_until(id + 1);
+        assert!(!self.inner.jobs.lock().expect("jobs lock").contains_key(&id), "job {id} exists already");
         let cancel = Arc::new(AtomicBool::new(false));
         let status = JobStatus {
             id,
@@ -286,6 +311,21 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.first(), Some(&JobState::Running));
         assert_eq!(seen.last(), Some(&JobState::Done));
+    }
+
+    #[test]
+    fn ids_can_be_reserved_and_given() {
+        let jobs = JobManager::new();
+        jobs.reserve_until(10);
+        let a = jobs.spawn("test", "a", |_| Ok(String::new()));
+        assert_eq!(a, 10);
+        assert_eq!(jobs.spawn_as(3, "test", "kept", |_| Ok(String::new())), 3);
+        let b = jobs.next_id();
+        assert_eq!(jobs.spawn_as(b, "test", "b", |_| Ok(String::new())), 11);
+        jobs.spawn_as(20, "test", "c", |_| Ok(String::new()));
+        assert_eq!(jobs.spawn("test", "d", |_| Ok(String::new())), 21);
+        jobs.wait(a);
+        assert_eq!(jobs.wait(3).unwrap().label, "kept");
     }
 
     #[test]

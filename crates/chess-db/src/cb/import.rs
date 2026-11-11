@@ -12,7 +12,7 @@ use crate::cb::annotations::{self, CbaFile};
 use crate::cb::entities::{self, EntityTable};
 use crate::cb::header::{CbEntry, CbResult, CbhFile, GameRecord};
 use crate::cb::moves::{CbgFile, DecodedGame, TranslateTable, decode_record};
-use crate::import::{ImportSummary, ImportWarning, game_label};
+use crate::import::{Checkpoint, ImportResume, ImportSummary, ImportWarning, game_label};
 use crate::{Database, DbError, GameId, PreparedGame, Progress};
 
 const MAX_BATCH: usize = 2_000;
@@ -109,13 +109,26 @@ pub fn import_cb(
     cbh_path: &Path,
     progress: &dyn Progress,
 ) -> Result<ImportSummary, DbError> {
-    import_cb_with(db, cbh_path, &TranslateTable::mode0(), progress)
+    import_cb_resumable(db, cbh_path, ImportResume::default(), progress)
+}
+
+/// [`import_cb`] going on from where an earlier run left off (see
+/// [`ImportResume`]: its `skip` counts ChessBase game numbers); the
+/// summary counts this run's games only.
+pub fn import_cb_resumable(
+    db: &Mutex<Database>,
+    cbh_path: &Path,
+    resume: ImportResume<'_>,
+    progress: &dyn Progress,
+) -> Result<ImportSummary, DbError> {
+    import_cb_with(db, cbh_path, &TranslateTable::mode0(), resume, progress)
 }
 
 fn import_cb_with(
     db: &Mutex<Database>,
     cbh_path: &Path,
     table: &TranslateTable,
+    resume: ImportResume<'_>,
     progress: &dyn Progress,
 ) -> Result<ImportSummary, DbError> {
     for ext in REQUIRED {
@@ -148,8 +161,13 @@ fn import_cb_with(
 
     let commit = |batch: &mut Vec<PreparedGame>,
                   unplaced: &mut Vec<(usize, usize)>,
-                  summary: &mut ImportSummary|
+                  summary: &mut ImportSummary,
+                  read: u64|
      -> Result<(), DbError> {
+        if let Some(note) = resume.before_commit {
+            let games = db.lock().expect("db lock").count() + batch.len() as GameId;
+            note(Checkpoint { games, read });
+        }
         if !batch.is_empty() {
             let ids = db.lock().expect("db lock").append_prepared(batch)?;
             for (pos, i) in unplaced.drain(..) {
@@ -161,7 +179,8 @@ fn import_cb_with(
         Ok(())
     };
 
-    for id in 1..=cbh.game_count {
+    let first = u32::try_from(resume.skip).unwrap_or(u32::MAX).saturating_add(1);
+    for id in first..=cbh.game_count {
         // Like PGN import's, a warning's index is zero-based.
         let game_index = id as usize - 1;
         match read_game(id, &cbh, &cbg, cba.as_ref(), &entities, table) {
@@ -201,7 +220,7 @@ fn import_cb_with(
         }
 
         if batch.len() >= MAX_BATCH || batch_started.elapsed() >= MAX_BATCH_AGE {
-            commit(&mut batch, &mut unplaced, &mut summary)?;
+            commit(&mut batch, &mut unplaced, &mut summary, u64::from(id))?;
             batch_started = Instant::now();
             progress.report(u64::from(id), total);
             if progress.is_cancelled() {
@@ -210,7 +229,7 @@ fn import_cb_with(
             }
         }
     }
-    commit(&mut batch, &mut unplaced, &mut summary)?;
+    commit(&mut batch, &mut unplaced, &mut summary, total)?;
     progress.report(total, total);
     Ok(summary)
 }
@@ -302,7 +321,9 @@ mod tests {
         std::fs::write(sibling(&base, "cbc"), entity_table(53, &[entity_data(&[], 53)])).unwrap();
 
         let db = Mutex::new(Database::create(&dir.path().join("Imported")).unwrap());
-        let summary = import_cb_with(&db, &base, &TranslateTable::identity(), &NoProgress).unwrap();
+        let summary =
+            import_cb_with(&db, &base, &TranslateTable::identity(), ImportResume::default(), &NoProgress)
+                .unwrap();
         assert_eq!(summary.imported, 1);
         assert_eq!(summary.skipped, 0);
 

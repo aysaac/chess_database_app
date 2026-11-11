@@ -218,6 +218,12 @@ impl Client {
         Client::finish(self.headers(self.agent.get(self.url(path)), false).call())
     }
 
+    /// A GET that may find no server listening (None then).
+    pub fn try_get(&self, path: &str) -> Option<Res> {
+        let resp = self.headers(self.agent.get(self.url(path)), false).call().ok()?;
+        Some(Client::finish(Ok(resp)))
+    }
+
     pub fn delete(&self, path: &str) -> Res {
         Client::finish(self.headers(self.agent.delete(self.url(path)), true).call())
     }
