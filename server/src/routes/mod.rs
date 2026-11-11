@@ -1,0 +1,94 @@
+//! The JSON API under `/api` (listed in `docs/server.md`).
+
+mod account;
+mod admin;
+mod databases;
+mod games;
+mod imports;
+mod jobs;
+
+use std::sync::Arc;
+
+use axum::Router;
+use axum::extract::DefaultBodyLimit;
+use axum::routing::{delete, get, patch, post, put};
+
+use crate::AppState;
+use crate::error::{ApiError, ApiResult};
+
+pub fn api() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/health", get(account::health))
+        .route("/setup", get(account::setup_status).post(account::setup))
+        .route("/login", post(account::login))
+        .route("/logout", post(account::logout))
+        .route("/me", get(account::me))
+        .route("/me/password", post(account::change_password))
+        .route("/tokens", get(account::tokens).post(account::create_token))
+        .route("/tokens/{token}", delete(account::delete_token))
+        .route("/databases", get(databases::list).post(databases::create))
+        .route("/databases/{db}", get(databases::info).patch(databases::update).delete(databases::remove))
+        .route("/databases/{db}/shares", get(databases::shares))
+        .route("/databases/{db}/shares/{username}", put(databases::set_share).delete(databases::remove_share))
+        .route("/databases/{db}/games", get(games::page))
+        .route("/databases/{db}/games/{game}", get(games::game))
+        .route("/databases/{db}/tree", get(games::tree))
+        .route("/databases/{db}/lines", get(games::lines))
+        // The upload limits itself (`Config::max_upload`).
+        .route("/databases/{db}/import", post(imports::upload).layer(DefaultBodyLimit::disable()))
+        .route("/databases/{db}/import-file", post(imports::import_file))
+        .route("/jobs/{job}", get(jobs::job))
+        .route("/jobs/{job}/cancel", post(jobs::cancel))
+        .route("/admin/users", get(admin::users).post(admin::create_user))
+        .route("/admin/users/{user}", patch(admin::update_user))
+        .route("/admin/users/{user}/password", post(admin::set_password))
+        .route("/admin/databases", get(admin::databases))
+        .route("/admin/databases/{db}", patch(admin::update_database).delete(admin::delete_database))
+        .route("/admin/jobs", get(admin::jobs))
+        .route("/admin/jobs/{job}/cancel", post(admin::cancel_job))
+        .route("/admin/disk", get(admin::disk))
+        .route("/admin/import-files", get(admin::import_files))
+        .fallback(|| async { ApiError::not_found() })
+}
+
+/// 1 to 32 letters, digits, `.`, `_` or `-`, starting with a letter or digit.
+pub fn check_username(name: &str) -> ApiResult<()> {
+    let ok = (1..=32).contains(&name.len())
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        && name.as_bytes()[0].is_ascii_alphanumeric();
+    if ok {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "A username has 1 to 32 letters, digits, '.', '_' or '-', and starts with a letter or digit",
+        ))
+    }
+}
+
+/// A display name (of a database or a token): trimmed, 1 to 100
+/// characters, no control characters.
+pub fn check_name(name: &str) -> ApiResult<String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
+        return Err(ApiError::bad_request("A name has 1 to 100 characters, without control characters"));
+    }
+    Ok(name.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usernames_and_names() {
+        for good in ["alice", "Bob.K", "a", "x_1-2"] {
+            check_username(good).unwrap();
+        }
+        for bad in ["", ".a", "a b", "é", "a/b", &"a".repeat(33)] {
+            assert!(check_username(bad).is_err(), "{bad}");
+        }
+        assert_eq!(check_name("  My games ").unwrap(), "My games");
+        assert!(check_name(" ").is_err());
+        assert!(check_name("a\nb").is_err());
+    }
+}

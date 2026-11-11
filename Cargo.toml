@@ -8,6 +8,8 @@ members = [
     "crates/chess-diagram",
     "crates/chess-net",
     "app/src-tauri",
+    # The self-hosted server (NET-03). Async, so outside crates/ (see server/AGENTS.md).
+    "server",
 ]
 
 [workspace.package]
@@ -65,4 +67,10 @@ opt-level = 3
 [profile.dev.package.fdeflate]
 opt-level = 3
 [profile.dev.package.miniz_oxide]
+opt-level = 3
+# The server's password hashing (NET-03): Argon2id takes seconds unoptimized,
+# which made every login in its tests that slow.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
 opt-level = 3
