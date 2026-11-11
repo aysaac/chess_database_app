@@ -7,6 +7,7 @@ pub mod engine;
 pub mod game;
 pub mod image;
 pub mod jobs;
+pub mod lichess;
 pub mod names;
 pub mod onboarding;
 pub mod online;

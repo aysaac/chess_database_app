@@ -517,6 +517,22 @@ class DbStore {
     return this.#addGames((handle) => api.downloadGames(handle, request), started);
   }
 
+  /**
+   * Imports a Lichess study's chapters (IO-10) into the open database,
+   * leaving out those it has; resolves with the job's final status (null if
+   * it couldn't start). `started` gets the job's id.
+   */
+  importStudy(link: string, started?: (job: number) => void): Promise<JobDto | null> {
+    return this.#addGames((handle) => api.importStudy(handle, link), started);
+  }
+
+  /** The selected rows as the list shows them, for a command (null: none). */
+  selectionOf(ranges: Ranges | null): ListSelectionDto | null {
+    return ranges && ranges.length
+      ? { sort: { ...this.sort }, ranges: ranges.map(([a, b]) => [a, b]) }
+      : null;
+  }
+
   /** Runs a job that adds games to the open database, the list growing as it goes. */
   async #addGames(
     start: (handle: number) => Promise<number>,

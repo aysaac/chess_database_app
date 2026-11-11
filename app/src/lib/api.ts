@@ -24,6 +24,12 @@ import type { ImageFormatDto } from "./bindings/ImageFormatDto";
 import type { ImportReportDto } from "./bindings/ImportReportDto";
 import type { JobDto } from "./bindings/JobDto";
 import type { LegalMoveDto } from "./bindings/LegalMoveDto";
+import type { LichessAccountDto } from "./bindings/LichessAccountDto";
+import type { LogoutDto } from "./bindings/LogoutDto";
+import type { StudyExportReportDto } from "./bindings/StudyExportReportDto";
+import type { StudyInfoDto } from "./bindings/StudyInfoDto";
+import type { StudyPreviewDto } from "./bindings/StudyPreviewDto";
+import type { StudyTargetDto } from "./bindings/StudyTargetDto";
 import type { ListSelectionDto } from "./bindings/ListSelectionDto";
 import type { NameKindDto } from "./bindings/NameKindDto";
 import type { NameListDto } from "./bindings/NameListDto";
@@ -220,6 +226,31 @@ export const api = {
   /** Downloads a player's games into the database as a job; games it has are left out. */
   downloadGames: (handle: number, request: DownloadRequestDto) =>
     invoke<number>("download_games", { handle, request }),
+
+  // Lichess: the login (NET-11), a study into a database (IO-10), games to studies (NET-12).
+  /** Who is logged in to Lichess (doesn't read the OS's credential store). */
+  lichessAccount: () => invoke<LichessAccountDto>("lichess_account"),
+  /** Logs in through the browser; resolves once the user let the app in on Lichess. */
+  lichessLogin: () => invoke<LichessAccountDto>("lichess_login"),
+  /** Stops a login waiting for the browser (it then rejects). */
+  lichessLoginCancel: () => invoke<void>("lichess_login_cancel"),
+  /** Logs in with a personal access token pasted in. */
+  lichessUseToken: (token: string) => invoke<LichessAccountDto>("lichess_use_token", { token }),
+  /** Forgets the token and revokes it on Lichess. */
+  lichessLogout: () => invoke<LogoutDto>("lichess_logout"),
+  /** Opens a Lichess page in the system browser: `url`, or "" for where to make a token. */
+  lichessOpen: (url: string) => invoke<void>("lichess_open", { url }),
+  /** A user's studies, newest first (with their own login, private and unlisted ones too). */
+  lichessStudies: (username: string) => invoke<StudyInfoDto[]>("lichess_studies", { username }),
+  /** Downloads a study (or chapter) to show what's in it, and keeps it for the import. */
+  lichessStudyLookup: (link: string) => invoke<StudyPreviewDto>("lichess_study_lookup", { link }),
+  /** Imports a study's chapters the database doesn't have, as a job. */
+  importStudy: (handle: number, link: string) => invoke<number>("import_study", { handle, link }),
+  /** Sends the selected games (null: the list's) to Lichess studies, as a job. */
+  sendToStudy: (handle: number, selection: ListSelectionDto | null, target: StudyTargetDto) =>
+    invoke<number>("send_to_study", { handle, selection, target }),
+  /** What the last export to studies did. */
+  studyExportReport: () => invoke<StudyExportReportDto | null>("study_export_report"),
 };
 
 export function onAnalysis(cb: (update: AnalysisDto) => void): Promise<UnlistenFn> {

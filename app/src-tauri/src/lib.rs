@@ -6,6 +6,7 @@ mod commands;
 mod dto;
 mod engines;
 mod error;
+mod lichess;
 mod settings;
 mod state;
 mod view;
@@ -214,6 +215,18 @@ pub fn run() {
             commands::onboarding::suggest_db_path,
             commands::online::online_player,
             commands::online::download_games,
+            // Lichess: the login (NET-11), studies in and out (IO-10, NET-12).
+            commands::lichess::lichess_account,
+            commands::lichess::lichess_login,
+            commands::lichess::lichess_login_cancel,
+            commands::lichess::lichess_use_token,
+            commands::lichess::lichess_logout,
+            commands::lichess::lichess_open,
+            commands::lichess::lichess_studies,
+            commands::lichess::lichess_study_lookup,
+            commands::lichess::import_study,
+            commands::lichess::send_to_study,
+            commands::lichess::study_export_report,
             dev_log,
         ])
         .run(tauri::generate_context!())
