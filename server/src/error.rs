@@ -66,6 +66,18 @@ impl ApiError {
         ApiError { retry_after: Some(10), ..ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "busy", message) }
     }
 
+    /// 429 from the rate limits.
+    pub fn rate_limited(retry_after: u64) -> ApiError {
+        ApiError {
+            retry_after: Some(retry_after),
+            ..ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rateLimited",
+                format!("Too many requests: try again in {retry_after} seconds"),
+            )
+        }
+    }
+
     pub fn too_many(retry_after: u64) -> ApiError {
         ApiError {
             retry_after: Some(retry_after),

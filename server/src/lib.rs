@@ -16,6 +16,7 @@ pub mod jobs;
 pub mod listing;
 pub mod mail;
 pub mod pool;
+pub mod ratelimit;
 mod routes;
 pub mod secret;
 pub mod store;
@@ -46,6 +47,7 @@ pub struct AppState {
     pub pool: Pool,
     pub jobs: Jobs,
     pub throttle: Throttle,
+    pub limits: ratelimit::RateLimits,
     /// Argon2id hashes computed at once.
     pub hashing: tokio::sync::Semaphore,
     /// While no user exists: the one-time token that makes the first admin
@@ -67,6 +69,7 @@ impl AppState {
             pool: Pool::new(config.dbs_dir()),
             jobs: Jobs::new(store.clone()).map_err(|e| e.message)?,
             throttle: Throttle::new(config.login_attempts, config.login_window),
+            limits: ratelimit::RateLimits::default(),
             hashing: tokio::sync::Semaphore::new(config.hash_concurrency.max(1)),
             setup_token: Mutex::new(no_users.then(secret::new_token)),
             store,
@@ -149,6 +152,18 @@ async fn client_addr(State(state): State<Arc<AppState>>, mut req: Request, next:
         .get::<axum::extract::ConnectInfo<SocketAddr>>()
         .map_or_else(|| SocketAddr::from(([0, 0, 0, 0], 0)), |c| c.0);
     let addr = auth::client_ip(&state.config, req.headers(), peer);
+    // API requests without credentials count against the address (with
+    // them, the user's limit applies, in `Auth`).
+    let api = req.uri().path().starts_with("/api/") && req.uri().path() != "/api/health";
+    let credentials = req.headers().contains_key(header::AUTHORIZATION)
+        || auth::cookie(req.headers(), auth::SESSION_COOKIE).is_some();
+    if api
+        && !credentials
+        && let Some(n) = state.config.rate_anon
+        && let Err(limited) = state.limits.take(&format!("ip:{addr}"), n)
+    {
+        return limited.into_response();
+    }
     req.extensions_mut().insert(audit::ClientAddr(addr));
     next.run(req).await
 }
