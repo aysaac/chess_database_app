@@ -1,5 +1,6 @@
 //! A job's progress, for users who may read its database, and cancelling
-//! it (who started it, or the database's owner).
+//! it (who started it, or the database's owner). Whoever loses access to the
+//! database (made private, unshared) loses its jobs too.
 
 use std::sync::Arc;
 
@@ -18,9 +19,12 @@ use crate::{AppState, blocking};
 /// What `user` may do with a job: `None` (it's "not found"), read it, or
 /// also see its report and cancel it.
 fn rights(state: &AppState, user: &User, meta: &JobMeta) -> ApiResult<Option<bool>> {
-    let access = require(&state.store, user, &meta.db, Access::Read).ok().map(|(_, a)| a);
-    let full = meta.user == user.id || access == Some(Access::Owner);
-    Ok(if full { Some(true) } else { access.map(|_| false) })
+    let access = match require(&state.store, user, &meta.db, Access::Read) {
+        Ok((_, a)) => a,
+        Err(e) if e.status == StatusCode::NOT_FOUND => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    Ok(Some(meta.user == user.id || access == Access::Owner))
 }
 
 pub async fn job(

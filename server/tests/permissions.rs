@@ -138,8 +138,11 @@ fn shares_give_read_or_read_and_write() {
     }
 
     alice.put(&format!("/api/databases/{db}/shares/bob"), json!({ "access": "write" })).ok();
-    bob.import_fixture(&db, "variations.pgn");
+    let job = bob.import_fixture(&db, "variations.pgn")["id"].as_u64().unwrap();
     assert_eq!(alice.get(&format!("/api/databases/{db}")).ok().json()["games"], 58);
+    // The owner sees the report of an import into their database.
+    assert_eq!(alice.get(&format!("/api/jobs/{job}")).ok().json()["report"]["imported"], 2);
+    assert_eq!(carol.get(&format!("/api/jobs/{job}")).status, 404);
     assert_eq!(
         alice.get(&format!("/api/databases/{db}/shares")).ok().json(),
         json!([{ "username": "bob", "access": "write" }])
@@ -149,7 +152,11 @@ fn shares_give_read_or_read_and_write() {
     alice.patch(&format!("/api/databases/{db}"), json!({ "visibility": "private" })).ok();
     assert_eq!(bob.get(&format!("/api/databases/{db}/games")).status, 404);
     assert!(!ids(&bob.get("/api/databases").ok().json()).contains(&db));
+    // Their own import's job goes with it.
+    assert_eq!(bob.get(&format!("/api/jobs/{job}")).status, 404);
+    assert_eq!(bob.post(&format!("/api/jobs/{job}/cancel"), json!({})).status, 404);
     alice.patch(&format!("/api/databases/{db}"), json!({ "visibility": "shared" })).ok();
+    assert!(bob.get(&format!("/api/jobs/{job}")).ok().json()["report"].is_object());
     bob.get(&format!("/api/databases/{db}/games")).ok();
     alice.delete(&format!("/api/databases/{db}/shares/bob")).ok();
     assert_eq!(bob.get(&format!("/api/databases/{db}/games")).status, 404);
