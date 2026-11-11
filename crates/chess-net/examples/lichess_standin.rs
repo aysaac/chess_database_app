@@ -11,8 +11,8 @@
 //!
 //! The browser logs in as `SmokeUser`, who has a public study of the
 //! fixture `testdata/pgn/lichess-study.pgn` (`FxStudy1`) and a private one
-//! (`Private1`). Lichess's daily limit on new studies is 3 here, so a run
-//! can reach it. Every request is printed.
+//! (`Private1`). Lichess's daily limit on new studies is 1 here, so a run
+//! reaches it with its second. Every request is printed.
 
 #[path = "../tests/standin/mod.rs"]
 mod standin;
@@ -31,7 +31,7 @@ fn main() {
     {
         let mut st = server.state.lock().expect("state");
         st.approve_as = "SmokeUser".into();
-        st.daily_limit = 3;
+        st.daily_limit = 1;
     }
     println!("ready {}", server.url);
     let mut seen = 0;

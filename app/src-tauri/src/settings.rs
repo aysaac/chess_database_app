@@ -170,6 +170,17 @@ pub struct EngineConfig {
     pub options: Vec<(String, String)>,
 }
 
+/// The Lichess user logged in (NET-11).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LichessUser {
+    /// As Lichess writes it.
+    pub username: String,
+    /// When the token stops working (ms since the epoch); `None`: never.
+    #[serde(default)]
+    pub expires: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -186,6 +197,9 @@ pub struct Settings {
     pub database_views: Vec<DbView>,
     /// Preferences owned by the frontend (board orientation, pane sizes…).
     pub ui: serde_json::Map<String, serde_json::Value>,
+    /// Who is logged in to Lichess (NET-11), while the token is in the OS's
+    /// credential store; the token itself is never here.
+    pub lichess: Option<LichessUser>,
     /// Counts the changes to `ui` since start-up (not saved). Every window
     /// keeps its own copy of the preferences (DB-07), and two changes to the
     /// same one can reach a window in either order, so each carries the

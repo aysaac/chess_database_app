@@ -41,6 +41,15 @@ pub struct StudyRef {
 }
 
 impl StudyRef {
+    /// Its link on lichess.org, as one pasted in ([`parse_study_link`]
+    /// reads it back), whatever server the client talks to.
+    pub fn link(&self) -> String {
+        match &self.chapter {
+            Some(c) => format!("https://lichess.org/study/{}/{c}", self.study),
+            None => format!("https://lichess.org/study/{}", self.study),
+        }
+    }
+
     /// The study's (or chapter's) page on the server.
     pub fn url(&self, client: &Client) -> String {
         match &self.chapter {
@@ -491,11 +500,11 @@ mod tests {
         ] {
             assert!(matches!(parse_study_link(text), Err(NetError::NotAStudyLink(_))), "{text}");
         }
-        let client = Client::with_servers("https://lichess.org", "https://api.chess.com");
-        assert_eq!(
-            study("keq5vaIF", Some("dLpkgwla")).url(&client),
-            "https://lichess.org/study/keq5vaIF/dLpkgwla"
-        );
+        let client = Client::with_servers("http://127.0.0.1:9", "https://api.chess.com");
+        let chapter = study("keq5vaIF", Some("dLpkgwla"));
+        assert_eq!(chapter.url(&client), "http://127.0.0.1:9/study/keq5vaIF/dLpkgwla");
+        assert_eq!(chapter.link(), "https://lichess.org/study/keq5vaIF/dLpkgwla");
+        assert_eq!(parse_study_link(&chapter.link()).unwrap(), chapter, "a link reads back");
     }
 
     #[test]

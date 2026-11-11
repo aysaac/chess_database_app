@@ -12,6 +12,7 @@
   import { analysis } from "../stores/analysis.svelte";
   import { db } from "../stores/db.svelte";
   import { game } from "../stores/game.svelte";
+  import { lichess } from "../stores/lichess.svelte";
   import { online } from "../stores/online.svelte";
   import { panels } from "../stores/panels.svelte";
   import { tree } from "../stores/tree.svelte";
@@ -27,6 +28,8 @@
   import RibbonButton from "./RibbonButton.svelte";
   import RibbonDropdown from "./RibbonDropdown.svelte";
   import SetupEditor from "./SetupEditor.svelte";
+  import StudyExportDialog from "./StudyExportDialog.svelte";
+  import StudyImportDialog from "./StudyImportDialog.svelte";
 
   let setup = $state(false);
   let libraryView = $state(false);
@@ -302,6 +305,24 @@
       onclick={() => db.exportDialog()}
     />
   </div>
+  <!-- Lichess studies (IO-10, NET-12), with the login (NET-11) in their dialogs. -->
+  <div class="col">
+    <RibbonButton
+      icon="book-down"
+      label="Import study…"
+      title="Import a Lichess study's chapters, into a new database or the open one"
+      {compact}
+      onclick={() => (lichess.importDialog = true)}
+    />
+    <RibbonButton
+      icon="book-up"
+      label="Send to study…"
+      title="Send the games of the list (filtered or all) to a Lichess study, each as a chapter"
+      {compact}
+      disabled={!db.info || db.info.games === 0}
+      onclick={() => (lichess.exportDialog = { ranges: null })}
+    />
+  </div>
 {/snippet}
 
 {#snippet viewGroup(compact: boolean)}
@@ -401,6 +422,14 @@
 
 {#if online.dialog}
   <DownloadGamesDialog onClose={() => (online.dialog = false)} />
+{/if}
+
+{#if lichess.importDialog}
+  <StudyImportDialog onClose={() => (lichess.importDialog = false)} />
+{/if}
+
+{#if lichess.exportDialog}
+  <StudyExportDialog ranges={lichess.exportDialog.ranges} onClose={() => (lichess.exportDialog = null)} />
 {/if}
 
 <style>
