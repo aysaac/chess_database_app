@@ -2,7 +2,11 @@
   import { api } from "../lib/api";
   import type { Me } from "../lib/types";
 
-  let { signedIn }: { signedIn: (me: Me) => void } = $props();
+  let {
+    signedIn,
+    openSignup = false,
+    emailResets = false,
+  }: { signedIn: (me: Me) => void; openSignup?: boolean; emailResets?: boolean } = $props();
 
   let username = $state("");
   let password = $state("");
@@ -26,11 +30,17 @@
 
 <form class="panel box" onsubmit={submit}>
   <h1>Chess server</h1>
-  <p class="muted small">Sign in to manage users, databases and imports.</p>
+  <p class="muted small">Sign in to manage your account, or the server if you're its admin.</p>
   <label>Username <input bind:value={username} autocomplete="username" required /></label>
   <label>Password <input type="password" bind:value={password} autocomplete="current-password" required /></label>
   {#if error}<p class="error small" role="alert">{error}</p>{/if}
   <button class="primary" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+  {#if emailResets || openSignup}
+    <p class="links small">
+      {#if emailResets}<a href="#/forgot">Forgot your password?</a>{/if}
+      {#if openSignup}<a href="#/signup">Make an account</a>{/if}
+    </p>
+  {/if}
 </form>
 
 <style>
@@ -39,5 +49,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+  }
+  .links {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0;
   }
 </style>

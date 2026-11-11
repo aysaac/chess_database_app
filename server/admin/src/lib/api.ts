@@ -2,6 +2,10 @@
 // state-changing calls send the session's CSRF token.
 
 import type {
+  Account,
+  Invite,
+  Link,
+  OwnedDatabase,
   AdminDatabase,
   AdminJob,
   Database,
@@ -70,6 +74,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 const enc = encodeURIComponent;
 
+/** A link the server made (an invite, a reset link) as a full address. */
+export function fullLink(url: string): string {
+  return /^https?:\/\//.test(url) ? url : `${location.origin}${url}`;
+}
+
 /** Where a database's games download as PGN (the session cookie goes along). */
 export function exportUrl(db: string): string {
   return `/api/databases/${encodeURIComponent(db)}/export.pgn`;
@@ -84,6 +93,15 @@ export const api = {
   logout: () => request<void>("POST", "/logout"),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>("POST", "/me/password", { currentPassword, newPassword }),
+  account: () => request<Account>("GET", "/me/account"),
+  changeEmail: (currentPassword: string, email: string | null) =>
+    request<void>("PUT", "/me/email", { currentPassword, email }),
+  signup: (invite: string | null, username: string, password: string, email: string | null) =>
+    request<Me>("POST", "/signup", { invite, username, password, email }),
+  invite: (token: string) => request<{ role: Role }>("GET", `/invites/${enc(token)}`),
+  resetPassword: (token: string, password: string) =>
+    request<void>("POST", "/password-reset", { token, password }),
+  forgotPassword: (login: string) => request<void>("POST", "/password-reset/request", { login }),
   tokens: () => request<Token[]>("GET", "/tokens"),
   createToken: (name: string) => request<NewToken>("POST", "/tokens", { name }),
   deleteToken: (id: number) => request<void>("DELETE", `/tokens/${id}`),
@@ -95,6 +113,14 @@ export const api = {
     request<User>("PATCH", `/admin/users/${id}`, change),
   setPassword: (id: number, password: string) =>
     request<void>("POST", `/admin/users/${id}/password`, { password }),
+  userDatabases: (id: number) => request<OwnedDatabase[]>("GET", `/admin/users/${id}/databases`),
+  deleteUser: (id: number, confirm: string) =>
+    request<void>("DELETE", `/admin/users/${id}?confirm=${enc(confirm)}`),
+  resetLink: (id: number) => request<Link>("POST", `/admin/users/${id}/reset-link`),
+  invites: () => request<Invite[]>("GET", "/admin/invites"),
+  createInvite: (role: Role, quotaBytes: number | null, days: number) =>
+    request<Link>("POST", "/admin/invites", { role, quotaBytes, days }),
+  deleteInvite: (id: number) => request<void>("DELETE", `/admin/invites/${id}`),
 
   allDatabases: () => request<AdminDatabase[]>("GET", "/admin/databases"),
   setDatabaseQuota: (id: string, quotaBytes: number | null) =>

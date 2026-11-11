@@ -1,4 +1,5 @@
-//! The admin's routes: users, databases as metadata (name, owner, size,
+//! The admin's routes: users (deleting one with their databases, reset
+//! links), invites, databases as metadata (name, owner, size,
 //! game count, quota; deleting one), jobs, disk use and the import folder.
 //!
 //! Nothing here returns a database's games, positions or search results,
@@ -16,15 +17,15 @@ use axum::http::StatusCode;
 use crate::access::access;
 use crate::auth::AdminAuth;
 use crate::error::{ApiError, ApiResult};
-use crate::routes::account::hash;
+use crate::routes::account::{hash, page_link};
 use crate::routes::check_username;
 use crate::routes::databases::delete_now;
 use crate::routes::imports::import_kind;
-use crate::secret::is_db_id;
-use crate::store::{DbMeta, Store, User};
+use crate::secret::{is_db_id, new_token, token_digest};
+use crate::store::{DbMeta, Store, User, now};
 use crate::wire::{
-    AdminDatabaseDto, AdminJobDto, AdminUpdateDatabase, Confirm, CreateUser, DiskDto, ImportFileDto, Role,
-    SetPassword, UpdateUser, UserDto, job_state,
+    AdminDatabaseDto, AdminJobDto, AdminUpdateDatabase, Confirm, CreateInvite, CreateUser, DiskDto,
+    ImportFileDto, InviteDto, LinkDto, OwnedDatabaseDto, Role, SetPassword, UpdateUser, UserDto, job_state,
 };
 use crate::{AppState, blocking};
 
@@ -114,6 +115,156 @@ pub async fn set_password(
         state.store.set_password(user.id, &hash)?;
         state.store.delete_sessions_of(user.id, None)?;
         log::info!("{} set a new password for {}", auth.user.username, user.username);
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+}
+
+/// The databases a user owns (metadata only): what deleting them deletes.
+pub async fn user_databases(
+    State(state): State<Arc<AppState>>,
+    _: AdminAuth,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<OwnedDatabaseDto>>> {
+    blocking(move || {
+        let user = target(&state.store, &id)?;
+        let dbs = state.store.databases_owned_by(user.id)?;
+        Ok(Json(
+            dbs.into_iter()
+                .map(|d| {
+                    let (games, size_bytes) = state.pool.stats(&d.id);
+                    OwnedDatabaseDto { id: d.id, name: d.name, games, size_bytes }
+                })
+                .collect(),
+        ))
+    })
+    .await
+}
+
+/// Deletes a user, confirmed with their username (`?confirm=NAME`): their
+/// jobs are cancelled, the databases they own are deleted with them (they
+/// can't go to the admin: that would let the admin read them), and their
+/// sessions, tokens, shares, offers and reset links go. Not oneself, nor
+/// the last enabled admin.
+pub async fn delete_user(
+    State(state): State<Arc<AppState>>,
+    AdminAuth(auth): AdminAuth,
+    Path(id): Path<String>,
+    Query(confirm): Query<Confirm>,
+) -> ApiResult<StatusCode> {
+    blocking(move || {
+        let user = target(&state.store, &id)?;
+        if user.id == auth.user.id {
+            return Err(ApiError::conflict("You can't delete yourself"));
+        }
+        if user.is_admin() && !user.disabled && state.store.active_admins()? <= 1 {
+            return Err(ApiError::conflict("The server needs an enabled admin"));
+        }
+        if confirm.confirm.trim() != user.username {
+            return Err(ApiError::bad_request(
+                "To delete a user, confirm with their username (?confirm=NAME)",
+            ));
+        }
+        // Their sessions and tokens stop at once, then their work.
+        state.store.update_user(user.id, None, Some(true), None)?;
+        state.jobs.stop_all_by(user.id);
+        let dbs = state.store.databases_owned_by(user.id)?;
+        for d in &dbs {
+            state.jobs.stop_all_for(&d.id);
+            state.store.delete_database(&d.id)?;
+            state.pool.remove(&d.id)?;
+        }
+        state.store.delete_user(user.id)?;
+        log::info!("{} deleted user {} and their {} databases", auth.user.username, user.username, dbs.len());
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+}
+
+/// A one-time link that sets a new password for a user (the admin never
+/// knows it); earlier links stop working. Using it ends their sessions.
+pub async fn reset_link(
+    State(state): State<Arc<AppState>>,
+    AdminAuth(auth): AdminAuth,
+    Path(id): Path<String>,
+) -> ApiResult<(StatusCode, Json<LinkDto>)> {
+    blocking(move || {
+        let user = target(&state.store, &id)?;
+        let token = new_token();
+        let expires_at = now() + state.config.reset_lifetime.as_secs() as i64;
+        state.store.create_reset(user.id, &token_digest(&token), expires_at)?;
+        log::info!("{} made a reset link for {}", auth.user.username, user.username);
+        let url = page_link(&state.config, "reset", &token);
+        Ok((StatusCode::CREATED, Json(LinkDto { token, url, expires_at, id: None })))
+    })
+    .await
+}
+
+/// A single-use invite link, expiring after `days` (7 by default, at most
+/// 30), that makes an account with `role` and `quotaBytes`.
+pub async fn create_invite(
+    State(state): State<Arc<AppState>>,
+    AdminAuth(auth): AdminAuth,
+    Json(req): Json<CreateInvite>,
+) -> ApiResult<(StatusCode, Json<LinkDto>)> {
+    let days = req.days.unwrap_or(0);
+    if days > 30 {
+        return Err(ApiError::bad_request("An invite works for 30 days at most"));
+    }
+    blocking(move || {
+        let token = new_token();
+        let lifetime =
+            if days == 0 { state.config.invite_lifetime.as_secs() } else { u64::from(days) * 24 * 3600 };
+        let expires_at = now() + lifetime as i64;
+        let role = req.role.unwrap_or(Role::User);
+        let id = state.store.create_invite(
+            &token_digest(&token),
+            role,
+            req.quota_bytes,
+            auth.user.id,
+            expires_at,
+        )?;
+        log::info!("{} made an invite ({})", auth.user.username, role.as_str());
+        let url = page_link(&state.config, "invite", &token);
+        Ok((StatusCode::CREATED, Json(LinkDto { token, url, expires_at, id: Some(id) })))
+    })
+    .await
+}
+
+pub async fn invites(State(state): State<Arc<AppState>>, _: AdminAuth) -> ApiResult<Json<Vec<InviteDto>>> {
+    blocking(move || {
+        Ok(Json(
+            state
+                .store
+                .invites()?
+                .into_iter()
+                .map(|i| InviteDto {
+                    id: i.id,
+                    role: i.role,
+                    quota_bytes: i.quota_bytes,
+                    created_by: i.created_by,
+                    created_at: i.created_at,
+                    expires_at: i.expires_at,
+                    used_at: i.used_at,
+                    used_by: i.used_by,
+                })
+                .collect(),
+        ))
+    })
+    .await
+}
+
+pub async fn delete_invite(
+    State(state): State<Arc<AppState>>,
+    AdminAuth(auth): AdminAuth,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let id: i64 = id.parse().map_err(|_| ApiError::not_found())?;
+    blocking(move || {
+        if !state.store.delete_invite(id)? {
+            return Err(ApiError::not_found());
+        }
+        log::info!("{} withdrew invite {id}", auth.user.username);
         Ok(StatusCode::NO_CONTENT)
     })
     .await

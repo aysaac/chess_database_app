@@ -94,6 +94,13 @@ passes `/api` to a server on 8080.
 | `CHESS_SERVER_MAX_UPLOAD_MB` | 256 | Largest PGN upload |
 | `CHESS_SERVER_PUBLIC_URL` | none | e.g. `https://chess.example.com`: makes the session cookie `Secure` and is the only origin state-changing requests may come from |
 | `CHESS_SERVER_TRUST_PROXY` | off | `1` behind a reverse proxy: the client's address from `X-Forwarded-For` (for login throttling), https from `X-Forwarded-Proto`. Leave it off when clients reach the server directly, or they could pick their address |
+| `CHESS_SERVER_OPEN_SIGNUP` | off | `1`: anyone may make an account without an invite |
+| `CHESS_SERVER_SIGNUP_QUOTA_MB` | 1024 | The quota of an account made without an invite (`0`: none) |
+| `CHESS_SERVER_SMTP_HOST` | none | An SMTP server for "Forgot password" e-mails (needs `CHESS_SERVER_PUBLIC_URL` for the link too) |
+| `CHESS_SERVER_SMTP_PORT` | 587 (465 with `tls`) | |
+| `CHESS_SERVER_SMTP_TLS` | `starttls` | `starttls`, `tls` (from the start), or `none` (only for a relay on the same machine or network) |
+| `CHESS_SERVER_SMTP_USER`, `CHESS_SERVER_SMTP_PASSWORD` | none | Its login, if it needs one |
+| `CHESS_SERVER_SMTP_FROM` | (needed with a host) | The sender, e.g. `Chess server <chess@example.com>` |
 | `RUST_LOG` | `info` | `debug` logs every request |
 
 ### In a container, behind Caddy
@@ -145,9 +152,38 @@ compose file).
 - **Disabling** a user stops their sessions and tokens at once (every
   request checks) and keeps their data; their server-wide databases stay
   readable. The admin can't disable or demote themselves, and there is
-  always an enabled admin. Users aren't deleted in phase 1.
+  always an enabled admin.
+- **Deleting** a user (the admin, confirmed with the username) deletes the
+  databases they own with them: the admin UI lists them by name and size
+  first. Their sessions, API tokens, shares, offers and reset links go,
+  and their jobs are cancelled. Their databases can't go to the admin
+  instead, which would let the admin read what was private to them. The
+  admin can't delete themselves (so an enabled admin always remains).
 - A new password set by the admin ends the user's sessions (not their API
   tokens); changing one's own ends one's other sessions.
+- **Reset links**: the admin can make a one-time link for a user to set a
+  password the admin never sees (`POST /api/admin/users/{id}/reset-link`,
+  24 hours; a newer one replaces it). Stored as a hash, like tokens.
+  Using it ends the user's sessions.
+- **E-mail and "Forgot password"** (optional): users can give an address
+  (with their password; it's only for reset links). With SMTP set up (the
+  `CHESS_SERVER_SMTP_*` settings) and a public URL, "Forgot your
+  password?" e-mails a link that works for an hour. The request always
+  gets the same answer at once, the e-mail being sent afterwards, so it
+  never tells whether an account or an address exists; requests are
+  throttled per client address and per name asked, as logins are (each
+  one counts).
+- **Invites**: the admin makes single-use links (7 days by default, 30 at
+  most) for one account each, with the role and the quota they choose;
+  stored as hashes. **Open sign-up** is off unless
+  `CHESS_SERVER_OPEN_SIGNUP=1`, and an account made that way gets
+  `CHESS_SERVER_SIGNUP_QUOTA_MB` (1024 by default). Sign-ups are
+  throttled per client address (open ones all count; with an invite, the
+  wrong ones). An account made either way is logged in.
+- **Users who aren't admins** get their Account page in the web UI
+  (password, e-mail address, API tokens) and the pages links lead to
+  (invites, reset links, "Forgot password"). No game browsing: the web UI
+  is the admin's, a players' UI is NET-09.
 
 ## Roles and visibility
 
@@ -170,8 +206,15 @@ visibility:
   read a database that isn't theirs or shared with them, and can't change
   any database's visibility, shares or owner but their own: those routes
   check ownership like any other, and the admin's database route only takes
-  a quota (other fields are refused). Ownership isn't transferable in
-  phase 1.
+  a quota (other fields are refused).
+- **Transferring ownership**: only the owner offers a database, to a named
+  enabled user, who accepts or declines it through the API (so nobody can
+  fill another's quota). Accepting is checked against the recipient's
+  quota (507 when it doesn't fit). The old owner keeps no access: they get
+  no share, and a private database becomes the new owner's alone; the
+  visibility and the other shares stay as they were (the recipient sees
+  the visibility in the offer). The admin can transfer only databases
+  they own.
 - A database someone may not read answers **404**, exactly like one that
   doesn't exist, on every route (info, games, one game, tree, lines,
   shares, import, its jobs). One they may read but not change answers 403.
@@ -225,7 +268,15 @@ desktop client can share the types later.
 | `POST /api/login` | none | `{username, password}` → the user and `csrfToken`, and the session cookie |
 | `POST /api/logout` | any | Ends the session (nothing for an API token) |
 | `GET /api/me` | any | The user (and the session's `csrfToken`) |
+| `GET /api/me/account` | any | `{username, role, email, quotaBytes, usedBytes, emailResets}` |
 | `POST /api/me/password` | any | `{currentPassword, newPassword}` |
+| `PUT /api/me/email` | any | `{currentPassword, email}` (`null` removes it) |
+| `GET /api/invites/{token}` | none | What an unused invite makes (`{role}`), else 400 `badInvite` |
+| `POST /api/signup` | none | `{invite?, username, password, email?}`: an account, logged in (session cookie); without `invite` only with open sign-up |
+| `POST /api/password-reset` | none | `{token, password}`: a new password with a reset link; the account's sessions end; 400 `badReset` for a wrong, used or expired link |
+| `POST /api/password-reset/request` | none | `{login}` (username or address): e-mails a reset link if the account has an address; always `202` |
+| `GET /api/transfers` | any | `{incoming, outgoing}`: databases offered to one and by one |
+| `POST /api/transfers/{id}/accept`, `…/decline` | the recipient | Takes the database (checked against one's quota), or turns it down; anyone else gets 404 |
 | `GET /api/tokens`, `POST /api/tokens`, `DELETE /api/tokens/{id}` | any | One's API tokens; `POST` takes `{name}` and returns the token once |
 
 ### Databases (permission-checked on every route)
@@ -240,6 +291,8 @@ desktop client can share the types later.
 | `GET /api/databases/{id}/shares` | owner | `[{username, access}]` |
 | `PUT /api/databases/{id}/shares/{username}` | owner | `{access: "read" \| "write"}` |
 | `DELETE /api/databases/{id}/shares/{username}` | owner | |
+| `PUT /api/databases/{id}/transfer` | owner | `{username}`: offers the database to that user (replacing an earlier offer) |
+| `DELETE /api/databases/{id}/transfer` | owner | Withdraws the offer |
 | `GET /api/databases/{id}/games` | read | A page of the game list (below) |
 | `GET /api/databases/{id}/games/{n}` | read | One game: `row`, `headers`, `pgn`, `startFen`, `notation` (the move tree with comments, NAGs, clocks and evals), `opening` |
 | `GET /api/databases/{id}/export.pgn` | read | The games the game list shows for the same criteria (all but the deleted ones by default; `fen=`, `sort=`… as below), in its order, as one PGN file (`Content-Disposition: attachment`). Streamed as it's written, never held in memory; `202 {"kind":"job"}` like the list while the position index is far behind |
@@ -286,7 +339,12 @@ curl -H "Authorization: Bearer $TOKEN" --data-binary @twic1600.pgn \
 |---|---|
 | `GET /api/admin/users`, `POST /api/admin/users` | Users with their database count and use; `{username, password, role?}` |
 | `PATCH /api/admin/users/{id}` | `{role?, disabled?, quotaBytes?}` (`null` removes the quota) |
+| `DELETE /api/admin/users/{id}?confirm=USERNAME` | Deletes the user and the databases they own |
+| `GET /api/admin/users/{id}/databases` | What deleting them deletes: `[{id, name, games, sizeBytes}]` |
 | `POST /api/admin/users/{id}/password` | `{password}` |
+| `POST /api/admin/users/{id}/reset-link` | A one-time reset link: `{token, url, expiresAt}`, shown once |
+| `GET /api/admin/invites`, `POST /api/admin/invites` | Invites (never their tokens); `{role?, quotaBytes?, days?}` makes one: `{id, token, url, expiresAt}`, shown once |
+| `DELETE /api/admin/invites/{id}` | Withdraws an invite |
 | `GET /api/admin/databases` | Every database, as metadata |
 | `PATCH /api/admin/databases/{id}` | `{quotaBytes}` only |
 | `DELETE /api/admin/databases/{id}?confirm=NAME` | |

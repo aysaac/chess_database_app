@@ -15,6 +15,49 @@ export interface Me {
 
 export interface SetupStatus {
   needed: boolean;
+  /** Anyone may make an account. */
+  openSignup: boolean;
+  /** "Forgot password" can e-mail a reset link. */
+  emailResets: boolean;
+}
+
+/** One's own account (`GET /api/me/account`). */
+export interface Account {
+  username: string;
+  role: Role;
+  email: string | null;
+  quotaBytes: number | null;
+  usedBytes: number;
+  /** "Forgot password" can e-mail a link. */
+  emailResets: boolean;
+}
+
+/** A link with a one-time token: an invite or a reset link, shown once. */
+export interface Link {
+  token: string;
+  /** The page taking it: absolute with a public URL set, else a path. */
+  url: string;
+  expiresAt: number;
+  id?: number;
+}
+
+export interface Invite {
+  id: number;
+  role: Role;
+  quotaBytes: number | null;
+  createdBy: string | null;
+  createdAt: number;
+  expiresAt: number;
+  usedAt: number | null;
+  usedBy: string | null;
+}
+
+/** A database deleted with its owner (metadata only). */
+export interface OwnedDatabase {
+  id: string;
+  name: string;
+  games: number;
+  sizeBytes: number;
 }
 
 export interface User {

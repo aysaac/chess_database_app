@@ -35,6 +35,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # ---- what runs ------------------------------------------------------------
 FROM debian:trixie-slim
+# The certificates TLS checks servers against: e-mail (SMTP) and TWIC downloads.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 chess \
     && useradd --system --uid 10001 --gid chess --home-dir /data --no-create-home chess \
     && mkdir /data && chown chess:chess /data
