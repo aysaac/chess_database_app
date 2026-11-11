@@ -37,7 +37,7 @@ about; read it when your task gets there:
 | `crates/chess-db` | Native database: file format, crash-safe commits, import/export, sorted views, header search, position index (`positions.rs`), the Reference tab's queries (`reference.rs`), compaction, ChessBase `.cbh` import (`cb/`, IO-03) |
 | `crates/chess-engine` | UCI engine host, analysis driver thread, blunder check (`review.rs`); `src/bin/fake_uci.rs` is a toy engine for tests |
 | `crates/chess-diagram` | Board images (QOL-06): a position as SVG or PNG, drawn like the app's board (resvg); vendored pieces and font in `data/` (licences in `data/COPYING`) |
-| `crates/chess-net` | Online games (NET-01): a player's games from Lichess and Chess.com into a database (`download_into`), skipping the ones it has (`keys.rs`); blocking HTTPS (ureq). `tests/download.rs` runs it against a local stand-in server |
+| `crates/chess-net` | Online games (NET-01): a player's games from Lichess and Chess.com into a database (`download_into`), skipping the ones it has (`keys.rs`); blocking HTTPS (ureq). `tests/download.rs` runs it against a local stand-in server. The Lichess login (NET-11, `oauth.rs`) and studies in and out (IO-10, NET-12, `study.rs`), tested against a stand-in Lichess (`tests/standin/`) that `examples/lichess_standin.rs` also serves to smoke runs; the app keeps the token in the OS's credential store (`app/src-tauri/src/lichess.rs`) |
 | `app/src-tauri` | Tauri shell: commands (`src/commands/`), DTOs (`src/dto.rs`), view building (`src/view.rs`), state (`src/state.rs`), engines and analysis (`src/engines.rs`), settings (`src/settings.rs`) |
 | `app/src` | Svelte UI: `lib/api.ts` (typed commands), `lib/stores/` (state), `lib/components/` (the ribbon is `Ribbon.svelte`, the docked panels around the board `Dock.svelte`), `lib/bindings/` (generated types), `lib/icons/` (vendored Lucide icons; licence in `COPYING`) |
 | `testdata/pgn/` | Small edge-case PGN fixtures (committed) |
@@ -81,6 +81,9 @@ cargo run -p chess-diagram --example render -- out.png [FEN] [SIZE] [black]   # 
 
 # A player's online games into a database (NET-01), as the app does: real servers
 cargo run -p chess-net --example download -- lichess|chess.com USERNAME out.chessdb [YYYY-MM-DD]
+
+# A Lichess study into a database (IO-10), or a PGN file's games to a new private study (NET-12; LICHESS_TOKEN)
+cargo run -p chess-net --example study -- import STUDY_LINK out.chessdb   # or: send games.pgn "Name", list USERNAME
 ```
 
 ## The user's machine
