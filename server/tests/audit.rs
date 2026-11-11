@@ -73,9 +73,10 @@ fn security_events_are_logged_without_content() {
     assert_eq!(entry["client"], "127.0.0.1");
     let failed = page["entries"].as_array().unwrap().iter().find(|e| e["action"] == "login.failed").unwrap();
     assert_eq!((failed["actor"].clone(), failed["target"].as_str()), (Value::Null, Some("alice")));
-    // Nothing of the games, the criteria, the position or the file.
+    // Nothing of the games, the criteria, the position or the file (a move
+    // as PGN has it: a bare "e4" turns up in the hex of random ids).
     let text = page.to_string();
-    for leak in ["secret-opening-file", "Nepomniachtchi", "Caruana", "Carlsen", "4P3", "e4", "rnbqkbnr"] {
+    for leak in ["secret-opening-file", "Nepomniachtchi", "Caruana", "Carlsen", "4P3", "1. e4", "rnbqkbnr"] {
         assert!(!text.contains(leak), "{leak} is in the audit log");
     }
     // Filters: a group of actions, a user, a time.

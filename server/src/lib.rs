@@ -44,6 +44,9 @@ use crate::jobs::Jobs;
 use crate::pool::Pool;
 use crate::store::Store;
 
+/// The username rule, for the CLI too.
+pub use crate::routes::check_username;
+
 pub struct AppState {
     pub config: Config,
     pub store: Arc<Store>,

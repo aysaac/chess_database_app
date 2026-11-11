@@ -163,11 +163,19 @@ compose file).
 - **API tokens** (`POST /api/tokens`) for scripts and, later, the desktop
   client: `Authorization: Bearer cdb_…`. Shown once; the store keeps a
   hash. They need no CSRF token (a browser doesn't send them on its own).
+  When a token was last used (`lastUsedAt`) is noted to the minute: it's
+  written when the stored time is a minute old or more, not at every
+  request.
 - **Failed logins** are throttled per account and per client address: after
   5 failures within 15 minutes, further attempts (even right ones) are
-  refused until the window passes (`429` with `Retry-After`). An unknown
-  username costs the same time as a wrong password. Someone can lock an
-  account out for 15 minutes this way; that's the trade-off.
+  refused until the window passes (`429` with `Retry-After`). An attempt
+  counts as a failure before its password is hashed and is taken back if
+  it was right, so concurrent attempts each count: a burst of them gets 5
+  guesses, not one per request. An unknown username costs the same time as
+  a wrong password. Someone can lock an account out for 15 minutes this
+  way; that's the trade-off. The current password asked by
+  `POST /api/me/password` is throttled the same way, against the same
+  account, so a stolen session or token can't guess it either.
 - **Disabling** a user stops their sessions and tokens at once (every
   request checks) and keeps their data; their server-wide databases stay
   readable. The admin can't disable or demote themselves, and there is
@@ -509,8 +517,9 @@ format is a few lines of text, not worth a crate.
   (409, `staleIds`) after a compaction. The compaction bumps it holding
   the database, before it renumbers anything (one that fails or is
   cancelled bumps it too), and those requests check it holding the
-  database, so one waiting for a compaction is refused after it. Nothing syncs with the server yet, so nothing else holds
-  ids; permanent game ids are a later feature. While a compaction runs,
+  database, so one waiting for a compaction is refused after it. Nothing
+  syncs with the server yet, so nothing else holds ids; permanent game ids
+  are a later feature. While a compaction runs,
   the database answers `503 busy` with `Retry-After` (it holds the
   database for the whole run); its search, sort and lines caches go with
   the generation, and the position index is built again after it.
@@ -526,12 +535,25 @@ format is a few lines of text, not worth a crate.
   another answers 409.
 - An upload is streamed to `tmp/` and refused past the size limit (413),
   checked before reading (Content-Length) and while reading (chunked).
+  Who may import, the quota and the writer slot are checked before the
+  body is read and again once it's in: an uploader disabled meanwhile gets
+  401, one whose access went (a share removed, the database made private
+  or deleted) 404, and nothing is imported.
 - **Quotas**: per database and per user (all the databases they own
   together), set by the admin. An import is refused when there's no room
-  (507) and stops when the database outgrows it (checked every half
-  second): the games so far stay and the job fails with "reached its
-  quota". The size counts the position index, which the import builds
-  after, so a database can end up somewhat over.
+  (507) and stops when there's none left: the database's size, and the
+  owner's databases together as big as they are then, are checked every
+  half second, so imports running at once into one owner's databases share
+  the owner's quota. The games so far stay and the job fails with "reached
+  its quota".
+- The size counts the **position index**, and it's built under the same
+  check: an import stopped at the quota doesn't index its games, and an
+  index build (after an import or a compaction, or started by a tree
+  request) that outgrows the quota stops (its temporary files go) and
+  isn't started again by a tree request until the database or its owner
+  has more room. The index is written in runs of about 64 MB, the last one
+  only when it's installed, so a database can end up over its quota by up
+  to that much, plus half a second of writing.
 - **Jobs are kept in the metadata store** (the newest 1,000 finished
   ones, with their reports), so they survive a restart; their ids go on
   from the highest kept. A stop (a shutdown, a crash, `kill -9`) leaves the
@@ -542,9 +564,9 @@ format is a few lines of text, not worth a crate.
   (or, stopped in its first commit, that none did: it starts over), so no
   game is imported twice and none is left out (tested by killing the
   server mid-import, `server/tests/restart.rs`). An import that fails says
-  in its report how many games went in before it did. Its upload stays in `tmp/`
-  until the import ends or is discarded (an import that can't go on: its
-  database or file gone); other files there are deleted at start. A
+  in its report how many games went in before it did. Its upload stays in
+  `tmp/` until the import ends or is discarded (an import that can't go
+  on: its database or file gone); other files there are deleted at start. A
   resumed import is the same job, which who started it, the database's
   owner or the admin (jobs view) can cancel. A search for duplicates' groups
   are kept in memory only: find them again after a restart.

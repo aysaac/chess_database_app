@@ -128,7 +128,7 @@ fn any_deleted(open: &OpenDb, generation: u64) -> Result<bool, DbError> {
 /// none writes), or "busy" while the writer slot holds a job of no
 /// database of the caller's (a backup copying it: its id would be "not
 /// found" to them).
-fn index_behind(state: &AppState, open: &Arc<OpenDb>, meta: &DbMeta, user: &User) -> ApiResult<Listing> {
+fn index_behind(state: &Arc<AppState>, open: &Arc<OpenDb>, meta: &DbMeta, user: &User) -> ApiResult<Listing> {
     ensure_index(state, open, meta, user);
     let writer = *open.writer.lock().expect("writer lock");
     match writer {
@@ -140,8 +140,12 @@ fn index_behind(state: &AppState, open: &Arc<OpenDb>, meta: &DbMeta, user: &User
                 Err(ApiError::busy("The database is being backed up: try again in a moment"))
             }
         }
-        // With no job writing, indexing failed to start.
-        _ => Err(ApiError::conflict("The position index can't be brought up to date now")),
+        // With no job writing, indexing didn't start: no room for it (the
+        // quota), or it failed to.
+        _ => Err(ApiError::conflict(
+            "The position index is behind and can't be brought up to date now: the database or its owner \
+             may be at their quota",
+        )),
     }
 }
 
@@ -149,7 +153,7 @@ fn index_behind(state: &AppState, open: &Arc<OpenDb>, meta: &DbMeta, user: &User
 /// a chunk at a time, so a compaction can come between two chunks; the
 /// caller checks [`compacted_since`] before reading games by the ids.
 pub fn listing(
-    state: &AppState,
+    state: &Arc<AppState>,
     open: &Arc<OpenDb>,
     meta: &DbMeta,
     user: &User,

@@ -226,8 +226,11 @@ impl Jobs {
         F: FnOnce(&JobContext) -> Result<String, JobError> + Send + 'static,
     {
         self.prune();
-        // Known before it runs: it can end before `spawn_as` returns.
-        self.inner.meta.lock().expect("jobs lock").insert(id, meta);
+        // Known before it runs (it can end before `spawn_as` returns), and
+        // the lock held while it starts, so `stop_all_for` (which lists jobs
+        // under this lock) can't miss a job starting at that moment.
+        let mut metas = self.inner.meta.lock().expect("jobs lock");
+        metas.insert(id, meta);
         self.manager.spawn_as(id, kind, label, work)
     }
 

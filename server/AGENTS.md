@@ -79,9 +79,14 @@ none).
   keep its name, fields and casing (`app/src-tauri/src/dto.rs`), but don't
   edit or import the app's: the desktop client will share them later.
   `admin/src/lib/types.ts` is written by hand; keep it in step.
-- Jobs that write a database (imports, index builds, compaction) take its writer slot
-  (`OpenDb::writer`): one at a time. A backup holds it while it copies the
-  database. Compaction renumbers games: bump the `idEpoch` (the store).
+- Jobs that write a database (imports, index builds, compaction) take its
+  writer slot (`OpenDb::writer`): one at a time. Imports and index builds
+  (compaction's too) run under the quota check (`imports::Guarded`,
+  `imports::index_within_quota`). A backup holds the slot while it copies
+  the database. Compaction renumbers games: bump the `idEpoch` (the store).
+- **Every check of a user's password goes through
+  `account::verify_throttled`**, which counts the attempt before hashing,
+  so concurrent guesses can't get past the login throttle.
 - Tests turn the rate limits off (`tests/common`); a test of them sets them.
 - The admin UI runs under a strict Content-Security-Policy: no inline
   scripts or `style` attributes (classes only), nothing from other origins.

@@ -17,7 +17,7 @@ use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use chess_db::{DuplicateOptions, delete_copies, find_duplicates, update_position_index};
+use chess_db::{DuplicateOptions, delete_copies, find_duplicates};
 use chess_jobs::JobError;
 
 use crate::access::require;
@@ -26,6 +26,7 @@ use crate::auth::Auth;
 use crate::error::{ApiError, ApiResult};
 use crate::jobs::{DuplicatesFound, thousands, to_job_error};
 use crate::pool::writer_busy;
+use crate::routes::imports::index_within_quota;
 use crate::routes::jobs::rights;
 use crate::routes::json_body;
 use crate::store::DbMeta;
@@ -242,7 +243,7 @@ pub async fn compact(
         }
         let st = state.clone();
         let o = open.clone();
-        let db_id = meta.id.clone();
+        let (db_id, m) = (meta.id.clone(), meta.clone());
         let job = state.jobs.spawn(
             "compact",
             "Compacting the database".into(),
@@ -268,15 +269,20 @@ pub async fn compact(
                 if ctx.is_cancelled() {
                     return Err(JobError::Cancelled);
                 }
-                ctx.progress_msg(0, 0, "Indexing positions");
-                update_position_index(&o.db, ctx).map_err(to_job_error)?;
                 let mb = |b: u64| format!("{:.1} MB", b as f64 / 1e6);
-                Ok(format!(
+                let done = format!(
                     "Compacted: removed {} deleted games; {} → {}",
                     thousands(u64::from(summary.removed)),
                     mb(summary.bytes_before),
                     mb(summary.bytes_after)
-                ))
+                );
+                // Under the quota, as any index build.
+                ctx.progress_msg(0, 0, "Indexing positions");
+                index_within_quota(&st, &o, &m, ctx).map_err(|e| match e {
+                    JobError::Failed(why) => JobError::Failed(format!("{done}. {why}")),
+                    cancelled => cancelled,
+                })?;
+                Ok(done)
             },
         );
         *writer = Some(job);
