@@ -64,12 +64,21 @@ class LichessStore {
     }
   }
 
-  /** Stops waiting for the browser. */
-  cancelLogin() {
+  /**
+   * Stops waiting for the browser. A login the app kept before the cancel
+   * reached it stays (the browser came back just then), so the account is
+   * asked for again.
+   */
+  async cancelLogin() {
     if (!this.loggingIn) return;
     this.#run++;
     this.loggingIn = false;
-    void api.lichessLoginCancel();
+    try {
+      await api.lichessLoginCancel();
+    } catch (e) {
+      notices.error(e);
+    }
+    await this.load(true);
   }
 
   /** Logs in with a personal access token; resolves with whether it worked. */
@@ -96,9 +105,14 @@ class LichessStore {
     }
   }
 
-  /** Logs out: the app forgets the token, and Lichess revokes it. */
+  /**
+   * Logs out: the app forgets the token, and Lichess revokes it. Rust stops
+   * a login under way too (one checking a pasted token as well), so none
+   * is kept after this.
+   */
   async logout() {
-    this.cancelLogin();
+    this.#run++;
+    this.loggingIn = false;
     try {
       const done = await api.lichessLogout();
       this.account = { username: null, kept: false };

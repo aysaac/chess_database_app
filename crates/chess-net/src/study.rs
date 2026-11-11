@@ -168,6 +168,20 @@ pub fn fetch_study(
     fetch(client, link, token, since, true, stop)
 }
 
+/// A study's (or a chapter's) outline, to show what's in it: the light
+/// export, without comments, variations or clock times, which is a
+/// fraction of the full one for an annotated study. Its chapters' PGN is
+/// their main line only, so the import downloads the full export.
+pub fn fetch_study_outline(
+    client: &Client,
+    link: &StudyRef,
+    token: Option<&Token>,
+    stop: &dyn Fn() -> bool,
+) -> Result<StudyPgn, NetError> {
+    fetch(client, link, token, None, false, stop)?
+        .ok_or_else(|| NetError::BadData { site: Site::Lichess, reason: "a 304 unasked".into() })
+}
+
 fn fetch(
     client: &Client,
     link: &StudyRef,

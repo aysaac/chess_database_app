@@ -5,8 +5,7 @@
 //! (NET-11) downloading their own.
 
 use std::io::{self, BufRead, BufReader, Read};
-use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
+use std::sync::atomic::Ordering;
 
 use serde::Deserialize;
 
@@ -51,7 +50,7 @@ pub(crate) fn player(client: &Client, name: &str, stop: &dyn Fn() -> bool) -> Re
         404 => return Err(NetError::NoSuchPlayer { site: Site::Lichess, name: name.to_owned() }),
         _ => return Err(status_error(Site::Lichess, &resp)),
     }
-    let user: User = read_json(Site::Lichess, &mut resp, 1 << 20, &Arc::new(AtomicI64::new(0)))?;
+    let user: User = read_json(Site::Lichess, &mut resp, 1 << 20)?;
     Ok(Player {
         site: Site::Lichess,
         username: user.username,
@@ -83,8 +82,8 @@ fn perf_types(speeds: &[Speed]) -> String {
 /// Lichess sends them 60 a second then, not 20.
 fn own_token(client: &Client, what: &Fetch) -> Vec<(&'static str, String)> {
     match &client.lichess_login {
-        Some((user, token)) if user.eq_ignore_ascii_case(&what.username) => {
-            vec![("Authorization", token.bearer())]
+        Some(own) if own.username.eq_ignore_ascii_case(&what.username) => {
+            vec![("Authorization", own.token.bearer())]
         }
         _ => Vec::new(),
     }
@@ -137,9 +136,13 @@ pub(crate) fn fetch(
         let resp = client.get_with(Site::Lichess, &url, &query, "application/x-ndjson", &auth, stop)?;
         match resp.status().as_u16() {
             200 => {}
-            // A token revoked since: the games come without it.
+            // A token revoked since: the games come without it, and the
+            // caller learns to forget it (`Client::lichess_login_rejected`).
             401 if !auth.is_empty() => {
                 log::info!("Lichess didn't take the login: downloading without it");
+                if let Some(own) = &client.lichess_login {
+                    own.rejected.store(true, Ordering::Relaxed);
+                }
                 auth.clear();
                 continue;
             }

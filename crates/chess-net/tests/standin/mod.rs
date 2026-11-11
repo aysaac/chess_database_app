@@ -17,7 +17,9 @@
 //!   Bodies over 512 KiB get a 413.
 //!
 //! Every request is logged (method, path and query, and whether it had a
-//! token) in `requests`.
+//! token) in `requests`. `fail` makes the next request that starts with a
+//! given "METHOD /path" get a given status instead (once), to stand for
+//! Lichess failing or turning a token down partway.
 
 #![allow(dead_code)]
 
@@ -68,6 +70,9 @@ pub struct State {
     pub deny: bool,
     /// "METHOD /path?query [token]", in order.
     pub requests: Vec<String>,
+    /// ("METHOD /path" prefix, status): the next request it starts gets
+    /// the status instead of an answer, once.
+    pub fail: Vec<(String, u16)>,
     codes: HashMap<String, Grant>,
     next: u64,
     clock: i64,
@@ -289,7 +294,16 @@ fn serve(stream: TcpStream, state: &Mutex<State>, base: &str) {
     }
     let (path, query) = target.split_once('?').unwrap_or((&target, ""));
     let req = Request { method, path: path.to_owned(), query: pairs(query), headers, body };
-    let r = if len > 512 << 10 { reply(413, "Request Entity Too Large") } else { route(&req, state, base) };
+    let failed = {
+        let mut st = state.lock().unwrap();
+        let line = format!("{} {target}", req.method);
+        st.fail.iter().position(|(p, _)| line.starts_with(p.as_str())).map(|i| st.fail.remove(i).1)
+    };
+    let r = match failed {
+        _ if len > 512 << 10 => reply(413, "Request Entity Too Large"),
+        Some(status) => json_reply(status, json!({ "error": "the stand-in failed this request" })),
+        None => route(&req, state, base),
+    };
     {
         let mut st = state.lock().unwrap();
         let auth = if req.token().is_some() { " [token]" } else { "" };
@@ -465,7 +479,8 @@ fn route(req: &Request, state: &Mutex<State>, base: &str) -> Reply {
                     return json_reply(400, json!({ "error": { k: ["This field is required"] } }));
                 }
             }
-            let name_len = f["name"].chars().count();
+            // Lichess counts as Java does: UTF-16 code units.
+            let name_len = f["name"].encode_utf16().count();
             if !(2..=100).contains(&name_len) {
                 return json_reply(
                     400,

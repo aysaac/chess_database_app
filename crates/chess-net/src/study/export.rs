@@ -9,14 +9,11 @@
 //! is kept to requests one at a time, so NET-13's chapter updates
 //! (`…/{chapter}/moves`, `…/tags`, `DELETE …/{chapter}`) fit beside these.
 
-use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
-
 use chess_db::Progress;
 use serde::Deserialize;
 
 use super::{StudyRef, fetch};
-use crate::http::{Client, Payload, Write, encoded_len, error_message, read_json, status_error};
+use crate::http::{Client, encoded_len, error_message, read_json, status_error};
 use crate::keys::is_lichess_id;
 use crate::oauth::Token;
 use crate::{NetError, Site};
@@ -114,10 +111,29 @@ pub fn studies_needed(games: usize) -> usize {
     games.div_ceil(MAX_CHAPTERS).max(1)
 }
 
-/// A study name as Lichess takes it: 2 to 100 characters, trimmed.
+/// The longest study name Lichess takes, in UTF-16 code units: it counts
+/// a name as Java does (`String.length`), so most emoji count twice. The
+/// app's dialog counts the same way (JavaScript's `length`).
+pub const MAX_NAME: usize = 100;
+
+/// `text` cut to at most `max` UTF-16 code units, at the end of a character.
+fn cut_utf16(text: &str, max: usize) -> &str {
+    let mut used = 0;
+    for (i, c) in text.char_indices() {
+        used += c.len_utf16();
+        if used > max {
+            return &text[..i];
+        }
+    }
+    text
+}
+
+/// A study name as Lichess takes it: 2 to 100 characters as it counts them
+/// ([`MAX_NAME`]), trimmed.
 pub fn check_study_name(name: &str) -> Result<&str, NetError> {
     let name = name.trim();
-    if (2..=100).contains(&name.chars().count()) { Ok(name) } else { Err(NetError::BadStudyName) }
+    let len = name.encode_utf16().count();
+    if (2..=MAX_NAME).contains(&len) { Ok(name) } else { Err(NetError::BadStudyName) }
 }
 
 /// The names of `n` studies: the name for one, "Name (1/3)", "Name (2/3)"…
@@ -125,13 +141,13 @@ pub fn check_study_name(name: &str) -> Result<&str, NetError> {
 pub fn study_names(name: &str, n: usize) -> Vec<String> {
     let name = name.trim();
     if n <= 1 {
-        return vec![name.chars().take(100).collect()];
+        return vec![cut_utf16(name, MAX_NAME).to_owned()];
     }
     (1..=n)
         .map(|i| {
+            // ASCII: as many UTF-16 code units as bytes.
             let suffix = format!(" ({i}/{n})");
-            let room = 100 - suffix.chars().count();
-            let base: String = name.chars().take(room).collect();
+            let base = cut_utf16(name, MAX_NAME - suffix.len());
             format!("{}{suffix}", base.trim_end())
         })
         .collect()
@@ -293,7 +309,7 @@ fn create_study(
     // Who may clone or share (export) it: anyone who can see it, or for a
     // private one only its owner.
     let others = if visibility == Visibility::Private { "owner" } else { "everyone" };
-    let fields = vec![
+    let fields = [
         ("name", name),
         ("visibility", visibility.name()),
         ("computer", "everyone"),
@@ -303,8 +319,7 @@ fn create_study(
         ("chat", "member"),
     ];
     let url = format!("{}/api/study", client.lichess);
-    let write = Write { method: "POST", url: &url, token: Some(token), body: Payload::Form(fields) };
-    let mut resp = client.send(Site::Lichess, write)?;
+    let mut resp = client.post_form(Site::Lichess, &url, Some(token), &fields)?;
     match resp.status().as_u16() {
         200 => {}
         // The daily limit, or too many requests: the same answer.
@@ -317,7 +332,7 @@ fn create_study(
         }
         _ => return Err(status_error(Site::Lichess, &resp)),
     }
-    let made: Made = read_json(Site::Lichess, &mut resp, 1 << 16, &Arc::new(AtomicI64::new(0)))?;
+    let made: Made = read_json(Site::Lichess, &mut resp, 1 << 16)?;
     if !is_lichess_id(&made.id) {
         return Err(NetError::BadData { site: Site::Lichess, reason: format!("a study id {:?}", made.id) });
     }
@@ -345,8 +360,7 @@ fn import_pgn(
     if initial {
         fields.push(("initial", "true"));
     }
-    let write = Write { method: "POST", url: &url, token: Some(token), body: Payload::Form(fields) };
-    let mut resp = client.send(Site::Lichess, write)?;
+    let mut resp = client.post_form(Site::Lichess, &url, Some(token), &fields)?;
     match resp.status().as_u16() {
         200 => {}
         429 => return Err(NetError::RateLimited(Site::Lichess)),
@@ -359,7 +373,7 @@ fn import_pgn(
         }
         _ => return Err(status_error(Site::Lichess, &resp)),
     }
-    let made: Made = read_json(Site::Lichess, &mut resp, 4 << 20, &Arc::new(AtomicI64::new(0)))?;
+    let made: Made = read_json(Site::Lichess, &mut resp, 4 << 20)?;
     Ok((made.chapters.len(), made.error.filter(|e| !e.trim().is_empty())))
 }
 
@@ -380,6 +394,23 @@ mod tests {
         assert_eq!(studies_needed(65), 2);
         assert!(check_study_name(" a ").is_err() && check_study_name(&long).is_err());
         assert_eq!(check_study_name(" ab ").unwrap(), "ab");
+    }
+
+    /// Lichess counts a name in UTF-16 code units (Java's `String.length`),
+    /// as the dialog does: 60 emoji are 120 of them, too long, though they're
+    /// 60 characters.
+    #[test]
+    fn names_are_counted_as_lichess_counts_them() {
+        let utf16 = |s: &str| s.encode_utf16().count();
+        assert!(check_study_name(&"🙂".repeat(60)).is_err());
+        assert!(check_study_name(&"🙂".repeat(50)).is_ok());
+        assert!(check_study_name(&"é".repeat(100)).is_ok(), "one unit each");
+        let one = study_names(&"🙂".repeat(60), 1);
+        assert_eq!((one[0].chars().count(), utf16(&one[0])), (50, 100));
+        let names = study_names(&format!("a{}", "🙂".repeat(60)), 3);
+        assert!(names.iter().all(|n| utf16(n) <= MAX_NAME), "{names:?}");
+        // 94 units of room: "a" and 46 emoji (93), not half of the 47th.
+        assert_eq!(names[0], format!("a{} (1/3)", "🙂".repeat(46)));
     }
 
     #[test]
