@@ -23,6 +23,15 @@
     }
   }
 
+  /** A board with no database: games are saved into one afterwards (DB-01). */
+  async function openBoard() {
+    try {
+      await api.openEditorWindow(null);
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
   async function newDatabase() {
     const path = await save({
       title: "Create a database",
@@ -55,6 +64,11 @@
       <span>Database manager</span>
     </div>
     <div class="spacer"></div>
+    <button
+      class="btn"
+      title="Open a board with no database; save the game into one afterwards"
+      onclick={openBoard}>Open board</button
+    >
     <button class="btn" disabled={busy} onclick={openExisting}>Open database…</button>
     <button class="btn primary" disabled={busy} onclick={newDatabase}>+ New database</button>
   </header>
