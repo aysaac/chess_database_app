@@ -3,6 +3,7 @@
   import { api, ApiError, setCsrf, whenSignedOut } from "./lib/api";
   import type { Me, SetupStatus } from "./lib/types";
   import Account from "./pages/Account.svelte";
+  import Audit from "./pages/Audit.svelte";
   import Databases from "./pages/Databases.svelte";
   import Disk from "./pages/Disk.svelte";
   import Forgot from "./pages/Forgot.svelte";
@@ -22,6 +23,7 @@
     { id: "import", label: "Import" },
     { id: "jobs", label: "Jobs" },
     { id: "disk", label: "Disk" },
+    { id: "audit", label: "Audit log" },
     { id: "account", label: "Account" },
   ] as const;
   type PageId = (typeof PAGES)[number]["id"];
@@ -180,6 +182,8 @@
       <Import />
     {:else if page === "jobs"}
       <Jobs />
+    {:else if page === "audit"}
+      <Audit />
     {:else if page === "disk"}
       <Disk />
     {:else}

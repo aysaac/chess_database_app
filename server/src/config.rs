@@ -45,7 +45,31 @@ pub struct Config {
     pub email_reset_lifetime: Duration,
     /// Where to send e-mail from ("Forgot password"), if anywhere.
     pub smtp: Option<SmtpConfig>,
+    /// How long the audit log keeps entries.
+    pub audit_days: u32,
+    /// Where backups go (another volume than the data directory, ideally).
+    pub backup_dir: Option<PathBuf>,
+    /// Back up every this many hours (none: only when the admin asks).
+    pub backup_every: Option<Duration>,
+    /// Backups kept; older ones are deleted after a new one.
+    pub backup_keep: u32,
+    /// Databases nothing used for this long are closed (none: never).
+    pub idle_close: Option<Duration>,
+    /// Requests per minute a user (session or token) may make, and a client
+    /// address without a login; a burst of a quarter of it. None: no limit.
+    pub rate_user: Option<u32>,
+    pub rate_anon: Option<u32>,
+    /// The bearer token `/metrics` wants; without one there's no `/metrics`.
+    pub metrics_token: Option<String>,
+    /// Where TWIC issues come from (NET-06): its site, or a stand-in in tests.
+    pub twic_url: String,
 }
+
+/// Default number of backups kept.
+pub const DEFAULT_BACKUP_KEEP: u32 = 7;
+/// Default rate limits, requests per minute.
+pub const DEFAULT_RATE_USER: u32 = 1200;
+pub const DEFAULT_RATE_ANON: u32 = 300;
 
 /// How the server sends e-mail (password reset links).
 #[derive(Debug, Clone)]
@@ -90,6 +114,15 @@ impl Config {
             reset_lifetime: Duration::from_secs(24 * 3600),
             email_reset_lifetime: Duration::from_secs(3600),
             smtp: None,
+            audit_days: 365,
+            backup_dir: None,
+            backup_every: None,
+            backup_keep: DEFAULT_BACKUP_KEEP,
+            idle_close: Some(Duration::from_secs(30 * 60)),
+            rate_user: Some(DEFAULT_RATE_USER),
+            rate_anon: Some(DEFAULT_RATE_ANON),
+            metrics_token: None,
+            twic_url: "https://theweekinchess.com".to_owned(),
         }
     }
 
@@ -191,6 +224,40 @@ impl Config {
                     "CHESS_SERVER_SMTP_HOST is set but not CHESS_SERVER_PUBLIC_URL: no reset links by e-mail"
                 );
             }
+        }
+        let number = |name: &str| -> Result<Option<u64>, String> {
+            env(name).map(|v| v.parse::<u64>().map_err(|_| format!("{name}: not a number: {v}"))).transpose()
+        };
+        if let Some(days) = number("CHESS_SERVER_AUDIT_DAYS")? {
+            config.audit_days = days.clamp(1, 36_500) as u32;
+        }
+        config.backup_dir = env("CHESS_SERVER_BACKUP_DIR").map(PathBuf::from);
+        config.backup_every = number("CHESS_SERVER_BACKUP_EVERY_HOURS")?
+            .filter(|&h| h > 0)
+            .map(|h| Duration::from_secs(h * 3600));
+        if config.backup_every.is_some() && config.backup_dir.is_none() {
+            return Err(
+                "CHESS_SERVER_BACKUP_EVERY_HOURS needs CHESS_SERVER_BACKUP_DIR (where backups go)".into()
+            );
+        }
+        if let Some(keep) = number("CHESS_SERVER_BACKUP_KEEP")? {
+            config.backup_keep = keep.clamp(1, 10_000) as u32;
+        }
+        if let Some(minutes) = number("CHESS_SERVER_IDLE_CLOSE_MINUTES")? {
+            config.idle_close = (minutes > 0).then(|| Duration::from_secs(minutes * 60));
+        }
+        if let Some(n) = number("CHESS_SERVER_RATE_LIMIT_PER_MINUTE")? {
+            config.rate_user = (n > 0).then_some(n.min(u64::from(u32::MAX)) as u32);
+        }
+        if let Some(n) = number("CHESS_SERVER_RATE_LIMIT_ANON_PER_MINUTE")? {
+            config.rate_anon = (n > 0).then_some(n.min(u64::from(u32::MAX)) as u32);
+        }
+        config.metrics_token = env("CHESS_SERVER_METRICS_TOKEN");
+        if config.metrics_token.as_deref().is_some_and(|t| t.len() < 16) {
+            return Err("CHESS_SERVER_METRICS_TOKEN: use at least 16 characters".into());
+        }
+        if let Some(url) = env("CHESS_SERVER_TWIC_URL") {
+            config.twic_url = url.trim_end_matches('/').to_owned();
         }
         Ok(config)
     }

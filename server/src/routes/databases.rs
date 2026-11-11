@@ -8,6 +8,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use crate::access::{access, require};
+use crate::audit::Target;
 use crate::auth::Auth;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::check_name;
@@ -80,6 +81,8 @@ pub async fn create(
             }
         };
         log::info!("{} made database {id} ({})", auth.user.username, visibility.as_str());
+        let detail = Some(visibility.as_str().to_owned());
+        state.audit("database.create", Some(&auth.user), Target::Database(&meta), detail, Some(&auth.client));
         Ok((StatusCode::CREATED, Json(dto(&state, meta, Access::Owner))))
     })
     .await
@@ -130,6 +133,16 @@ pub async fn update(
         if let Some(v) = req.visibility {
             state.store.set_visibility(&id, v)?;
             log::info!("{} made database {id} {}", auth.user.username, v.as_str());
+            if let Some(meta) = state.store.database(&id)? {
+                let detail = Some(v.as_str().to_owned());
+                state.audit(
+                    "database.visibility",
+                    Some(&auth.user),
+                    Target::Database(&meta),
+                    detail,
+                    Some(&auth.client),
+                );
+            }
         }
         let meta = state.store.database(&id)?.ok_or_else(ApiError::not_found)?;
         Ok(Json(dto(&state, meta, Access::Owner)))
@@ -139,7 +152,13 @@ pub async fn update(
 
 /// Deletes a database for good: its jobs are stopped, its row and files go.
 /// Blocking.
-pub fn delete_now(state: &AppState, meta: &DbMeta, by: &User, confirm: &str) -> ApiResult<()> {
+pub fn delete_now(
+    state: &AppState,
+    meta: &DbMeta,
+    by: &User,
+    confirm: &str,
+    client: Option<&str>,
+) -> ApiResult<()> {
     if confirm.trim() != meta.name {
         return Err(ApiError::bad_request("To delete a database, confirm with its name (?confirm=NAME)"));
     }
@@ -147,6 +166,13 @@ pub fn delete_now(state: &AppState, meta: &DbMeta, by: &User, confirm: &str) -> 
     state.store.delete_database(&meta.id)?;
     state.pool.remove(&meta.id)?;
     log::info!("{} deleted database {} ({:?}, owner {})", by.username, meta.id, meta.name, meta.owner);
+    state.audit(
+        "database.delete",
+        Some(by),
+        Target::Database(meta),
+        Some(format!("owner {}", meta.owner)),
+        client,
+    );
     Ok(())
 }
 
@@ -158,7 +184,7 @@ pub async fn remove(
 ) -> ApiResult<StatusCode> {
     blocking(move || {
         let (meta, _) = require(&state.store, &auth.user, &id, Access::Owner)?;
-        delete_now(&state, &meta, &auth.user, &confirm.confirm)?;
+        delete_now(&state, &meta, &auth.user, &confirm.confirm, Some(&auth.client))?;
         Ok(StatusCode::NO_CONTENT)
     })
     .await

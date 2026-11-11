@@ -7,9 +7,11 @@
 //! metadata store) runs on tokio's blocking pool ([`blocking`]).
 
 pub mod access;
+pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod error;
+pub mod housekeeping;
 pub mod jobs;
 pub mod listing;
 pub mod mail;
@@ -139,6 +141,18 @@ async fn check_origin(State(state): State<Arc<AppState>>, req: Request, next: Ne
     next.run(req).await
 }
 
+/// Notes the client's address in the request (`audit::ClientAddr`): the
+/// peer's, or a trusted proxy's `X-Forwarded-For`.
+async fn client_addr(State(state): State<Arc<AppState>>, mut req: Request, next: Next) -> Response {
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map_or_else(|| SocketAddr::from(([0, 0, 0, 0], 0)), |c| c.0);
+    let addr = auth::client_ip(&state.config, req.headers(), peer);
+    req.extensions_mut().insert(audit::ClientAddr(addr));
+    next.run(req).await
+}
+
 async fn log_request(req: Request, next: Next) -> Response {
     let (method, path) = (req.method().clone(), req.uri().path().to_owned());
     let start = Instant::now();
@@ -152,6 +166,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .nest("/api", routes::api())
         .fallback(ui::serve)
         .layer(middleware::from_fn_with_state(state.clone(), check_origin))
+        .layer(middleware::from_fn_with_state(state.clone(), client_addr))
         .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn(log_request))
         .with_state(state)
@@ -172,8 +187,10 @@ pub async fn serve(
              or run `chess-server admin create NAME`."
         );
     }
+    let housekeeping = tokio::spawn(housekeeping::run(state.clone()));
     let app = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
     axum::serve(listener, app).with_graceful_shutdown(shutdown).await?;
+    housekeeping.abort();
     let st = state.clone();
     let _ = tokio::task::spawn_blocking(move || st.jobs.stop_all()).await;
     Ok(())

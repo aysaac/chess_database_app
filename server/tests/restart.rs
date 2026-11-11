@@ -34,6 +34,8 @@ impl Server {
             .arg(data)
             .args(["--bind", &format!("127.0.0.1:{port}")])
             .env("RUST_LOG", "warn")
+            .env("CHESS_SERVER_RATE_LIMIT_PER_MINUTE", "0")
+            .env("CHESS_SERVER_RATE_LIMIT_ANON_PER_MINUTE", "0")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

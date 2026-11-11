@@ -3,6 +3,7 @@
 
 import type {
   Account,
+  AuditPage,
   Invite,
   Link,
   OwnedDatabase,
@@ -139,4 +140,12 @@ export const api = {
   jobs: () => request<AdminJob[]>("GET", "/admin/jobs"),
   cancelJob: (id: number) => request<void>("POST", `/admin/jobs/${id}/cancel`),
   disk: () => request<Disk>("GET", "/admin/disk"),
+  audit: (q: { action: string; who: string; from: number | null; to: number | null; offset: number; limit: number }) => {
+    const params = new URLSearchParams({ offset: String(q.offset), limit: String(q.limit) });
+    if (q.action) params.set("action", q.action);
+    if (q.who) params.set("who", q.who);
+    if (q.from !== null) params.set("from", String(q.from));
+    if (q.to !== null) params.set("to", String(q.to));
+    return request<AuditPage>("GET", `/admin/audit?${params}`);
+  },
 };

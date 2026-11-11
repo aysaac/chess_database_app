@@ -72,6 +72,7 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/admin/jobs", get(admin::jobs))
         .route("/admin/jobs/{job}/cancel", post(admin::cancel_job))
         .route("/admin/disk", get(admin::disk))
+        .route("/admin/audit", get(admin::audit))
         .route("/admin/import-files", get(admin::import_files))
         .fallback(|| async { ApiError::not_found() })
 }

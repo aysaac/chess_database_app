@@ -18,6 +18,7 @@ use chess_db::{DuplicateOptions, delete_copies, find_duplicates, update_position
 use chess_jobs::JobError;
 
 use crate::access::require;
+use crate::audit::Target;
 use crate::auth::Auth;
 use crate::error::{ApiError, ApiResult};
 use crate::jobs::{DuplicatesFound, thousands, to_job_error};
@@ -75,6 +76,9 @@ pub async fn mark_deleted(
             if req.deleted { "deleted" } else { "restored" },
             meta.id
         );
+        let action = if req.deleted { "games.delete" } else { "games.restore" };
+        let detail = Some(format!("{changed} games"));
+        state.audit(action, Some(&auth.user), Target::Database(&meta), detail, Some(&auth.client));
         Ok(Json(ChangedDto { changed }))
     })
     .await
@@ -186,6 +190,14 @@ pub async fn delete_found(
             done.marked.len(),
             meta.id
         );
+        let detail = Some(format!("{} games", done.marked.len()));
+        state.audit(
+            "duplicates.delete",
+            Some(&auth.user),
+            Target::Database(&meta),
+            detail,
+            Some(&auth.client),
+        );
         Ok(Json(DeletedCopiesDto {
             marked: done.marked.len() as u32,
             filled: done.filled.len() as u32,
@@ -248,6 +260,7 @@ pub async fn compact(
         );
         *writer = Some(job);
         log::info!("{} compacts database {}", auth.user.username, meta.id);
+        state.audit("compact", Some(&auth.user), Target::Database(&meta), None, Some(&auth.client));
         Ok(job)
     })
     .await?;

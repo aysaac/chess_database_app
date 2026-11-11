@@ -209,6 +209,45 @@ pub struct OfferRequest {
     pub username: String,
 }
 
+/// `GET /api/admin/audit`: filters and paging.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AuditQuery {
+    /// An action (`login.failed`) or a group of them (`login`).
+    pub action: Option<String>,
+    /// A username, as who did it or what it was done to.
+    pub who: Option<String>,
+    /// Unix seconds, from (inclusive) and to (exclusive).
+    pub from: Option<i64>,
+    pub to: Option<i64>,
+    pub offset: u32,
+    pub limit: Option<u32>,
+}
+
+/// An entry of the audit log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditEntryDto {
+    pub at: i64,
+    pub actor: Option<String>,
+    pub action: String,
+    pub target_kind: Option<String>,
+    pub target_id: Option<String>,
+    pub target: Option<String>,
+    pub detail: Option<String>,
+    pub client: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditPage {
+    pub total: u64,
+    pub offset: u32,
+    /// How long entries are kept.
+    pub days: u32,
+    pub entries: Vec<AuditEntryDto>,
+}
+
 /// A database the admin is about to delete with its owner (metadata only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

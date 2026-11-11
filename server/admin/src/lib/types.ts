@@ -52,6 +52,24 @@ export interface Invite {
   usedBy: string | null;
 }
 
+export interface AuditEntry {
+  at: number;
+  actor: string | null;
+  action: string;
+  targetKind: string | null;
+  targetId: string | null;
+  target: string | null;
+  detail: string | null;
+  client: string | null;
+}
+
+export interface AuditPage {
+  total: number;
+  offset: number;
+  days: number;
+  entries: AuditEntry[];
+}
+
 /** A database deleted with its owner (metadata only). */
 export interface OwnedDatabase {
   id: string;

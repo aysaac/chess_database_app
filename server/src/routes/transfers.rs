@@ -13,6 +13,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 
 use crate::access::require;
+use crate::audit::Target;
 use crate::auth::Auth;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::json_body;
@@ -60,6 +61,8 @@ pub async fn offer(
         }
         state.store.offer(&meta.id, auth.user.id, to.id)?;
         log::info!("{} offered database {} to {}", auth.user.username, meta.id, to.username);
+        let detail = Some(format!("to {}", to.username));
+        state.audit("transfer.offer", Some(&auth.user), Target::Database(&meta), detail, Some(&auth.client));
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -76,6 +79,7 @@ pub async fn withdraw(
         if !state.store.withdraw_offer(&meta.id)? {
             return Err(ApiError::not_found());
         }
+        state.audit("transfer.withdraw", Some(&auth.user), Target::Database(&meta), None, Some(&auth.client));
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -122,6 +126,15 @@ pub async fn accept(
             return Err(ApiError::not_found());
         }
         log::info!("{} took over database {id}", auth.user.username);
+        if let Some(meta) = state.store.database(&id)? {
+            state.audit(
+                "transfer.accept",
+                Some(&auth.user),
+                Target::Database(&meta),
+                None,
+                Some(&auth.client),
+            );
+        }
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -139,6 +152,15 @@ pub async fn decline(
         }
         state.store.withdraw_offer(&id)?;
         log::info!("{} declined database {id}", auth.user.username);
+        if let Some(meta) = state.store.database(&id)? {
+            state.audit(
+                "transfer.decline",
+                Some(&auth.user),
+                Target::Database(&meta),
+                None,
+                Some(&auth.client),
+            );
+        }
         Ok(StatusCode::NO_CONTENT)
     })
     .await

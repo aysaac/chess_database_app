@@ -61,6 +61,13 @@ pub async fn cancel(
             }
             Some(true) => {
                 state.jobs.manager.cancel(id);
+                state.audit(
+                    "job.cancel",
+                    Some(&auth.user),
+                    crate::audit::Target::Job(id),
+                    None,
+                    Some(&auth.client),
+                );
                 Ok(StatusCode::NO_CONTENT)
             }
         }
