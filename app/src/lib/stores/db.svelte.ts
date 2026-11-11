@@ -87,6 +87,18 @@ class DbStore {
   }
 
   /**
+   * Where a game can be saved: the open database, the reference database and
+   * the recently opened ones that still exist (the ones copying offers,
+   * with the open one first).
+   */
+  get saveTargets(): CopyTarget[] {
+    const here = this.info;
+    const out: CopyTarget[] = here ? [{ path: here.path, name: here.name, reference: false }] : [];
+    for (const t of this.copyTargets) if (!out.some((o) => o.path === t.path)) out.push(t);
+    return out;
+  }
+
+  /**
    * Where games of the open database can be copied (QOL-04): the reference
    * database and the recently opened ones that still exist, not the open one.
    */
@@ -447,9 +459,14 @@ class DbStore {
     if (typeof path === "string") await this.openAt(path);
   }
 
+  /** Opens a database and shows it; throws if it can't be opened. */
+  async open(path: string) {
+    await this.#use(await api.openDb(path));
+  }
+
   async openAt(path: string) {
     try {
-      await this.#use(await api.openDb(path));
+      await this.open(path);
     } catch (e) {
       notices.error(e);
     }
