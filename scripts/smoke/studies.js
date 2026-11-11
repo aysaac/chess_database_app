@@ -15,8 +15,11 @@
 // Lichess…, the private study then, the user's studies listed with it;
 // Send to study…: the list's games to a new private study, a second new
 // study refused at the stand-in's daily limit of 1 (what went where said),
-// then to the study made before, picked from "One of your studies"; the
-// list's menu offering Send game to a Lichess study…; logging out.
+// then to the study made before, picked from "One of your studies" once its
+// listing failed once (one request, the error and Try again: no request
+// loop); the list's menu offering Send game to a Lichess study…; logging
+// out. The listing's failure is made in the page (api.lichessStudies
+// wrapped): the app's CSP keeps the page from reaching the stand-in.
 //
 // The main window is the library (DB-07): there the driver only opens an
 // editor window, which runs the same script and does the checks.
@@ -169,14 +172,35 @@
     expect(status(exportDialog).includes("the rest can be sent tomorrow"), "says when");
     await shot("07-daily-limit");
 
-    // To the study made before, picked from the user's.
-    exportDialog().querySelectorAll('input[name="study-to"]')[1].click();
-    await until(() => [...exportDialog().querySelectorAll(".study")].some((b) => text(b).startsWith("Smoke export")), "the user's studies", 10000);
+    // To the study made before, picked from the user's. Their listing fails
+    // the first time, as with Lichess down: one request, the error and Try
+    // again, and no more requests on their own (the dialog once asked again
+    // and again, hundreds of times a second, while it was open).
+    const listStudies = api.lichessStudies;
+    let listCalls = 0;
+    api.lichessStudies = (user) => {
+      listCalls++;
+      return listCalls === 1
+        ? Promise.reject({ code: "network", message: "Lichess answered with an error (HTTP 503). Try again later" })
+        : listStudies(user);
+    };
+    try {
+      exportDialog().querySelectorAll('input[name="study-to"]')[1].click();
+      await until(() => text(exportDialog()).includes("HTTP 503") && button(exportDialog, "Try again"), "the listing's error: " + text(exportDialog()));
+      await wait(3000);
+      expect(listCalls === 1, "one listing, not a loop: " + listCalls + " requests in 3 s");
+      await shot("08a-listing-failed");
+      button(exportDialog, "Try again").click();
+      await until(() => [...exportDialog().querySelectorAll(".study")].some((b) => text(b).startsWith("Smoke export")), "the user's studies after Try again", 10000);
+      expect(listCalls === 2 && !text(exportDialog()).includes("HTTP 503"), "listed again once: " + listCalls);
+    } finally {
+      api.lichessStudies = listStudies;
+    }
     [...exportDialog().querySelectorAll(".study")].find((b) => text(b).startsWith("Smoke export")).click();
     await wait(100);
     button(exportDialog, "Send 6 games").click();
     await until(() => status(exportDialog).includes("Sent 6 games to Smoke export on Lichess"), "sent to the existing study: " + status(exportDialog), 30000);
-    await shot("08-existing-study");
+    await shot("08b-existing-study");
     button(exportDialog, "Close").click();
     await until(() => !exportDialog(), "the export dialog closed");
     expect(!jobs.running.length, "no job left running");

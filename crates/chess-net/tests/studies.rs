@@ -18,7 +18,7 @@ use chess_db::{Database, NoProgress, Progress};
 use chess_net::oauth::{self, Token};
 use chess_net::study::{
     ExportTarget, StudyRef, Visibility, download_study_into, export_to_studies, fetch_study,
-    parse_study_link, split_games, studies_of,
+    fetch_study_outline, parse_study_link, split_games, studies_of,
 };
 use chess_net::{Client, NetError, Period, Request, Site, download_into};
 use standin::Lichess;
@@ -122,6 +122,26 @@ fn a_study_looked_up_is_asked_again_with_if_modified_since() {
     let s = download_study_into(&client, &db, &link, None, Some(&looked), &NoProgress).unwrap();
     assert!(!s.unchanged);
     assert_eq!((s.import.imported, s.already), (0, 4));
+}
+
+/// The dialog's look-up takes the light export (names and main lines), not
+/// the full one the import downloads: a large annotated study on a slow line
+/// would otherwise fail the look-up's 30 seconds though its import wouldn't.
+#[test]
+fn a_look_up_takes_the_light_export() {
+    let server = Lichess::start(0);
+    public_study(&server);
+    let client = client(&server);
+    let outline = fetch_study_outline(&client, &study("FxStudy1"), None, &|| false).unwrap();
+    assert_eq!((outline.name.as_str(), outline.chapters.len()), ("Fixture study", 4));
+    assert_eq!(outline.chapters[0].name, "Student - Coach");
+    let reqs = server.requests();
+    assert_eq!(reqs.len(), 1, "{reqs:?}");
+    for part in ["clocks=false", "comments=false", "variations=false", "orientation=true"] {
+        assert!(reqs[0].contains(part), "{reqs:?}");
+    }
+    let e = fetch_study_outline(&client, &study("Nothing1"), None, &|| false).unwrap_err();
+    assert!(matches!(e, NetError::NoSuchStudy), "{e}");
 }
 
 #[test]
@@ -249,6 +269,32 @@ fn logs_in_through_the_browser_with_pkce() {
     oauth::revoke(&client, &login.token).expect("a token Lichess doesn't know counts as revoked");
 }
 
+/// Cancel or Log out after the browser came back with the code: the token
+/// Lichess gave for it is revoked, not left working with nobody holding it.
+#[test]
+fn a_login_stopped_once_the_code_came_revokes_its_token() {
+    let server = Lichess::start(0);
+    let client = client(&server);
+    let exchanged = || server.requests().iter().any(|r| r == "POST /api/token");
+    let e = oauth::login(&client, "dev.chessdb.test", &browser, &exchanged).unwrap_err();
+    assert!(matches!(e, NetError::Cancelled), "{e}");
+    assert!(server.state.lock().unwrap().tokens.is_empty(), "revoked");
+    let reqs = server.requests();
+    assert!(reqs.iter().any(|r| r == "DELETE /api/token [token]"), "{reqs:?}");
+    assert!(!reqs.iter().any(|r| r.starts_with("GET /api/account")), "stopped before asking whose: {reqs:?}");
+}
+
+/// Lichess failing to say whose the new token is: the login fails, and the
+/// token goes.
+#[test]
+fn a_login_whose_account_fails_revokes_its_token() {
+    let server = Lichess::start(0);
+    server.state.lock().unwrap().fail.push(("GET /api/account".into(), 503));
+    let e = oauth::login(&client(&server), "dev.chessdb.test", &browser, &|| false).unwrap_err();
+    assert!(matches!(e, NetError::Status { code: 503, .. }), "{e}");
+    assert!(server.state.lock().unwrap().tokens.is_empty(), "revoked");
+}
+
 #[test]
 fn a_login_the_user_refuses() {
     let server = Lichess::start(0);
@@ -357,13 +403,16 @@ fn own_games_are_downloaded_with_the_token() {
     assert_eq!(g.len(), 2, "{g:?}");
     assert!(g[0].contains("/DrNykterstein?") && g[0].ends_with("[token]"), "{g:?}");
     assert!(!g[1].ends_with("[token]"), "someone else's games without it: {g:?}");
+    assert!(!client.lichess_login_rejected());
 
-    // Revoked since: the games come without it.
+    // Revoked since: the games come without it, and the caller learns to
+    // forget the login.
     server.state.lock().unwrap().tokens.clear();
     let s = download_into(&client, &db, &request("DrNykterstein"), &NoProgress).unwrap();
     assert!(s.stopped.is_none() && s.already == 1, "{s:?}");
     let g = games();
     assert!(g[2].ends_with("[token]") && !g[3].ends_with("[token]"), "{g:?}");
+    assert!(client.lichess_login_rejected(), "the 401 is reported");
 }
 
 // ---- NET-12: games to studies -----------------------------------------------
@@ -477,6 +526,20 @@ fn games_go_to_an_existing_study_that_has_room() {
     let e =
         export_to_studies(&client, &Token::new("lio_gone"), &target, &numbered(1), &NoProgress).unwrap_err();
     assert!(matches!(e, NetError::TokenRejected), "{e}");
+}
+
+/// A token Lichess turns down after the export made a study: the summary
+/// says so (`stopped`), for the app to forget the login.
+#[test]
+fn a_token_turned_down_partway_stops_the_export() {
+    let server = Lichess::start(0);
+    let token = writer(&server);
+    server.state.lock().unwrap().fail.push(("POST /api/study/".into(), 401));
+    let target = ExportTarget::New { name: "Club games".into(), visibility: Visibility::Private };
+    let s = export_to_studies(&client(&server), &token, &target, &numbered(3), &NoProgress).unwrap();
+    assert!(matches!(s.stopped, Some(NetError::TokenRejected)), "{:?}", s.stopped);
+    assert_eq!((s.studies.len(), s.sent()), (1, 0));
+    assert!(s.studies[0].made);
 }
 
 #[test]

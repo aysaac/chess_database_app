@@ -12,14 +12,12 @@
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::http::{Client, Payload, Write, encode, error_message, query_pairs, read_json, status_error};
+use crate::http::{Client, encode, error_message, query_pairs, read_json, status_error};
 use crate::{NetError, Site, time};
 
 /// What the app asks to do: read the user's studies (private ones too) and
@@ -127,7 +125,9 @@ pub fn authorize_url(
 /// Logs in through the browser: `open` sends it to Lichess's authorization
 /// page, and once the user lets the app in, Lichess sends it back to a
 /// listener on 127.0.0.1 with a code, which is exchanged for a token. Waits
-/// until then, until `stop` says to give up, or 10 minutes.
+/// until then, until `stop` says to give up, or 10 minutes. A token it got
+/// but doesn't hand over (`stop` said so meanwhile, or Lichess didn't say
+/// whose it is) is revoked, as only the app had it.
 pub fn login(
     client: &Client,
     client_id: &str,
@@ -144,9 +144,22 @@ pub fn login(
     open(&url).map_err(|e| NetError::Login(format!("the browser didn't open ({e})")))?;
     let code = wait_for_code(&listener, &state, client.login_wait, stop)?;
     drop(listener);
+    if stop() {
+        return Err(NetError::Cancelled);
+    }
     let (token, expires) = exchange(client, client_id, &code, &pkce.verifier, &redirect)?;
-    let username = account(client, &token, stop)?;
-    Ok(Login { token, username, expires })
+    // The token works from here, and only the app has it.
+    let on = || if stop() { Err(NetError::Cancelled) } else { Ok(()) };
+    let whose = on().and_then(|()| account(client, &token, stop)).and_then(|u| on().map(|()| u));
+    match whose {
+        Ok(username) => Ok(Login { token, username, expires }),
+        Err(e) => {
+            if let Err(r) = revoke(client, &token) {
+                log::warn!("couldn't revoke the token of a login that didn't finish: {r}");
+            }
+            Err(e)
+        }
+    }
 }
 
 /// What a browser does when the user lets the app in at once, for tests and
@@ -282,15 +295,14 @@ fn exchange(
         expires_in: Option<i64>,
     }
     let url = format!("{}/api/token", client.lichess);
-    let fields = vec![
+    let fields = [
         ("grant_type", "authorization_code"),
         ("code", code),
         ("code_verifier", verifier),
         ("redirect_uri", redirect),
         ("client_id", client_id),
     ];
-    let write = Write { method: "POST", url: &url, token: None, body: Payload::Form(fields) };
-    let mut resp = client.send(Site::Lichess, write)?;
+    let mut resp = client.post_form(Site::Lichess, &url, None, &fields)?;
     match resp.status().as_u16() {
         200 => {}
         400 | 401 => {
@@ -300,7 +312,7 @@ fn exchange(
         429 => return Err(NetError::RateLimited(Site::Lichess)),
         _ => return Err(status_error(Site::Lichess, &resp)),
     }
-    let answer: Answer = read_json(Site::Lichess, &mut resp, 1 << 16, &Arc::new(AtomicI64::new(0)))?;
+    let answer: Answer = read_json(Site::Lichess, &mut resp, 1 << 16)?;
     let expires = answer.expires_in.map(|s| time::now_ms() + s * 1000);
     Ok((Token::new(&answer.access_token), expires))
 }
@@ -319,7 +331,7 @@ pub fn account(client: &Client, token: &Token, stop: &dyn Fn() -> bool) -> Resul
         401 | 403 => return Err(NetError::TokenRejected),
         _ => return Err(status_error(Site::Lichess, &resp)),
     }
-    let account: Account = read_json(Site::Lichess, &mut resp, 1 << 20, &Arc::new(AtomicI64::new(0)))?;
+    let account: Account = read_json(Site::Lichess, &mut resp, 1 << 20)?;
     Ok(account.username)
 }
 
@@ -336,15 +348,14 @@ pub fn check_token(client: &Client, token: &Token, stop: &dyn Fn() -> bool) -> R
         return Err(NetError::TokenRejected);
     }
     let url = format!("{}/api/token/test", client.lichess);
-    let write = Write { method: "POST", url: &url, token: None, body: Payload::Text(token.0.clone()) };
-    let mut resp = client.send(Site::Lichess, write)?;
+    let mut resp = client.post_text(Site::Lichess, &url, &token.0)?;
     match resp.status().as_u16() {
         200 => {}
         429 => return Err(NetError::RateLimited(Site::Lichess)),
         _ => return Err(status_error(Site::Lichess, &resp)),
     }
     let mut answer: std::collections::HashMap<String, Option<Info>> =
-        read_json(Site::Lichess, &mut resp, 1 << 16, &Arc::new(AtomicI64::new(0)))?;
+        read_json(Site::Lichess, &mut resp, 1 << 16)?;
     let Some(info) = answer.remove(&token.0).flatten() else { return Err(NetError::TokenRejected) };
     let has = info.scopes.unwrap_or_default();
     let has: Vec<&str> = has.split(',').map(str::trim).collect();
@@ -360,8 +371,7 @@ pub fn check_token(client: &Client, token: &Token, stop: &dyn Fn() -> bool) -> R
 /// (revoked already, or expired) counts as revoked.
 pub fn revoke(client: &Client, token: &Token) -> Result<(), NetError> {
     let url = format!("{}/api/token", client.lichess);
-    let write = Write { method: "DELETE", url: &url, token: Some(token), body: Payload::Empty };
-    let resp = client.send(Site::Lichess, write)?;
+    let resp = client.delete(Site::Lichess, &url, token)?;
     match resp.status().as_u16() {
         200 | 204 | 401 => Ok(()),
         429 => Err(NetError::RateLimited(Site::Lichess)),

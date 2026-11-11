@@ -5,7 +5,7 @@
 
 use std::io::{self, Read};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use ureq::http::Response;
@@ -43,7 +43,16 @@ pub struct Client {
     pub(crate) login_wait: Duration,
     /// The Lichess user logged in, and their token: a download of their own
     /// games sends it, which makes Lichess send them 3 times as fast.
-    pub(crate) lichess_login: Option<(String, Token)>,
+    pub(crate) lichess_login: Option<OwnLogin>,
+}
+
+/// The login a download of the user's own Lichess games sends (NET-11).
+#[derive(Clone)]
+pub(crate) struct OwnLogin {
+    pub username: String,
+    pub token: Token,
+    /// Lichess turned the token down (a 401: revoked or expired).
+    pub rejected: Arc<AtomicBool>,
 }
 
 impl Default for Client {
@@ -89,8 +98,17 @@ impl Client {
     /// from Lichess: their own games, which Lichess then sends 3 times as
     /// fast (NET-11).
     pub fn with_lichess_login(mut self, username: &str, token: Token) -> Client {
-        self.lichess_login = Some((username.to_owned(), token));
+        let rejected = Arc::new(AtomicBool::new(false));
+        self.lichess_login = Some(OwnLogin { username: username.to_owned(), token, rejected });
         self
+    }
+
+    /// Whether Lichess turned down the login given with
+    /// [`with_lichess_login`](Client::with_lichess_login) (revoked on its
+    /// site, or expired): the download went on without it, and the caller
+    /// should forget it.
+    pub fn lichess_login_rejected(&self) -> bool {
+        self.lichess_login.as_ref().is_some_and(|l| l.rejected.load(Ordering::Relaxed))
     }
 
     /// The same, a login giving up when the browser hasn't come back after
@@ -190,47 +208,37 @@ impl Client {
         Err(NetError::RateLimited(site))
     }
 
-    /// Sends a write (a POST or a DELETE) once: a 429 comes back like any
-    /// other status, never sent again. It gives up after 2 minutes.
-    pub(crate) fn send(&self, site: Site, write: Write<'_>) -> Result<Response<Body>, NetError> {
-        let mut req = ureq::http::Request::builder()
-            .method(write.method)
-            .uri(write.url)
-            .header("Accept", "application/json");
-        if let Some(token) = write.token {
+    /// POSTs a form once: a 429 comes back like any other status, never
+    /// sent again. It gives up after 2 minutes.
+    pub(crate) fn post_form(
+        &self,
+        site: Site,
+        url: &str,
+        token: Option<&Token>,
+        fields: &[(&str, &str)],
+    ) -> Result<Response<Body>, NetError> {
+        let mut req = self.agent.post(url).header("Accept", "application/json");
+        if let Some(token) = token {
             req = req.header("Authorization", token.bearer());
         }
-        let body = match write.body {
-            Payload::Empty => Vec::new(),
-            Payload::Form(fields) => {
-                req = req.header("Content-Type", "application/x-www-form-urlencoded");
-                form(&fields).into_bytes()
-            }
-            Payload::Text(text) => {
-                req = req.header("Content-Type", "text/plain");
-                text.into_bytes()
-            }
-        };
-        let req = req.body(body).map_err(|e| NetError::Unreachable { site, reason: e.to_string() })?;
-        let req = self.agent.configure_request(req).timeout_global(Some(self.write_timeout)).build();
-        self.agent.run(req).map_err(|e| unreachable(site, &e))
+        let req = req.config().timeout_global(Some(self.write_timeout)).build();
+        req.send_form(fields.iter().copied()).map_err(|e| unreachable(site, &e))
     }
-}
 
-/// A write for [`Client::send`].
-pub(crate) struct Write<'a> {
-    pub method: &'static str,
-    pub url: &'a str,
-    pub token: Option<&'a Token>,
-    pub body: Payload<'a>,
-}
+    /// POSTs plain text once, like [`post_form`](Client::post_form).
+    pub(crate) fn post_text(&self, site: Site, url: &str, text: &str) -> Result<Response<Body>, NetError> {
+        let req = self.agent.post(url).header("Accept", "application/json").content_type("text/plain");
+        let req = req.config().timeout_global(Some(self.write_timeout)).build();
+        req.send(text).map_err(|e| unreachable(site, &e))
+    }
 
-/// What a write sends.
-pub(crate) enum Payload<'a> {
-    Empty,
-    /// `application/x-www-form-urlencoded`.
-    Form(Vec<(&'a str, &'a str)>),
-    Text(String),
+    /// DELETEs once, with `token`, like [`post_form`](Client::post_form).
+    pub(crate) fn delete(&self, site: Site, url: &str, token: &Token) -> Result<Response<Body>, NetError> {
+        let req = self.agent.delete(url).header("Accept", "application/json");
+        let req = req.header("Authorization", token.bearer());
+        let req = req.config().timeout_global(Some(self.write_timeout)).build();
+        req.call().map_err(|e| unreachable(site, &e))
+    }
 }
 
 fn unreserved(b: u8) -> bool {
@@ -250,7 +258,9 @@ pub(crate) fn encode(text: &str) -> String {
     out
 }
 
-/// How long `text` is once percent-encoded.
+/// How long `text` is once percent-encoded: at least what a form body
+/// takes for it (ureq's `send_form` leaves a few more characters as they
+/// are, and a space is a `+`).
 pub(crate) fn encoded_len(text: &str) -> usize {
     text.bytes().map(|b| if unreserved(b) { 1 } else { 3 }).sum()
 }
@@ -277,12 +287,6 @@ pub(crate) fn decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// A form body, `k=v&k=v`, percent-encoded.
-pub(crate) fn form(fields: &[(&str, &str)]) -> String {
-    let pairs: Vec<String> = fields.iter().map(|(k, v)| format!("{}={}", encode(k), encode(v))).collect();
-    pairs.join("&")
-}
-
 /// The pairs of a query string (`a=1&b=x%20y`), decoded.
 pub(crate) fn query_pairs(query: &str) -> Vec<(String, String)> {
     query
@@ -302,7 +306,7 @@ pub(crate) fn error_message(site: Site, resp: &mut Response<Body>) -> Option<Str
         error: Option<serde_json::Value>,
         error_description: Option<String>,
     }
-    let e: Error = read_json(site, resp, 1 << 16, &Arc::new(AtomicI64::new(0))).ok()?;
+    let e: Error = read_json(site, resp, 1 << 16).ok()?;
     let error = e.error.map(|v| match v {
         serde_json::Value::String(s) => s,
         // A form's errors: {"name": ["…"]}.
@@ -357,8 +361,19 @@ impl<R: Read> Read for Alive<R> {
     }
 }
 
-/// Reads a JSON body (up to `limit` bytes), noting its bytes in `alive`.
+/// Reads a JSON body (up to `limit` bytes).
 pub(crate) fn read_json<T: serde::de::DeserializeOwned>(
+    site: Site,
+    resp: &mut Response<Body>,
+    limit: u64,
+) -> Result<T, NetError> {
+    let bytes = read_bytes(site, resp, limit)?;
+    serde_json::from_slice(&bytes).map_err(|e| NetError::BadData { site, reason: e.to_string() })
+}
+
+/// The same, noting its bytes in `alive` as they come (a download, which
+/// is stalled only when nothing comes for a while).
+pub(crate) fn read_json_noting<T: serde::de::DeserializeOwned>(
     site: Site,
     resp: &mut Response<Body>,
     limit: u64,
@@ -366,25 +381,24 @@ pub(crate) fn read_json<T: serde::de::DeserializeOwned>(
 ) -> Result<T, NetError> {
     let mut bytes = Vec::new();
     let reader = resp.body_mut().with_config().limit(limit).reader();
-    Alive { inner: reader, at: alive.clone() }.read_to_end(&mut bytes).map_err(|e| {
-        let too_big = e.get_ref().and_then(|i| i.downcast_ref::<ureq::Error>());
-        match too_big {
-            Some(ureq::Error::BodyExceedsLimit(_)) => NetError::BadData { site, reason: io_reason(&e) },
-            _ => NetError::Unreachable { site, reason: io_reason(&e) },
-        }
-    })?;
+    Alive { inner: reader, at: alive.clone() }.read_to_end(&mut bytes).map_err(|e| body_error(site, &e))?;
     serde_json::from_slice(&bytes).map_err(|e| NetError::BadData { site, reason: e.to_string() })
+}
+
+/// An error reading a body: one over its limit is bad data, the rest a
+/// connection that broke.
+fn body_error(site: Site, e: &io::Error) -> NetError {
+    match e.get_ref().and_then(|i| i.downcast_ref::<ureq::Error>()) {
+        Some(ureq::Error::BodyExceedsLimit(_)) => NetError::BadData { site, reason: io_reason(e) },
+        _ => NetError::Unreachable { site, reason: io_reason(e) },
+    }
 }
 
 /// Reads a whole body (up to `limit` bytes).
 pub(crate) fn read_bytes(site: Site, resp: &mut Response<Body>, limit: u64) -> Result<Vec<u8>, NetError> {
     let mut bytes = Vec::new();
-    resp.body_mut().with_config().limit(limit).reader().read_to_end(&mut bytes).map_err(|e| {
-        match e.get_ref().and_then(|i| i.downcast_ref::<ureq::Error>()) {
-            Some(ureq::Error::BodyExceedsLimit(_)) => NetError::BadData { site, reason: io_reason(&e) },
-            _ => NetError::Unreachable { site, reason: io_reason(&e) },
-        }
-    })?;
+    let mut reader = resp.body_mut().with_config().limit(limit).reader();
+    reader.read_to_end(&mut bytes).map_err(|e| body_error(site, &e))?;
     Ok(bytes)
 }
 
@@ -408,6 +422,5 @@ mod tests {
                 ("flag".into(), String::new())
             ]
         );
-        assert_eq!(form(&[("pgn", "1. e4 *"), ("initial", "true")]), "pgn=1.%20e4%20%2A&initial=true");
     }
 }

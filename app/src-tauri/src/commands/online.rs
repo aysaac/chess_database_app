@@ -129,22 +129,34 @@ pub async fn download_games(
     state.import_reports.lock().expect("import reports lock").remove(&handle);
     Ok(state.jobs.spawn("download", label, move |ctx| {
         let _slot = slot;
+        let state = app.state::<AppState>();
         // The user's own Lichess games come 3 times as fast with their
-        // login (NET-11); reading its token may ask to unlock the store.
+        // login (NET-11); reading its token may ask to unlock the store,
+        // and they come without it when it can't be read.
         let own = match req.site {
-            chess_net::Site::Lichess => crate::lichess::login_of(&app.state::<AppState>(), &name),
+            chess_net::Site::Lichess => crate::lichess::login_of(&state, &name).unwrap_or_else(|e| {
+                log::warn!("downloading {name}'s games without the Lichess login: {e}");
+                None
+            }),
             chess_net::Site::ChessCom => None,
         };
+        let token = own.as_ref().map(|login| login.token.clone());
         let client = match own {
             Some(login) => client().clone().with_lichess_login(&login.username, login.token),
             None => client().clone(),
         };
-        let s = chess_net::download_into(&client, &db, &req, ctx).map_err(|e| match e {
+        let s = chess_net::download_into(&client, &db, &req, ctx);
+        // Lichess turned the login down (the games came without it).
+        if let Some(token) = &token
+            && client.lichess_login_rejected()
+        {
+            crate::lichess::forget_rejected(&state, token);
+        }
+        let s = s.map_err(|e| match e {
             NetError::Cancelled => JobError::Cancelled,
             NetError::Db(e) => to_job_error(e),
             e => JobError::failed(e),
         })?;
-        let state = app.state::<AppState>();
         // How far it got (a cancel or a failure partway too), for the next
         // "new ones only".
         if let (Some(reached), Some(path)) = (s.covered, &path) {
