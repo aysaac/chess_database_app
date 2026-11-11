@@ -6,7 +6,8 @@ mod databases;
 mod export;
 pub(crate) mod games;
 mod imports;
-mod jobs;
+pub(crate) mod jobs;
+mod maintenance;
 mod search;
 
 use std::sync::Arc;
@@ -35,6 +36,11 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/databases/{db}/games", get(games::page))
         .route("/databases/{db}/games/{game}", get(games::game))
         .route("/databases/{db}/export.pgn", get(export::export))
+        .route("/databases/{db}/deleted", post(maintenance::mark_deleted))
+        .route("/databases/{db}/duplicates", post(maintenance::find))
+        .route("/databases/{db}/duplicates/{job}", get(maintenance::groups))
+        .route("/databases/{db}/duplicates/{job}/delete", post(maintenance::delete_found))
+        .route("/databases/{db}/compact", post(maintenance::compact))
         .route("/databases/{db}/tree", get(games::tree))
         .route("/databases/{db}/lines", get(games::lines))
         // The upload limits itself (`Config::max_upload`).
@@ -53,6 +59,15 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/admin/disk", get(admin::disk))
         .route("/admin/import-files", get(admin::import_files))
         .fallback(|| async { ApiError::not_found() })
+}
+
+/// A JSON request body, read once the caller's access was checked (an
+/// extractor would read it first); an empty body is `T`'s default.
+pub fn json_body<T: serde::de::DeserializeOwned + Default>(body: &[u8]) -> ApiResult<T> {
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(T::default());
+    }
+    serde_json::from_slice(body).map_err(|e| ApiError::bad_request(format!("Bad request body: {e}")))
 }
 
 /// 1 to 32 letters, digits, `.`, `_` or `-`, starting with a letter or digit.

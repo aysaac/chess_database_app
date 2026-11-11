@@ -247,6 +247,11 @@ desktop client can share the types later.
 | `GET /api/databases/{id}/lines?fen=` | read | The main line and lines (`reference_lines`): `{"kind":"ready","lines":…}`, or from 50,000 games `{"kind":"job","job":N,"games":…}`: ask again when the job is done |
 | `POST /api/databases/{id}/import?filename=` | write | The request body is a PGN file (at most `CHESS_SERVER_MAX_UPLOAD_MB`) → `202 {"job": N}` |
 | `POST /api/databases/{id}/import-file` | write, admin | `{path}`: a `.pgn` or `.cbh` under `import/` → `202 {"job": N}` |
+| `POST /api/databases/{id}/deleted` | write | `{games: [ids], deleted: true\|false, idEpoch?}`: marks games as deleted or restores them (DB-06), at most 100,000 at once → `{changed}` |
+| `POST /api/databases/{id}/duplicates` | read | `{fuzzy?}`: looks for duplicate games (DB-08) in a job; its `duplicates` report (for who started it and the owner) counts the groups and copies |
+| `GET /api/databases/{id}/duplicates/{job}` | read, the report's | `?offset=&limit=`: the groups found, `{keep, remove: [ids], exact}` each |
+| `POST /api/databases/{id}/duplicates/{job}/delete` | write, the report's | Marks the copies as deleted, after giving each kept game what it lacked of them (as the app's Find duplicates does) → `{marked, filled, left}`. Refused (409) once the database changed since the search |
+| `POST /api/databases/{id}/compact` | owner | Compacts the database in a job (DB-06): games marked as deleted go for good and **the games are renumbered**; then the position index is built again. Refused (409) while another write job runs on it |
 | `GET /api/search?db=A&db=B…` | read on each | SRCH-13: the games of several databases in one list, with the game list's criteria (`fen=` too), sort and paging; `all=true` instead of `db=` searches every database one may read (at most 64). Naming a database one may not read answers 404 for the whole search, as every route does for it. `{"kind":"ready", total, offset, databases: [{id, name, total}], rows: [{database, databaseName, row}]}`, or `{"kind":"job", job, database}` while a database's position index is far behind |
 | `GET /api/jobs/{n}` | read on its database | Its state and progress; its import `report` for who started it and the owner |
 | `POST /api/jobs/{n}/cancel` | who started it, or the owner | |
@@ -288,6 +293,25 @@ curl -H "Authorization: Bearer $TOKEN" --data-binary @twic1600.pgn \
 | `GET /api/admin/jobs`, `POST /api/admin/jobs/{n}/cancel` | |
 | `GET /api/admin/disk` | Free space, and what the databases, the store, uploads and the import folder take |
 | `GET /api/admin/import-files` | The `.pgn` and `.cbh` files in `import/` |
+
+## Keeping a database in order
+
+- **Deleting games** marks them as deleted (DB-06): they stay in the
+  database, restorable, until it's compacted. The game list, the export
+  and searches leave them out unless asked (`deleted=show`, or `only`).
+- **Duplicates** (DB-08) are found as in the app (`docs/stack.md`,
+  Duplicate games): exact copies, or fuzzy ones too. The groups found are
+  kept in memory with the job (a restart forgets them: find them again),
+  and deleting the copies is refused once the database changed since.
+- **Compaction changes game ids**, as in the app: games after a deleted
+  one move down. Each database has an `idEpoch` (in its info) that every
+  compaction bumps; requests that take game ids (`deleted`) can send the
+  epoch they read the ids at, and are refused (409, `staleIds`) after a
+  compaction. Nothing syncs with the server yet, so nothing else holds
+  ids; permanent game ids are a later feature. While a compaction runs,
+  the database answers `503 busy` with `Retry-After` (it holds the
+  database for the whole run); its search, sort and lines caches go with
+  the generation, and the position index is built again after it.
 
 ## Imports, jobs and quotas
 

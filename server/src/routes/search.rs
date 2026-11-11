@@ -87,8 +87,7 @@ pub async fn search(
                 "Search at most {MAX_DATABASES} databases at once: name them with db="
             )));
         }
-        let opens: Vec<Arc<OpenDb>> =
-            metas.iter().map(|m| state.pool.get(&m.id)).collect::<Result<_, _>>()?;
+        let opens: Vec<Arc<OpenDb>> = metas.iter().map(|m| state.open_db(&m.id)).collect::<ApiResult<_>>()?;
         // Each database's list on a thread of its own: the first page takes
         // about as long as the slowest database's.
         let lists: Vec<ApiResult<Listing>> = std::thread::scope(|scope| {

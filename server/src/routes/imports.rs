@@ -177,7 +177,7 @@ fn start(
     if limit_left == Some(0) {
         return Err(quota_exceeded());
     }
-    let open = state.pool.get(&meta.id)?;
+    let open = state.open_db(&meta.id)?;
     let size = dir_size(&state.pool.path(&meta.id));
     let mut writer = open.writer.lock().expect("writer lock");
     if writer_busy(&writer, &state.jobs.manager) {

@@ -3,12 +3,13 @@
 //! user who started it.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use chess_db::Duplicates;
 use chess_jobs::{JobContext, JobError, JobId, JobManager, JobStatus};
 
 use crate::store::{User, now};
-use crate::wire::ImportReportDto;
+use crate::wire::{DuplicatesReportDto, ImportReportDto};
 
 /// Finished jobs are forgotten once there are this many jobs.
 const KEEP_JOBS: usize = 1000;
@@ -22,12 +23,38 @@ pub struct JobMeta {
     pub started_at: i64,
 }
 
+/// What a search for duplicates (DB-08) found, kept for deleting the copies.
+#[derive(Debug, Clone)]
+pub struct DuplicatesFound {
+    pub db: String,
+    pub fuzzy: bool,
+    /// The database's id epoch the ids are of.
+    pub id_epoch: u64,
+    pub found: Arc<Duplicates>,
+}
+
+impl DuplicatesFound {
+    pub fn report(&self) -> DuplicatesReportDto {
+        let f = &self.found;
+        DuplicatesReportDto {
+            fuzzy: self.fuzzy,
+            groups: f.groups.len() as u32,
+            copies: f.removable() as u32,
+            exact_groups: f.groups.iter().filter(|g| g.exact).count() as u32,
+            games: f.games,
+            compared: f.compared,
+            id_epoch: self.id_epoch,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Jobs {
     pub manager: JobManager,
     meta: Mutex<HashMap<JobId, JobMeta>>,
     /// Kept apart from `meta`: a job can finish before `spawn` returns.
     reports: Mutex<HashMap<JobId, ImportReportDto>>,
+    duplicates: Mutex<HashMap<JobId, DuplicatesFound>>,
 }
 
 impl Jobs {
@@ -56,6 +83,15 @@ impl Jobs {
         let live: Vec<JobId> = self.manager.list().iter().map(|s| s.id).collect();
         self.meta.lock().expect("jobs lock").retain(|id, _| live.contains(id));
         self.reports.lock().expect("jobs lock").retain(|id, _| live.contains(id));
+        self.duplicates.lock().expect("jobs lock").retain(|id, _| live.contains(id));
+    }
+
+    pub fn set_duplicates(&self, id: JobId, found: DuplicatesFound) {
+        self.duplicates.lock().expect("jobs lock").insert(id, found);
+    }
+
+    pub fn duplicates(&self, id: JobId) -> Option<DuplicatesFound> {
+        self.duplicates.lock().expect("jobs lock").get(&id).cloned()
     }
 
     pub fn info(&self, id: JobId) -> Option<(JobStatus, JobMeta)> {

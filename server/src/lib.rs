@@ -73,6 +73,17 @@ impl AppState {
     pub fn setup_token(&self) -> Option<String> {
         self.setup_token.lock().expect("setup token lock").clone()
     }
+
+    /// Open database `id` (opened on first use) for a request that reads or
+    /// changes its games: "busy" (503) while it's being compacted, rather
+    /// than waiting minutes for it. Its access must be checked first.
+    pub fn open_db(&self, id: &str) -> ApiResult<Arc<pool::OpenDb>> {
+        let open = self.pool.get(id)?;
+        if open.is_compacting() {
+            return Err(ApiError::busy("The database is being compacted: try again in a moment"));
+        }
+        Ok(open)
+    }
 }
 
 /// Runs `f` on the blocking pool: the core crates and the metadata store

@@ -53,7 +53,7 @@ pub async fn page(
 ) -> ApiResult<Json<GamesAnswer>> {
     blocking(move || {
         let (meta, _) = require(&state.store, &auth.user, &id, Access::Read)?;
-        let open = state.pool.get(&id)?;
+        let open = state.open_db(&id)?;
         let ids = match listing_of(&state, &open, &meta, &auth.user, &q)? {
             Listing::Ready(ids) => ids,
             Listing::Job(job) => return Ok(Json(GamesAnswer::Job { job })),
@@ -75,7 +75,7 @@ pub async fn game(
     blocking(move || {
         require(&state.store, &auth.user, &id, Access::Read)?;
         let game: GameId = game.parse().map_err(|_| ApiError::not_found())?;
-        let open = state.pool.get(&id)?;
+        let open = state.open_db(&id)?;
         let (g, row) = {
             let db = open.lock();
             if game >= db.count() {
@@ -136,7 +136,7 @@ pub async fn tree(
     let pos = fen_position(&q)?;
     blocking(move || {
         let (meta, _) = require(&state.store, &auth.user, &id, Access::Read)?;
-        let open = state.pool.get(&id)?;
+        let open = state.open_db(&id)?;
         ensure_index(&state, &open, &meta, &auth.user);
         let overview = reference_overview(&open.db, &pos)?;
         let indexed = open.lock().positions().is_built();
@@ -158,7 +158,7 @@ pub async fn lines(
     let pos = fen_position(&q)?;
     blocking(move || {
         let (meta, _) = require(&state.store, &auth.user, &id, Access::Read)?;
-        let open = state.pool.get(&id)?;
+        let open = state.open_db(&id)?;
         ensure_index(&state, &open, &meta, &auth.user);
         let key = {
             let db = open.lock();

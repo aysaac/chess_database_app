@@ -197,6 +197,9 @@ pub struct DatabaseDto {
     pub size_bytes: u64,
     pub quota_bytes: Option<u64>,
     pub created_at: i64,
+    /// Bumped by each compaction, which renumbers the games: ids read at
+    /// another epoch mean other games.
+    pub id_epoch: u64,
     /// Only for one database's info (`GET /api/databases/{id}`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index: Option<IndexStatusDto>,
@@ -245,6 +248,93 @@ pub struct ShareDto {
 #[serde(rename_all = "camelCase")]
 pub struct SetShare {
     pub access: ShareAccess,
+}
+
+/// `POST /api/databases/{id}/deleted`: marks games as deleted, or restores
+/// them (DB-06).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MarkDeleted {
+    pub games: Vec<u32>,
+    pub deleted: bool,
+    /// The database's `idEpoch` the ids were read at: refused (409) if a
+    /// compaction renumbered the games since.
+    #[serde(default)]
+    pub id_epoch: Option<u64>,
+}
+
+/// How many games a change changed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedDto {
+    pub changed: u32,
+}
+
+/// `POST /api/databases/{id}/duplicates` (DB-08).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DuplicatesRequest {
+    /// Fuzzy copies too (same surnames, one main line the start of the
+    /// other…), not only exact ones.
+    #[serde(default)]
+    pub fuzzy: bool,
+}
+
+/// What a search for duplicates found (its job's `duplicates`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicatesReportDto {
+    pub fuzzy: bool,
+    /// Games that have copies.
+    pub groups: u32,
+    /// Copies to delete.
+    pub copies: u32,
+    /// Groups whose copies are all exact copies.
+    pub exact_groups: u32,
+    /// Games looked at (those not marked as deleted), and those compared
+    /// move by move.
+    pub games: u32,
+    pub compared: u32,
+    /// The database's `idEpoch` the ids are of.
+    pub id_epoch: u64,
+}
+
+/// Copies of one game: the one to keep and the others.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateGroupDto {
+    pub keep: u32,
+    pub remove: Vec<u32>,
+    pub exact: bool,
+}
+
+/// `GET /api/databases/{id}/duplicates/{job}`: a page of the groups.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateGroupsDto {
+    pub total: u32,
+    pub offset: u32,
+    pub groups: Vec<DuplicateGroupDto>,
+}
+
+/// `?offset=&limit=` for pages that aren't game lists.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PageQuery {
+    pub offset: u32,
+    pub limit: Option<u32>,
+}
+
+/// What deleting the copies did.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedCopiesDto {
+    /// Copies marked as deleted.
+    pub marked: u32,
+    /// Kept games that took a field they lacked from a copy.
+    pub filled: u32,
+    /// Groups left alone (their kept game was deleted meanwhile).
+    pub left: u32,
 }
 
 /// `?confirm=` for deleting a database: its name, as typed by the user.
@@ -1022,6 +1112,10 @@ pub struct JobInfoDto {
     /// An import's summary, once it's done; for whoever started it and the
     /// database's owner.
     pub report: Option<ImportReportDto>,
+    /// A search for duplicates' summary (DB-08), for the same users; its
+    /// groups are `GET /api/databases/{id}/duplicates/{job}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicates: Option<DuplicatesReportDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

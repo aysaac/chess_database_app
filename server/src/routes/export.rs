@@ -82,7 +82,7 @@ pub async fn export(
     let st = state.clone();
     let (meta, open, ids) = blocking(move || {
         let (meta, _) = require(&st.store, &auth.user, &id, Access::Read)?;
-        let open = st.pool.get(&id)?;
+        let open = st.open_db(&id)?;
         let listing = listing_of(&st, &open, &meta, &auth.user, &q)?;
         log::info!("{} exports database {}", auth.user.username, meta.id);
         Ok((meta, open, listing))

@@ -18,7 +18,7 @@ use crate::{AppState, blocking};
 
 /// What `user` may do with a job: `None` (it's "not found"), read it, or
 /// also see its report and cancel it.
-fn rights(state: &AppState, user: &User, meta: &JobMeta) -> ApiResult<Option<bool>> {
+pub(crate) fn rights(state: &AppState, user: &User, meta: &JobMeta) -> ApiResult<Option<bool>> {
     let access = match require(&state.store, user, &meta.db, Access::Read) {
         Ok((_, a)) => a,
         Err(e) if e.status == StatusCode::NOT_FOUND => return Ok(None),
@@ -40,6 +40,7 @@ pub async fn job(
             job: JobDto::from(&status),
             database: meta.db,
             report: if full { state.jobs.report(id) } else { None },
+            duplicates: if full { state.jobs.duplicates(id).map(|d| d.report()) } else { None },
         }))
     })
     .await
