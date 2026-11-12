@@ -1,4 +1,8 @@
 // Typed wrappers around the Tauri commands in app/src-tauri/src/commands.
+import type { DbSyncDto } from "./bindings/DbSyncDto";
+import type { ServerAccountDto } from "./bindings/ServerAccountDto";
+import type { ServerDbDto } from "./bindings/ServerDbDto";
+import type { SyncSourceDto } from "./bindings/SyncSourceDto";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AnalysisDto } from "./bindings/AnalysisDto";
@@ -272,6 +276,24 @@ export const api = {
   ) => invoke<number>("send_to_study", { handle, selection, sort, target }),
   /** What the last export to studies did. */
   studyExportReport: () => invoke<StudyExportReportDto | null>("study_export_report"),
+
+  // Databases kept up to date, and the sign-in to the self-hosted server (NET-01, IO-10, NET-03).
+  /** Who is signed in to the server, or the address to offer (doesn't read the credential store). */
+  serverAccount: () => invoke<ServerAccountDto>("server_account"),
+  /** Signs in with a username and password, used once: the app keeps the token the server makes. */
+  serverSignIn: (url: string, username: string, password: string) =>
+    invoke<ServerAccountDto>("server_sign_in", { url, username, password }),
+  /** Forgets the token and has the server revoke it. */
+  serverSignOut: () => invoke<ServerAccountDto>("server_sign_out"),
+  /** The databases the account may read on the server. */
+  serverDatabases: () => invoke<ServerDbDto[]>("server_databases"),
+  /** Where the database gets its games and whether it updates on its own; null if it doesn't. */
+  dbSync: (handle: number) => invoke<DbSyncDto | null>("db_sync", { handle }),
+  /** Sets the sources (none: no longer kept up to date); sources it had keep how far they got. */
+  setDbSync: (handle: number, sources: SyncSourceDto[], auto: boolean) =>
+    invoke<DbSyncDto | null>("set_db_sync", { handle, sources, auto }),
+  /** Updates the database from its sources as a job; the job's message says what came. */
+  syncDatabase: (handle: number) => invoke<number>("sync_database", { handle }),
 };
 
 export function onAnalysis(cb: (update: AnalysisDto) => void): Promise<UnlistenFn> {

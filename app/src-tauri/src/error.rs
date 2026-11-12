@@ -112,6 +112,15 @@ impl From<chess_net::NetError> for AppError {
             | NetError::BadStudyName
             | NetError::TooManyStudies { .. }
             | NetError::StudyFull { .. } => ErrorCode::InvalidInput,
+            // NET-03: the self-hosted server.
+            NetError::NotAServerAddress(_) | NetError::NotAChessServer(_) | NetError::ServerCompacted => {
+                ErrorCode::InvalidInput
+            }
+            NetError::ServerUnreachable { .. }
+            | NetError::ServerError { .. }
+            | NetError::ServerBadData { .. } => ErrorCode::Network,
+            NetError::ServerLoginRefused(_) | NetError::ServerSignInRejected => ErrorCode::Login,
+            NetError::NoSuchServerDb => ErrorCode::NotFound,
         };
         AppError::new(code, e.to_string())
     }

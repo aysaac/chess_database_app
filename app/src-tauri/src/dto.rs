@@ -3,6 +3,8 @@
 
 /// Lichess: the login, studies in and out (NET-11, IO-10, NET-12).
 pub mod lichess;
+/// Databases kept up to date, and the server sign-in (NET-01, IO-10, NET-03).
+pub mod sync;
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -1596,7 +1598,7 @@ impl DownloadRequestDto {
     /// The request for chess-net; `new_from` is where "new ones only"
     /// starts, if an earlier download of the same games got anywhere.
     pub fn to_request(&self, new_from: Option<i64>) -> Result<chess_net::Request, AppError> {
-        use chess_net::{Period, Speed};
+        use chess_net::Period;
         let period = match self.period {
             PeriodDto::All => Period::All,
             PeriodDto::NewOnly => new_from.map_or(Period::All, Period::Since),
@@ -1607,21 +1609,26 @@ impl DownloadRequestDto {
         Ok(chess_net::Request {
             site: self.site.into(),
             username: self.username.clone(),
-            speeds: self
-                .speeds
-                .iter()
-                .map(|s| match s {
-                    SpeedDto::Bullet => Speed::Bullet,
-                    SpeedDto::Blitz => Speed::Blitz,
-                    SpeedDto::Rapid => Speed::Rapid,
-                    SpeedDto::Classical => Speed::Classical,
-                    SpeedDto::Correspondence => Speed::Correspondence,
-                })
-                .collect(),
+            speeds: speeds_of(&self.speeds),
             rated_only: self.rated_only,
             period,
         })
     }
+}
+
+/// Time controls as the downloader names them.
+pub fn speeds_of(speeds: &[SpeedDto]) -> Vec<chess_net::Speed> {
+    use chess_net::Speed;
+    speeds
+        .iter()
+        .map(|s| match s {
+            SpeedDto::Bullet => Speed::Bullet,
+            SpeedDto::Blitz => Speed::Blitz,
+            SpeedDto::Rapid => Speed::Rapid,
+            SpeedDto::Classical => Speed::Classical,
+            SpeedDto::Correspondence => Speed::Correspondence,
+        })
+        .collect()
 }
 
 /// A player on an online server.

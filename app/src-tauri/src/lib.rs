@@ -7,6 +7,7 @@ mod dto;
 mod engines;
 mod error;
 mod lichess;
+mod server_login;
 mod settings;
 mod state;
 mod view;
@@ -234,6 +235,14 @@ pub fn run() {
             commands::lichess::import_study,
             commands::lichess::send_to_study,
             commands::lichess::study_export_report,
+            // Databases kept up to date, and the server sign-in (NET-01, IO-10, NET-03).
+            commands::sync::server_account,
+            commands::sync::server_sign_in,
+            commands::sync::server_sign_out,
+            commands::sync::server_databases,
+            commands::sync::db_sync,
+            commands::sync::set_db_sync,
+            commands::sync::sync_database,
             dev_log,
         ])
         .run(tauri::generate_context!())

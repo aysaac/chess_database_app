@@ -38,7 +38,7 @@ pub const CLIENT_ID: &str = "dev.chessdb.desktop";
 const SERVICE: &str = "dev.chessdb.desktop";
 const ACCOUNT: &str = "lichess";
 
-/// Where the token is kept.
+/// Where the token is kept (the server sign-in's too).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kept {
     /// The OS's credential store: still logged in after a restart.
@@ -165,18 +165,25 @@ impl From<Unreadable> for AppError {
 
 /// The OS's credential store, if it has one the app can use.
 fn open_entry() -> Option<Entry> {
+    store_entry(ACCOUNT)
+}
+
+/// The app's entry `account` in the OS's credential store, if it has one
+/// the app can use (never in a test run): the Lichess login's, or the
+/// server sign-in's (`server_login.rs`).
+pub(crate) fn store_entry(account: &str) -> Option<Entry> {
     if std::env::var_os("CHESSDB_CONFIG_DIR").is_some() {
-        log::info!("a test run: a Lichess login lasts this session");
+        log::info!("a test run: the {account} login lasts this session");
         return None;
     }
     let store = match platform_store() {
         Ok(store) => store,
         Err(e) => {
-            log::info!("no credential store ({e}): a Lichess login lasts this session");
+            log::info!("no credential store ({e}): the {account} login lasts this session");
             return None;
         }
     };
-    store.build(SERVICE, ACCOUNT, None).inspect_err(|e| log::warn!("credential store: {e}")).ok()
+    store.build(SERVICE, account, None).inspect_err(|e| log::warn!("credential store: {e}")).ok()
 }
 
 #[cfg(target_os = "linux")]

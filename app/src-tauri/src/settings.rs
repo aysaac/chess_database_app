@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::dto::sync::{DbSyncDto, SyncSourceDto};
 use crate::dto::{HeaderQueryDto, NameKindDto, OnlineSiteDto, SortSpecDto, SpeedDto};
 
 const FILE: &str = "settings.json";
@@ -170,6 +171,31 @@ pub struct EngineConfig {
     pub options: Vec<(String, String)>,
 }
 
+/// A database kept up to date (NET-01, IO-10, NET-03): where its games come
+/// from and how its last update went. Kept apart from the database views,
+/// which go when unused: a database stays up to date however long it isn't
+/// opened, until it's turned off or the database is gone.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SyncedDb {
+    /// The database folder (canonical, as `AppState` keeps it).
+    pub path: PathBuf,
+    pub sync: DbSyncDto,
+}
+
+/// Who is signed in to the self-hosted server (NET-03), while the token is
+/// in the OS's credential store; the token itself is never here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerUser {
+    /// As `chess_net::server::server_url` writes it.
+    pub url: String,
+    /// As the server writes it.
+    pub username: String,
+    /// The token's id there, to revoke it when signing out.
+    pub token_id: i64,
+}
+
 /// The Lichess user logged in (NET-11).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -200,6 +226,12 @@ pub struct Settings {
     /// Who is logged in to Lichess (NET-11), while the token is in the OS's
     /// credential store; the token itself is never here.
     pub lichess: Option<LichessUser>,
+    /// Databases kept up to date from online sources (NET-01, IO-10,
+    /// NET-03), by folder.
+    pub synced_databases: Vec<SyncedDb>,
+    /// Who is signed in to the self-hosted server (NET-03), while its token
+    /// is in the OS's credential store.
+    pub server: Option<ServerUser>,
     /// Counts the changes to `ui` since start-up (not saved). Every window
     /// keeps its own copy of the preferences (DB-07), and two changes to the
     /// same one can reach a window in either order, so each carries the
@@ -249,6 +281,14 @@ impl Settings {
             }
         }
         self.database_views = views;
+        let mut synced: Vec<SyncedDb> = Vec::with_capacity(self.synced_databases.len());
+        for mut d in self.synced_databases.drain(..) {
+            d.path = dunce::simplified(&d.path).to_path_buf();
+            if !synced.iter().any(|seen| seen.path == d.path) {
+                synced.push(d);
+            }
+        }
+        self.synced_databases = synced;
         self
     }
 
@@ -316,6 +356,56 @@ impl Settings {
         self.recent_databases.retain(|p| p != path);
         self.recent_databases.insert(0, path.to_path_buf());
         self.recent_databases.truncate(MAX_RECENT);
+    }
+
+    /// How the database at `path` keeps up to date, if it does.
+    pub fn synced(&self, path: &Path) -> Option<&DbSyncDto> {
+        self.synced_databases.iter().find(|d| d.path == path).map(|d| &d.sync)
+    }
+
+    /// The same to change: made if needed. A database left with no source is
+    /// dropped by [`set_sources`](Settings::set_sources).
+    pub fn synced_mut(&mut self, path: &Path) -> &mut DbSyncDto {
+        let i = match self.synced_databases.iter().position(|d| d.path == path) {
+            Some(i) => i,
+            None => {
+                self.synced_databases.push(SyncedDb { path: path.to_path_buf(), ..SyncedDb::default() });
+                self.synced_databases.len() - 1
+            }
+        };
+        &mut self.synced_databases[i].sync
+    }
+
+    /// Sets where the database at `path` gets its games, and whether it
+    /// updates on its own. A source it had already keeps how far its
+    /// updates got; a new one starts afresh. No sources: it's no longer
+    /// kept up to date.
+    pub fn set_sources(&mut self, path: &Path, sources: Vec<SyncSourceDto>, auto: bool) {
+        if sources.is_empty() {
+            self.synced_databases.retain(|d| d.path != path);
+            return;
+        }
+        let sync = self.synced_mut(path);
+        let mut kept: Vec<SyncSourceDto> = Vec::with_capacity(sources.len());
+        for new in sources {
+            if kept.iter().any(|k| k.same(&new)) {
+                continue;
+            }
+            let old = sync.sources.iter().find(|old| old.same(&new)).cloned();
+            kept.push(old.unwrap_or_else(|| new.fresh()));
+        }
+        sync.sources = kept;
+        sync.auto = auto;
+    }
+
+    /// Notes how far an update of `source` got in the database at `path`,
+    /// if it's still one of its sources (it may have been removed meanwhile).
+    pub fn note_source(&mut self, path: &Path, source: &SyncSourceDto) {
+        if let Some(d) = self.synced_databases.iter_mut().find(|d| d.path == path)
+            && let Some(s) = d.sync.sources.iter_mut().find(|s| s.same(source))
+        {
+            *s = source.clone();
+        }
     }
 
     /// The saved list view of the database at `path`, if there is one.
@@ -585,5 +675,37 @@ mod tests {
         let json = serde_json::to_string(&view).unwrap();
         assert_eq!(serde_json::from_str::<DbView>(&json).unwrap(), view);
         assert_eq!(serde_json::from_str::<DbView>("{}").unwrap().downloads, [], "views saved before");
+    }
+
+    #[test]
+    fn sources_keep_how_far_they_got() {
+        let path = Path::new("/a.chessdb");
+        let player = |reached| SyncSourceDto::Player {
+            site: OnlineSiteDto::Lichess,
+            username: "DrNykterstein".into(),
+            speeds: vec![SpeedDto::Blitz, SpeedDto::Bullet],
+            rated_only: false,
+            reached,
+        };
+        let mut s = Settings::default();
+        s.set_sources(path, vec![player(Some(5))], true);
+        assert_eq!(s.synced(path).unwrap().sources, [player(None)], "a new source starts afresh");
+        s.note_source(path, &player(Some(9)));
+        // The same games again (another case, speeds in another order): kept, as it was.
+        let mut again = player(None);
+        if let SyncSourceDto::Player { username, speeds, .. } = &mut again {
+            *username = "drnykterstein".into();
+            speeds.reverse();
+        }
+        s.set_sources(path, vec![again, player(None)], false);
+        let sync = s.synced(path).unwrap();
+        assert_eq!((sync.sources.len(), sync.auto), (1, false));
+        assert_eq!(sync.sources[0], player(Some(9)));
+        s.set_sources(path, vec![], false);
+        assert!(s.synced(path).is_none());
+        // A source a newer version wrote is left out when read.
+        let json = r#"{"syncedDatabases":[{"path":"/b","sync":{"sources":[{"kind":"fromTheFuture"}],"auto":true}}]}"#;
+        let read: Settings = serde_json::from_str(json).unwrap();
+        assert!(read.synced(Path::new("/b")).unwrap().sources.is_empty());
     }
 }
