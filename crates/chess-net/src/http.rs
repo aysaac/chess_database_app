@@ -22,7 +22,7 @@ const USER_AGENT: &str = concat!("chess-database-app/", env!("CARGO_PKG_VERSION"
 /// them). Cheap to clone.
 #[derive(Clone)]
 pub struct Client {
-    agent: Agent,
+    pub(crate) agent: Agent,
     pub(crate) lichess: String,
     pub(crate) chess_com: String,
     /// How long to wait after a 429, per site: Lichess asks for a full
