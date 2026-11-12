@@ -11,12 +11,15 @@
 //!
 //! Lichess studies too: logging in (NET-11, [`oauth`]), a study's chapters
 //! into a database and games out to studies (IO-10, NET-12, [`study`]).
+//! And the self-hosted server (NET-03, [`server`]): signing in, its
+//! databases, and a local copy of one kept up to date.
 
 mod chesscom;
 mod http;
 pub mod keys;
 mod lichess;
 pub mod oauth;
+pub mod server;
 pub mod study;
 pub mod time;
 pub mod twic;
@@ -151,6 +154,40 @@ pub enum NetError {
     StudyFull { name: String, room: usize },
     #[error("Lichess refused the games: {0}")]
     Refused(String),
+    /// NET-03: the self-hosted server.
+    #[error(
+        "\"{0}\" isn't a server's address. Type one like chess.example.com, or http://192.168.1.20:8080 for one without HTTPS"
+    )]
+    NotAServerAddress(String),
+    #[error("{0} doesn't answer like a chess database server (chess-server). Check the address")]
+    NotAChessServer(String),
+    #[error(
+        "couldn't reach the server at {server} ({reason}). Check the address and the connection, and that the server is running"
+    )]
+    ServerUnreachable { server: String, reason: String },
+    #[error("the server at {server} answered with an error (HTTP {code}){}", detail(.message))]
+    ServerError { server: String, code: u16, message: String },
+    #[error("the server at {server} sent an answer that can't be read ({reason})")]
+    ServerBadData { server: String, reason: String },
+    #[error("the server refused the sign-in: {0}")]
+    ServerLoginRefused(String),
+    #[error(
+        "the server no longer takes this computer's sign-in (it was revoked, or the account was disabled). Sign in again"
+    )]
+    ServerSignInRejected,
+    #[error(
+        "the server has no such database for this account: it was deleted, or isn't shared with you any more"
+    )]
+    NoSuchServerDb,
+    #[error(
+        "the database was compacted on the server since it was copied, which numbers its games again, so the new ones can't be told apart. Make a new copy of it (New database, From my server)"
+    )]
+    ServerCompacted,
+}
+
+/// A server's message after its error, if it sent one.
+fn detail(message: &str) -> String {
+    if message.is_empty() { String::new() } else { format!(": {message}") }
 }
 
 /// What [`download_into`] did.

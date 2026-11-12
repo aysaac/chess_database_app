@@ -262,6 +262,52 @@ fn exports_stream_the_listed_games_as_pgn() {
 }
 
 #[test]
+fn exports_a_range_of_game_numbers_for_a_copy() {
+    let s = TestServer::start();
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let fixtures = ["crosstable.pgn", "reference.pgn"];
+    let db = alice.create_db("Copied", "private");
+    for f in fixtures {
+        alice.import_fixture(&db, f);
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let local = local_db(tmp.path(), &fixtures);
+    let pgn_of = |ids: &[u32]| -> String {
+        let db = local.lock().unwrap();
+        ids.iter().map(|&id| write_game(&db.read_game(id).unwrap())).collect()
+    };
+    let count = local.lock().unwrap().count();
+    assert!(count > 6);
+    let export = |query: &str| alice.get(&format!("/api/databases/{db}/export.pgn?{query}"));
+    // A part, and where it got to.
+    let r = export("idFrom=2&idTo=5").ok();
+    assert_eq!(r.body, pgn_of(&[2, 3, 4]));
+    assert_eq!((r.header("x-next-id"), r.header("x-id-epoch")), (Some("5"), Some("0")));
+    // The rest: up to the games there were.
+    let r = export(&format!("idFrom=5&idTo={}&idEpoch=0", count + 100)).ok();
+    assert_eq!(r.body, pgn_of(&(5..count).collect::<Vec<_>>()));
+    assert_eq!(r.header("x-next-id"), Some(count.to_string().as_str()));
+    let r = export(&format!("idFrom={count}")).ok();
+    assert_eq!((r.body.as_str(), r.header("x-next-id")), ("", Some(count.to_string().as_str())));
+    // Deleted games stay out, and the range still covers them.
+    let open = s.state.pool.get(&db).unwrap();
+    open.lock().set_deleted_many(&[0, 1], true).unwrap();
+    drop(open);
+    let r = export("idFrom=0&idTo=3").ok();
+    assert_eq!((r.body.as_str(), r.header("x-next-id")), (pgn_of(&[2]).as_str(), Some("3")));
+    // Header criteria apply within the range.
+    assert_eq!(export("idFrom=0&idTo=5&white=nobody").ok().body, "");
+    // Another numbering, or another order, is refused.
+    let r = export("idFrom=0&idEpoch=7");
+    assert_eq!((r.status, r.code().as_str()), (409, "staleIds"));
+    assert_eq!(export("idFrom=0&sort=white").status, 400);
+    // An export without a range says its numbering only.
+    let r = export("").ok();
+    assert_eq!((r.header("x-id-epoch"), r.header("x-next-id")), (Some("0"), None));
+}
+
+#[test]
 fn searching_several_databases_merges_their_lists() {
     let s = TestServer::start();
     let admin = s.admin();

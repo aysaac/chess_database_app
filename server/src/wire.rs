@@ -745,6 +745,22 @@ pub struct GamesQuery {
     pub deleted: DeletedFilter,
 }
 
+/// The games of `export.pgn` by number (NET-03): a copy of the database
+/// on another computer asks for the games added since it last did
+/// (`idFrom`), a part at a time (`idTo`), numbered as it knows them
+/// (`idEpoch`). Only in id order, the export's own when no `sort` is given.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ExportRange {
+    /// Only the games numbered from this one on…
+    pub id_from: Option<u32>,
+    /// …and before this one.
+    pub id_to: Option<u32>,
+    /// Refused (409 `staleIds`) unless the database's `idEpoch` is this:
+    /// a compaction since numbered the games again.
+    pub id_epoch: Option<u64>,
+}
+
 /// Which games marked as deleted a list shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

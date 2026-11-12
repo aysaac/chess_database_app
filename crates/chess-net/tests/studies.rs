@@ -18,7 +18,7 @@ use chess_db::{Database, NoProgress, Progress};
 use chess_net::oauth::{self, Token};
 use chess_net::study::{
     ExportTarget, StudyRef, Visibility, download_study_into, export_to_studies, fetch_study,
-    fetch_study_outline, parse_study_link, split_games, studies_of,
+    fetch_study_outline, parse_study_link, refresh_study_into, split_games, studies_of,
 };
 use chess_net::{Client, NetError, Period, Request, Site, download_into};
 use standin::Lichess;
@@ -122,6 +122,36 @@ fn a_study_looked_up_is_asked_again_with_if_modified_since() {
     let s = download_study_into(&client, &db, &link, None, Some(&looked), &NoProgress).unwrap();
     assert!(!s.unchanged);
     assert_eq!((s.import.imported, s.already), (0, 4));
+}
+
+#[test]
+fn a_study_a_database_keeps_up_with_is_downloaded_only_when_it_changed() {
+    let server = Lichess::start(0);
+    public_study(&server);
+    let client = client(&server);
+    let link = study("FxStudy1");
+    let (_dir, db) = new_db();
+    let first = refresh_study_into(&client, &db, &link, None, None, &NoProgress).unwrap();
+    assert_eq!(first.import.as_ref().map(|i| i.import.imported), Some(4));
+    let modified = first.last_modified.clone().expect("Last-Modified");
+    // Unchanged: a 304, nothing imported, the same mark kept.
+    let again = refresh_study_into(&client, &db, &link, None, Some(&modified), &NoProgress).unwrap();
+    assert!(again.import.is_none());
+    assert_eq!(again.last_modified.as_deref(), Some(modified.as_str()));
+    assert_eq!(games(&db).len(), 4);
+    // Changed: downloaded, and only the chapter it lacks goes in.
+    let added = "[Event \"Fixture study: New\"]\n[White \"Gamma\"]\n[Black \"Delta\"]\n[Result \"*\"]\n\
+                 [StudyName \"Fixture study\"]\n[ChapterURL \"https://lichess.org/study/FxStudy1/NewChap1\"]\n\n1. c4 *";
+    {
+        let mut st = server.state.lock().unwrap();
+        st.studies[0].chapters.push(("NewChap1".into(), added.into()));
+        st.studies[0].version += 1;
+    }
+    let changed = refresh_study_into(&client, &db, &link, None, Some(&modified), &NoProgress).unwrap();
+    let import = changed.import.expect("downloaded");
+    assert_eq!((import.import.imported, import.already), (1, 4));
+    assert_ne!(changed.last_modified, Some(modified));
+    assert_eq!(games(&db).len(), 5);
 }
 
 /// The dialog's look-up takes the light export (names and main lines), not

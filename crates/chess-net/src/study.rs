@@ -484,6 +484,42 @@ pub fn download_study_into(
     Ok(summary)
 }
 
+/// What [`refresh_study_into`] did.
+#[derive(Debug)]
+pub struct StudyRefresh {
+    /// `None` when the study hadn't changed since (a 304): nothing came.
+    pub import: Option<StudyImport>,
+    /// The study's `Last-Modified` to ask with next time: `None` after an
+    /// import that didn't take every chapter (cancelled), so the next
+    /// refresh downloads it again.
+    pub last_modified: Option<String>,
+}
+
+/// Brings a study's new chapters into a database kept up to date with it
+/// (its sources: NET-01, IO-10): Lichess is asked whether the study changed
+/// since `since`, the `Last-Modified` of the last refresh, and only then is
+/// it downloaded and the chapters the database lacks imported. A Cancel
+/// takes effect at once.
+pub fn refresh_study_into(
+    client: &Client,
+    db: &Mutex<Database>,
+    link: &StudyRef,
+    token: Option<&Token>,
+    since: Option<&str>,
+    progress: &dyn Progress,
+) -> Result<StudyRefresh, NetError> {
+    // A chapter's export is new every time: no point asking.
+    let since = since.filter(|_| link.chapter.is_none()).map(str::to_owned);
+    let (c, l, t, asked) = (client.clone(), link.clone(), token.cloned(), since.clone());
+    let fetched = cancellable(progress, move |stop| fetch_study(&c, &l, t.as_ref(), asked.as_deref(), stop))?;
+    let Some(study) = fetched else {
+        return Ok(StudyRefresh { import: None, last_modified: since });
+    };
+    let import = import_study(db, &study, progress)?;
+    let last_modified = if import.cancelled { None } else { study.last_modified.clone() };
+    Ok(StudyRefresh { import: Some(import), last_modified })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -41,7 +41,7 @@ const MAX_GAMES: usize = 100_000;
 /// Duplicate groups per page at most.
 const MAX_GROUPS: u32 = 1000;
 
-fn stale_ids() -> ApiError {
+pub(crate) fn stale_ids() -> ApiError {
     ApiError::new(
         StatusCode::CONFLICT,
         "staleIds",
