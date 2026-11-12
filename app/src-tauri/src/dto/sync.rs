@@ -156,6 +156,24 @@ impl SyncSourceDto {
         }
     }
 
+    /// The same source, as written now, with how far `old` (the same one)
+    /// got.
+    pub fn keeping_progress_of(mut self, old: &SyncSourceDto) -> SyncSourceDto {
+        match (&mut self, old) {
+            (SyncSourceDto::Player { reached, .. }, SyncSourceDto::Player { reached: r, .. }) => {
+                *reached = *r
+            }
+            (SyncSourceDto::Study { last_modified, .. }, SyncSourceDto::Study { last_modified: l, .. }) => {
+                last_modified.clone_from(l)
+            }
+            (SyncSourceDto::Server { next, epoch, .. }, SyncSourceDto::Server { next: n, epoch: e, .. }) => {
+                (*next, *epoch) = (*n, *e)
+            }
+            _ => {}
+        }
+        self
+    }
+
     /// The source as a new one: nothing noted yet.
     pub fn fresh(mut self) -> SyncSourceDto {
         match &mut self {
@@ -194,8 +212,8 @@ pub struct DbSyncDto {
     /// Updated when the app starts and when the database is opened.
     pub auto: bool,
     /// The most games the database holds, over all its sources (live ones:
-    /// those marked as deleted don't count); none: no limit. Only for
-    /// players' games.
+    /// those marked as deleted don't count, and games added by hand do);
+    /// none: no limit. Only for databases of players' games.
     pub limit: Option<u32>,
     pub limit_policy: LimitPolicyDto,
     /// When its last update ended (ms since the epoch); `None`: never.

@@ -235,7 +235,12 @@ fn update_player(
     }
     let s = s?;
     let mut next = source.clone();
-    if let (SyncSourceDto::Player { reached, .. }, Some(covered)) = (&mut next, s.covered) {
+    // Oldest first, what came is a run from where it started; newest first
+    // it's the newest games alone, so a download that broke off keeps its
+    // mark where it was (the next one asks again, and the games it has
+    // are skipped).
+    let whole = !latest_first || (s.stopped.is_none() && !s.cancelled);
+    if let (SyncSourceDto::Player { reached, .. }, Some(covered), true) = (&mut next, s.covered, whole) {
         *reached = Some(reached.map_or(covered, |r| r.max(covered)));
     }
     state.update_settings(|st| st.note_source(path, &next));
@@ -332,8 +337,8 @@ fn run_update(
     ctx: &JobContext,
 ) -> Result<Vec<Outcome>, JobError> {
     let mut out = Vec::new();
-    // The limit counts the live games of every source together, and is for
-    // players' games.
+    // The limit counts every live game the database has (whatever brought
+    // it), and is for databases with players' games.
     let limit = sync.limit.filter(|_| sync.sources.iter().any(|s| matches!(s, SyncSourceDto::Player { .. })));
     for source in &sync.sources {
         ctx.check_cancelled()?;

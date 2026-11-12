@@ -13,8 +13,8 @@ export type DbSyncDto = { sources: Array<SyncSourceDto>,
 auto: boolean, 
 /**
  * The most games the database holds, over all its sources (live ones:
- * those marked as deleted don't count); none: no limit. Only for
- * players' games.
+ * those marked as deleted don't count, and games added by hand do);
+ * none: no limit. Only for databases of players' games.
  */
 limit: number | null, limitPolicy: LimitPolicyDto, 
 /**

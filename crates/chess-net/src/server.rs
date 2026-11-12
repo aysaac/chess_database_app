@@ -124,7 +124,14 @@ fn failure(url: &str, mut resp: Response<Body>) -> NetError {
     let code = resp.status().as_u16();
     let detail = error_of(&mut resp);
     match (code, detail) {
-        (401, _) => NetError::ServerSignInRejected,
+        // Only the server's own answer is its turning the token down: a
+        // proxy's 401, or one after a redirect that dropped the token, isn't.
+        (401, Some(_)) => NetError::ServerSignInRejected,
+        (401, None) => NetError::ServerError {
+            server: url.to_owned(),
+            code,
+            message: "it asked for a login, but isn't the chess server's own answer (a proxy, or an address that redirects?)".to_owned(),
+        },
         (409, Some(d)) if d.code == "staleIds" => NetError::ServerCompacted,
         (_, Some(d)) => NetError::ServerError { server: url.to_owned(), code, message: d.message },
         (_, None) => NetError::ServerError { server: url.to_owned(), code, message: String::new() },
@@ -322,7 +329,10 @@ impl Progress for PartProgress<'_> {
         self.inner.report(self.before + share, self.total);
     }
     fn is_cancelled(&self) -> bool {
-        // A part goes in whole: a Cancel takes effect between parts.
+        // A part goes in whole: a Cancel takes effect between parts. (A
+        // crash or a full disk partway through one is the exception: the
+        // server's games have no keys to skip repeats by, so the next
+        // update brings that part again.)
         false
     }
 }

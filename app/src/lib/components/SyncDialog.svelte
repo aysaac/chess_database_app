@@ -506,7 +506,7 @@
         <input type="checkbox" bind:checked={limitOn} />
         Hold at most
         <input class="num" bind:value={limitText} disabled={!limitOn} inputmode="numeric" aria-label="Most games" />
-        games, over all the accounts together
+        games in this database, over all the accounts together
       </label>
       {#if limitOn}
         <label class="check">
