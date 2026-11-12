@@ -1615,6 +1615,7 @@ impl DownloadRequestDto {
             until: None,
             color: None,
             max_games: None,
+            latest_first: false,
         })
     }
 }

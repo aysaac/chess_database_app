@@ -82,6 +82,8 @@
   let color = $state<ColorDto | "">("");
   let fromDay = $state("");
   let toDay = $state("");
+  let latestOn = $state(false);
+  let latestText = $state("100");
   // A limit on the games, over all the sources
   let limitOn = $state(false);
   let limitText = $state("1000");
@@ -203,6 +205,11 @@
         error = dateProblem;
         return;
       }
+      const latestN = Number(latestText.trim());
+      if (latestOn && !(Number.isInteger(latestN) && latestN >= 1)) {
+        error = "The latest games is a whole number of games, 1 or more.";
+        return;
+      }
       source = {
         kind: "player",
         site,
@@ -212,6 +219,7 @@
         color: color || null,
         since: fromDay.trim() ? localMidnight(fromDay.trim()) : null,
         until: toDay.trim() ? endOfDay(toDay.trim()) : null,
+        latest: latestOn ? latestN : null,
         reached: null,
       };
     } else if (kind === "study") {
@@ -407,6 +415,14 @@
         </label>
         <label class="field">
           To day <input bind:value={toDay} placeholder="YYYY-MM-DD" inputmode="numeric" />
+        </label>
+      </div>
+      <div class="row">
+        <label class="check">
+          <input type="checkbox" bind:checked={latestOn} />
+          Only the latest
+          <input class="num" bind:value={latestText} disabled={!latestOn} inputmode="numeric" aria-label="Latest games" />
+          games
         </label>
       </div>
     {:else if kind === "study"}

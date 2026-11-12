@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         until: None,
         color: None,
         max_games: None,
+        latest_first: false,
     };
     let t = Instant::now();
     let s = download_into(&Client::new(), &db, &request, &Print { last: Cell::new(u64::MAX) })?;

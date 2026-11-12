@@ -149,6 +149,7 @@ fn request(site: Site, period: Period) -> Request {
         until: None,
         color: None,
         max_games: None,
+        latest_first: false,
     }
 }
 
@@ -276,6 +277,31 @@ fn a_color_a_last_day_and_a_limit_narrow_the_games() {
     let sent = server.requests().into_iter().filter(|r| r.starts_with("/api/games/")).collect::<Vec<_>>();
     assert!(sent[0].contains("color=white"), "{sent:?}");
     assert!(sent[2].contains(&format!("until={last_day}")), "{sent:?}");
+}
+
+#[test]
+fn the_latest_games_come_newest_first() {
+    // Lichess is asked for the newest first (this stand-in sends them so),
+    // and a limit then takes the newest ones.
+    let server = Server::start(move |path, _| match path {
+        "/api/user/drnykterstein" => profile("DrNykterstein"),
+        "/api/games/user/DrNykterstein" => {
+            Reply::Ok(200, GAMES.iter().rev().map(|(id, w, b, d, t)| lichess_line(id, w, b, d, t)).collect())
+        }
+        _ => Reply::Ok(404, "<html>".into()),
+    });
+    let client = Client::with_servers(&server.url, &server.url);
+    let (_dir, db) = new_db();
+    let mut req = request(Site::Lichess, Period::All);
+    req.latest_first = true;
+    req.max_games = Some(2);
+    let s = download_into(&client, &db, &req, &NoProgress).unwrap();
+    let mut dates: Vec<_> = games(&db).into_iter().map(|g| g.2).collect();
+    dates.sort();
+    assert_eq!(dates, ["2026.09.15", "2026.10.02"], "the two newest");
+    assert!(s.covered.is_some());
+    let q = server.requests().into_iter().find(|r| r.starts_with("/api/games/")).unwrap();
+    assert!(q.contains("sort=dateDesc"), "{q}");
 }
 
 #[test]

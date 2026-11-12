@@ -12,6 +12,7 @@ const player: SyncSourceDto = {
   color: null,
   since: null,
   until: null,
+  latest: null,
   reached: null,
 };
 
@@ -52,6 +53,10 @@ test("filters are part of the description", () => {
   assert.equal(
     describeSource({ ...player, speeds: [], ratedOnly: false, until: last }),
     "hikaru's Chess.com games — to 2025-12-31",
+  );
+  assert.equal(
+    describeSource({ ...player, speeds: [], ratedOnly: false, latest: 50 }),
+    "hikaru's Chess.com games — latest 50",
   );
 });
 

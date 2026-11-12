@@ -67,6 +67,10 @@ pub enum SyncSourceDto {
         #[serde(default)]
         #[ts(type = "number | null")]
         until: Option<i64>,
+        /// Only the newest this many games (the first update takes them
+        /// newest first; later ones bring every game since).
+        #[serde(default)]
+        latest: Option<u32>,
         /// When the newest game the last update brought started (Lichess)
         /// or ended (Chess.com), ms since the epoch: the next one starts
         /// there.
@@ -114,7 +118,7 @@ impl SyncSourceDto {
         use SyncSourceDto::*;
         match (self, other) {
             (
-                Player { site, username, speeds, rated_only, color, since, until, .. },
+                Player { site, username, speeds, rated_only, color, since, until, latest, .. },
                 Player {
                     site: s2,
                     username: u2,
@@ -123,6 +127,7 @@ impl SyncSourceDto {
                     color: c2,
                     since: f2,
                     until: t2,
+                    latest: l2,
                     ..
                 },
             ) => {
@@ -139,6 +144,7 @@ impl SyncSourceDto {
                     && color == c2
                     && since == f2
                     && until == t2
+                    && latest == l2
             }
             (Study { study, chapter, .. }, Study { study: s2, chapter: c2, .. }) => {
                 study == s2 && chapter == c2
