@@ -9,8 +9,13 @@
 //! export says when it last changed (`Last-Modified`), and asking again
 //! with `If-Modified-Since` gets a 304 while it hasn't (a chapter's export
 //! is always new).
+//!
+//! [`roundtrip`] is the check NET-13 needs first: what Lichess keeps of
+//! annotated games sent to a study and fetched back, and of a chapter's
+//! moves replaced in place ([`replace_chapter_moves`]).
 
 mod export;
+pub mod roundtrip;
 
 pub use export::*;
 

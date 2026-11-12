@@ -8,7 +8,8 @@
 //! same 429 as too many requests, and asking again can't help. The client
 //! is kept to requests one at a time, so NET-13's chapter updates
 //! (`…/{chapter}/moves`, `…/tags`, `DELETE …/{chapter}`) fit beside these.
-//! The first of them is here: [`replace_chapter_moves`].
+//! The first of them is here: [`replace_chapter_moves`], which the study
+//! round-trip check ([`super::roundtrip`]) tries out.
 
 use chess_db::Progress;
 use serde::Deserialize;
@@ -383,7 +384,7 @@ fn import_pgn(
 /// answers with a 204. The chapter keeps its id, URL and tags; anything a
 /// collaborator added since it was last fetched is gone. Sent once, like
 /// every write. Whether Lichess keeps the comments, glyphs and clocks
-/// isn't documented.
+/// isn't documented: the round-trip check ([`super::roundtrip`]) finds out.
 pub fn replace_chapter_moves(
     client: &Client,
     token: &Token,
