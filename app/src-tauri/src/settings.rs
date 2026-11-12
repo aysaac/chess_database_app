@@ -398,8 +398,12 @@ impl Settings {
             if kept.iter().any(|k| k.same(&new)) {
                 continue;
             }
-            let old = sync.sources.iter().find(|old| old.same(&new)).cloned();
-            kept.push(old.unwrap_or_else(|| new.fresh()));
+            // As written now (a name, the account), with how far the old one got.
+            let old = sync.sources.iter().find(|old| old.same(&new));
+            kept.push(match old {
+                Some(old) => new.keeping_progress_of(old),
+                None => new.fresh(),
+            });
         }
         sync.sources = kept;
         sync.auto = auto;
@@ -687,6 +691,24 @@ mod tests {
     }
 
     #[test]
+    fn a_renamed_server_source_keeps_its_mark_and_takes_the_new_name() {
+        let path = Path::new("/a.chessdb");
+        let server = |username: &str, next| SyncSourceDto::Server {
+            url: "https://x.org".into(),
+            username: username.into(),
+            database: "db1".into(),
+            name: "Games".into(),
+            next,
+            epoch: next.map(|_| 3),
+        };
+        let mut s = Settings::default();
+        s.set_sources(path, vec![server("old", None)], false, None, LimitPolicyDto::Stop);
+        s.note_source(path, &server("old", Some(40)));
+        s.set_sources(path, vec![server("new", None)], false, None, LimitPolicyDto::Stop);
+        assert_eq!(s.synced(path).unwrap().sources, [server("new", Some(40))]);
+    }
+
+    #[test]
     fn sources_keep_how_far_they_got() {
         let path = Path::new("/a.chessdb");
         let player = |reached| SyncSourceDto::Player {
@@ -704,7 +726,7 @@ mod tests {
         s.set_sources(path, vec![player(Some(5))], true, None, LimitPolicyDto::Stop);
         assert_eq!(s.synced(path).unwrap().sources, [player(None)], "a new source starts afresh");
         s.note_source(path, &player(Some(9)));
-        // The same games again (another case, speeds in another order): kept, as it was.
+        // The same games again (another case, speeds in another order): as written now, with how far it got.
         let mut again = player(None);
         if let SyncSourceDto::Player { username, speeds, .. } = &mut again {
             *username = "drnykterstein".into();
@@ -714,7 +736,12 @@ mod tests {
         let sync = s.synced(path).unwrap();
         assert_eq!((sync.sources.len(), sync.auto), (1, false));
         assert_eq!((sync.limit, sync.limit_policy), (Some(1000), LimitPolicyDto::KeepLatest));
-        assert_eq!(sync.sources[0], player(Some(9)));
+        let mut written = player(Some(9));
+        if let SyncSourceDto::Player { username, speeds, .. } = &mut written {
+            *username = "drnykterstein".into();
+            speeds.reverse();
+        }
+        assert_eq!(sync.sources[0], written);
         // Other games (another color, other days) are another source: it starts afresh.
         let mut white = player(None);
         if let SyncSourceDto::Player { color, .. } = &mut white {
