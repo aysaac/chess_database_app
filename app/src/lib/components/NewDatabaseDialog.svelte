@@ -6,7 +6,7 @@
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
 
-  export type NewSource = "scratch" | "server" | "chesscom" | "lichess";
+  export type NewSource = "scratch" | "server" | "online" | "study";
 
   let { onPick, onClose }: { onPick: (source: NewSource) => void; onClose: () => void } = $props();
 
@@ -22,14 +22,14 @@
       text: "A copy of a database on your own chess server, kept in step as you add games there.",
     },
     {
-      id: "chesscom",
-      title: "From Chess.com",
-      text: "Every game of a Chess.com account, by time control, and only the new ones each time you update.",
+      id: "online",
+      title: "From online games",
+      text: "The games of your Lichess and Chess.com accounts, in one database. Add as many accounts as you like; each update brings only the new games.",
     },
     {
-      id: "lichess",
-      title: "From Lichess",
-      text: "An account's games, or the chapters of a study, with clock times and comments. Update to get what's new.",
+      id: "study",
+      title: "From a Lichess study",
+      text: "The chapters of a study, with comments, arrows and clock times. Update to get the chapters added since.",
     },
   ];
 </script>
@@ -44,15 +44,16 @@
             <Icon name="database-plus" size={28} />
           {:else if c.id === "server"}
             <Icon name="cloud-download" size={28} />
-          {:else if c.id === "lichess"}
-            <Icon name="chess-knight" size={28} />
+          {:else if c.id === "study"}
+            <Icon name="book-down" size={28} />
           {:else}
-            <!-- A plain pawn: a stand-in, not Chess.com's logo. -->
+            <!-- Plain stand-ins for the two sites, not their logos: a pawn and a knight. -->
             <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true">
               <path
-                d="M12 3.2a3.4 3.4 0 0 0-2.2 6 5.6 5.6 0 0 0-2.4 4.1c0 1.5.6 2.8 1.6 3.7L7 19.6V21h10v-1.4l-2-2.6c1-.9 1.6-2.2 1.6-3.7a5.6 5.6 0 0 0-2.4-4.1 3.4 3.4 0 0 0-2.2-6z"
+                d="M7 3.5a2.4 2.4 0 0 0-1.6 4.2A4 4 0 0 0 3.7 11c0 1.1.4 2 1.1 2.7L3.4 16v1.2h7V16L9 13.7c.7-.7 1.1-1.6 1.1-2.7a4 4 0 0 0-1.7-3.3A2.4 2.4 0 0 0 7 3.5z"
               />
             </svg>
+            <Icon name="chess-knight" size={22} />
           {/if}
         </span>
         <span class="text">
@@ -103,11 +104,12 @@
     background: var(--brass-soft);
   }
   .mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex: none;
     width: 56px;
     height: 56px;
-    display: grid;
-    place-items: center;
     border-radius: 10px;
     color: #fff;
   }
@@ -117,11 +119,12 @@
   .mark.server {
     background: #4a5f8a;
   }
-  .mark.lichess {
+  .mark.study {
     background: #2b2b2b;
   }
-  .mark.chesscom {
-    background: #5f8f3a;
+  .mark.online {
+    gap: 2px;
+    background: linear-gradient(135deg, #5f8f3a 50%, #2b2b2b 50%);
   }
   .text {
     display: grid;
