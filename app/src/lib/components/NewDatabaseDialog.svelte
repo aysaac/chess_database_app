@@ -34,7 +34,7 @@
   ];
 </script>
 
-<Modal title="New database" {onClose} width="640px">
+<Modal title="New database" {onClose} width="min(820px, 92vw)">
   <p class="intro">Where do the games come from?</p>
   <div class="grid">
     {#each choices as c (c.id)}
@@ -75,16 +75,22 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
   }
   .card {
     display: flex;
     gap: 12px;
     align-items: flex-start;
     text-align: left;
-    padding: 14px;
+    padding: 18px;
+    min-height: 120px;
+    min-width: 0;
+    width: 100%;
     height: auto;
+    white-space: normal;
+    justify-content: flex-start;
+    align-items: flex-start;
     border: 1px solid var(--rule);
     border-radius: 8px;
     background: var(--paper);
@@ -98,8 +104,8 @@
   }
   .mark {
     flex: none;
-    width: 48px;
-    height: 48px;
+    width: 56px;
+    height: 56px;
     display: grid;
     place-items: center;
     border-radius: 10px;
@@ -119,9 +125,12 @@
   }
   .text {
     display: grid;
-    gap: 4px;
-    font-size: 0.92em;
-    line-height: 1.35;
+    gap: 6px;
+    min-width: 0;
+    font-size: 0.95em;
+    line-height: 1.4;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .text strong {
     font-family: var(--font-book);
@@ -130,7 +139,7 @@
   .text span {
     color: var(--ink-soft);
   }
-  @media (max-width: 620px) {
+  @media (max-width: 560px) {
     .grid {
       grid-template-columns: 1fr;
     }
