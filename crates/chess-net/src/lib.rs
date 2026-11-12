@@ -101,6 +101,10 @@ pub struct Request {
     /// At most this many new games: the download stops cleanly there, and
     /// `covered` says how far it got.
     pub max_games: Option<u64>,
+    /// The newest games first, so that `max_games` takes the latest ones.
+    /// `covered` is then the newest game's time as well; the download
+    /// can't resume where it broke off.
+    pub latest_first: bool,
 }
 
 /// A player as the site knows them.
@@ -240,6 +244,8 @@ pub(crate) struct Fetch {
     pub since: Option<i64>,
     pub until: Option<i64>,
     pub color: Option<Color>,
+    /// Newest first (see `Request::latest_first`).
+    pub latest_first: bool,
     /// When the last bytes came (ms since the epoch): a download is stalled
     /// when nothing comes for a while, not when a game takes long.
     pub alive: Arc<AtomicI64>,
@@ -373,6 +379,8 @@ struct Feed<'a> {
     /// The most games to hand over, and how many were.
     max: Option<u64>,
     handed: u64,
+    /// Newest first: the time reached says nothing of the progress.
+    latest_first: bool,
     /// When anything last came (ms since the epoch), and how long nothing
     /// may.
     alive: Arc<AtomicI64>,
@@ -397,7 +405,9 @@ impl Feed<'_> {
                     if self.until.is_some_and(|u| at > u) {
                         continue;
                     }
-                    self.reached.set(self.reached.get().max(at));
+                    if !self.latest_first {
+                        self.reached.set(self.reached.get().max(at));
+                    }
                     self.newest = self.newest.max(Some(at));
                     // A game sent again (a resumed stream) is skipped and
                     // counted once.
@@ -423,7 +433,9 @@ impl Feed<'_> {
                 }
                 Ok(Ok(Fetched::Reached(at))) => {
                     self.alive.store(time::now_ms(), Ordering::Relaxed);
-                    self.reached.set(self.reached.get().max(at));
+                    if !self.latest_first {
+                        self.reached.set(self.reached.get().max(at));
+                    }
                 }
                 Ok(Err(e)) => {
                     self.stopped = Some(e);
@@ -484,6 +496,7 @@ pub fn download_into(
         since,
         until: request.until,
         color: request.color,
+        latest_first: request.latest_first,
         alive: alive.clone(),
     };
 
@@ -533,6 +546,7 @@ pub fn download_into(
         until: request.until,
         max: request.max_games,
         handed: 0,
+        latest_first: request.latest_first,
         alive,
         stall: client.stall,
     };

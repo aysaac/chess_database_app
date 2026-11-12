@@ -110,9 +110,14 @@ pub(crate) fn fetch(
     months.dedup();
     let first = what.since.map(month_of);
     let last = what.until.map(month_of);
-    for (y, m) in
-        months.into_iter().filter(|&ym| first.is_none_or(|f| ym >= f) && last.is_none_or(|l| ym <= l))
-    {
+    let mut months: Vec<(i64, u32)> = months
+        .into_iter()
+        .filter(|&ym| first.is_none_or(|f| ym >= f) && last.is_none_or(|l| ym <= l))
+        .collect();
+    if what.latest_first {
+        months.reverse();
+    }
+    for (y, m) in months {
         // The archive's own URL is the same one; built here so that only
         // the configured server is ever asked.
         let mut resp =
@@ -131,6 +136,9 @@ pub(crate) fn fetch(
         }
         let mut month: Month = read_json_noting(Site::ChessCom, &mut resp, MONTH_LIMIT, &what.alive)?;
         month.games.sort_by_key(|g| g.end_time);
+        if what.latest_first {
+            month.games.reverse();
+        }
         for g in month.games {
             let at = g.end_time.saturating_mul(1000);
             let wanted = g.rules == "chess"

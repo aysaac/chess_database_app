@@ -96,14 +96,27 @@ pub async fn server_databases(app: AppHandle) -> AppResult<Vec<ServerDbDto>> {
 /// written one way, a username checked.
 fn normalized(source: SyncSourceDto) -> AppResult<SyncSourceDto> {
     Ok(match source {
-        SyncSourceDto::Player { site, username, speeds, rated_only, color, since, until, reached } => {
+        SyncSourceDto::Player {
+            site,
+            username,
+            speeds,
+            rated_only,
+            color,
+            since,
+            until,
+            latest,
+            reached,
+        } => {
             let username = chess_net::check_username(&username)?.to_owned();
             if let (Some(from), Some(to)) = (since, until)
                 && from > to
             {
                 return Err(AppError::invalid("The first day is after the last day"));
             }
-            SyncSourceDto::Player { site, username, speeds, rated_only, color, since, until, reached }
+            if latest == Some(0) {
+                return Err(AppError::invalid("The latest games is at least 1 game"));
+            }
+            SyncSourceDto::Player { site, username, speeds, rated_only, color, since, until, latest, reached }
         }
         SyncSourceDto::Study { study, chapter, name, last_modified } => {
             // The study field may hold a pasted link.
@@ -165,9 +178,11 @@ fn update_player(
     path: &Path,
     source: &SyncSourceDto,
     max_games: Option<u64>,
+    newest: Option<u64>,
     ctx: &JobContext,
 ) -> Result<(SyncSourceDto, u64), NetError> {
-    let SyncSourceDto::Player { site, username, speeds, rated_only, color, since, until, reached } = source
+    let SyncSourceDto::Player { site, username, speeds, rated_only, color, since, until, latest, reached } =
+        source
     else {
         unreachable!("a player's source")
     };
@@ -175,6 +190,19 @@ fn update_player(
     let from = match (reached, since) {
         (Some(a), Some(b)) => Some(*a.max(b)),
         (a, b) => a.or(*b),
+    };
+    // A first update that only wants the newest games asks for them first
+    // (a download of the whole account would be wasted); later ones go on
+    // from where it got to.
+    let cap = match (reached, latest.map(u64::from), newest) {
+        (None, Some(a), Some(b)) => Some(a.min(b)),
+        (None, a, b) => a.or(b),
+        _ => None,
+    };
+    let latest_first = cap.is_some();
+    let max_games = match (max_games, cap) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
     };
     let req = Request {
         site: (*site).into(),
@@ -185,6 +213,7 @@ fn update_player(
         until: *until,
         color: color.map(Into::into),
         max_games,
+        latest_first,
     };
     let own = match req.site {
         chess_net::Site::Lichess => crate::lichess::login_of(state, username).unwrap_or_else(|e| {
@@ -310,6 +339,8 @@ fn run_update(
         ctx.check_cancelled()?;
         let what = source.describe();
         let mut room = None;
+        // Over a limit that keeps the latest, no source needs more than that many.
+        let newest = limit.filter(|_| sync.limit_policy == LimitPolicyDto::KeepLatest).map(u64::from);
         if let (Some(limit), LimitPolicyDto::Stop, SyncSourceDto::Player { .. }) =
             (limit, sync.limit_policy, source)
         {
@@ -327,7 +358,7 @@ fn run_update(
             room = Some(u64::from(limit - live));
         }
         let result = match source {
-            SyncSourceDto::Player { .. } => update_player(state, db, path, source, room, ctx),
+            SyncSourceDto::Player { .. } => update_player(state, db, path, source, room, newest, ctx),
             SyncSourceDto::Study { .. } => update_study(state, db, path, source, ctx),
             SyncSourceDto::Server { .. } => update_server(state, db, path, source, ctx),
         };

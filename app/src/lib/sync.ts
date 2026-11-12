@@ -40,6 +40,7 @@ export function describeSource(source: SyncSourceDto): string {
           : "";
       const extra = [
         source.color ? `as ${source.color}` : "",
+        source.latest !== null ? `latest ${source.latest}` : "",
         source.since !== null || source.until !== null
           ? `${source.since !== null ? "from " + day(source.since) : ""}${source.since !== null && source.until !== null ? " " : ""}${source.until !== null ? "to " + day(source.until) : ""}`
           : "",

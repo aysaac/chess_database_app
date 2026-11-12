@@ -425,6 +425,7 @@ fn own_games_are_downloaded_with_the_token() {
         until: None,
         color: None,
         max_games: None,
+        latest_first: false,
     };
     for name in ["DrNykterstein", "Someone"] {
         download_into(&client, &db, &request(name), &NoProgress).unwrap();

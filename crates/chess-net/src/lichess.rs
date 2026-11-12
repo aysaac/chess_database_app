@@ -118,7 +118,7 @@ pub(crate) fn fetch(
     let mut auth = own_token(client, what);
     loop {
         let mut query = vec![
-            ("sort", "dateAsc".to_owned()),
+            ("sort", if what.latest_first { "dateDesc" } else { "dateAsc" }.to_owned()),
             ("pgnInJson", "true".to_owned()),
             ("clocks", "true".to_owned()),
             ("evals", "true".to_owned()),
@@ -172,7 +172,9 @@ pub(crate) fn fetch(
                 continue;
             }
             let game: Game = serde_json::from_slice(&line).map_err(|e| bad(e.to_string()))?;
-            since = Some(game.created_at);
+            if !what.latest_first {
+                since = Some(game.created_at);
+            }
             let (Some(pgn), Some(key)) = (game.pgn, lichess_key(&game.id)) else { continue };
             if !send(Fetched::Game { key, at: game.created_at, pgn }) {
                 return Ok(());
@@ -182,7 +184,8 @@ pub(crate) fn fetch(
         if since != from {
             resumes = 0;
         }
-        if resumes == RESUMES || stop() {
+        // Newest first has no `since` to go on from: that's a failure.
+        if resumes == RESUMES || what.latest_first || stop() {
             return Err(NetError::Unreachable { site: Site::Lichess, reason: io_reason(&broke_off) });
         }
         // From the last game again: it's skipped as sent already.

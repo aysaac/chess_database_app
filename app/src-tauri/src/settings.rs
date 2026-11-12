@@ -697,6 +697,7 @@ mod tests {
             color: None,
             since: None,
             until: None,
+            latest: None,
             reached,
         };
         let mut s = Settings::default();

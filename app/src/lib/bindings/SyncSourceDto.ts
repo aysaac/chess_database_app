@@ -23,6 +23,11 @@ color: ColorDto | null,
  */
 since: number | null, until: number | null, 
 /**
+ * Only the newest this many games (the first update takes them
+ * newest first; later ones bring every game since).
+ */
+latest: number | null, 
+/**
  * When the newest game the last update brought started (Lichess)
  * or ended (Chess.com), ms since the epoch: the next one starts
  * there.
