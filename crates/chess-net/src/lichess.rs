@@ -133,6 +133,14 @@ pub(crate) fn fetch(
             // itself: 1 ms before keeps it (and games sharing that ms).
             query.push(("since", (s - 1).to_string()));
         }
+        if let Some(u) = what.until {
+            query.push(("until", u.to_string()));
+        }
+        match what.color {
+            Some(crate::Color::White) => query.push(("color", "white".to_owned())),
+            Some(crate::Color::Black) => query.push(("color", "black".to_owned())),
+            None => {}
+        }
         let resp = client.get_with(Site::Lichess, &url, &query, "application/x-ndjson", &auth, stop)?;
         match resp.status().as_u16() {
             200 => {}

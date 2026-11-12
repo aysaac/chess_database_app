@@ -422,6 +422,9 @@ fn own_games_are_downloaded_with_the_token() {
         speeds: vec![],
         rated_only: false,
         period: Period::All,
+        until: None,
+        color: None,
+        max_games: None,
     };
     for name in ["DrNykterstein", "Someone"] {
         download_into(&client, &db, &request(name), &NoProgress).unwrap();

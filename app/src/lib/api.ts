@@ -1,5 +1,6 @@
 // Typed wrappers around the Tauri commands in app/src-tauri/src/commands.
 import type { DbSyncDto } from "./bindings/DbSyncDto";
+import type { LimitPolicyDto } from "./bindings/LimitPolicyDto";
 import type { ServerAccountDto } from "./bindings/ServerAccountDto";
 import type { ServerDbDto } from "./bindings/ServerDbDto";
 import type { SyncSourceDto } from "./bindings/SyncSourceDto";
@@ -290,8 +291,13 @@ export const api = {
   /** Where the database gets its games and whether it updates on its own; null if it doesn't. */
   dbSync: (handle: number) => invoke<DbSyncDto | null>("db_sync", { handle }),
   /** Sets the sources (none: no longer kept up to date); sources it had keep how far they got. */
-  setDbSync: (handle: number, sources: SyncSourceDto[], auto: boolean) =>
-    invoke<DbSyncDto | null>("set_db_sync", { handle, sources, auto }),
+  setDbSync: (
+    handle: number,
+    sources: SyncSourceDto[],
+    auto: boolean,
+    limit: number | null,
+    limitPolicy: LimitPolicyDto,
+  ) => invoke<DbSyncDto | null>("set_db_sync", { handle, sources, auto, limit, limitPolicy }),
   /** Updates the database from its sources as a job; the job's message says what came. */
   syncDatabase: (handle: number) => invoke<number>("sync_database", { handle }),
 };

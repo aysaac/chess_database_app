@@ -8,6 +8,37 @@ use ts_rs::TS;
 
 use super::{OnlineSiteDto, SpeedDto};
 
+/// Which side of the board: only the games the player had it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ColorDto {
+    White,
+    Black,
+}
+
+impl From<ColorDto> for chess_net::Color {
+    fn from(c: ColorDto) -> chess_net::Color {
+        match c {
+            ColorDto::White => chess_net::Color::White,
+            ColorDto::Black => chess_net::Color::Black,
+        }
+    }
+}
+
+/// What a database does when its games reach its limit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum LimitPolicyDto {
+    /// Updates stop bringing games in: the limit is a ceiling.
+    #[default]
+    Stop,
+    /// Updates go on, and the oldest games over the limit are marked as
+    /// deleted (until the database is compacted).
+    KeepLatest,
+}
+
 /// Where a database kept up to date gets its games, with how far its last
 /// update got (the app fills that in: a new source leaves it out).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -24,6 +55,18 @@ pub enum SyncSourceDto {
         speeds: Vec<SpeedDto>,
         #[serde(default)]
         rated_only: bool,
+        /// Only the games the player had this color; none: both.
+        #[serde(default)]
+        color: Option<ColorDto>,
+        /// Only games from this time on and up to this one (ms since the
+        /// epoch, the first day's start and the last day's end where the
+        /// user is).
+        #[serde(default)]
+        #[ts(type = "number | null")]
+        since: Option<i64>,
+        #[serde(default)]
+        #[ts(type = "number | null")]
+        until: Option<i64>,
         /// When the newest game the last update brought started (Lichess)
         /// or ended (Chess.com), ms since the epoch: the next one starts
         /// there.
@@ -71,8 +114,17 @@ impl SyncSourceDto {
         use SyncSourceDto::*;
         match (self, other) {
             (
-                Player { site, username, speeds, rated_only, .. },
-                Player { site: s2, username: u2, speeds: sp2, rated_only: r2, .. },
+                Player { site, username, speeds, rated_only, color, since, until, .. },
+                Player {
+                    site: s2,
+                    username: u2,
+                    speeds: sp2,
+                    rated_only: r2,
+                    color: c2,
+                    since: f2,
+                    until: t2,
+                    ..
+                },
             ) => {
                 let sorted = |v: &[SpeedDto]| {
                     let mut v = v.to_vec();
@@ -84,6 +136,9 @@ impl SyncSourceDto {
                     && username.eq_ignore_ascii_case(u2)
                     && sorted(speeds) == sorted(sp2)
                     && rated_only == r2
+                    && color == c2
+                    && since == f2
+                    && until == t2
             }
             (Study { study, chapter, .. }, Study { study: s2, chapter: c2, .. }) => {
                 study == s2 && chapter == c2
@@ -132,6 +187,11 @@ pub struct DbSyncDto {
     pub sources: Vec<SyncSourceDto>,
     /// Updated when the app starts and when the database is opened.
     pub auto: bool,
+    /// The most games the database holds, over all its sources (live ones:
+    /// those marked as deleted don't count); none: no limit. Only for
+    /// players' games.
+    pub limit: Option<u32>,
+    pub limit_policy: LimitPolicyDto,
     /// When its last update ended (ms since the epoch); `None`: never.
     #[ts(type = "number | null")]
     pub last_update: Option<i64>,

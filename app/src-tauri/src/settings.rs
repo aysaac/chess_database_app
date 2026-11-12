@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::dto::sync::{DbSyncDto, SyncSourceDto};
+use crate::dto::sync::{DbSyncDto, LimitPolicyDto, SyncSourceDto};
 use crate::dto::{HeaderQueryDto, NameKindDto, OnlineSiteDto, SortSpecDto, SpeedDto};
 
 const FILE: &str = "settings.json";
@@ -380,7 +380,14 @@ impl Settings {
     /// updates on its own. A source it had already keeps how far its
     /// updates got; a new one starts afresh. No sources: it's no longer
     /// kept up to date.
-    pub fn set_sources(&mut self, path: &Path, sources: Vec<SyncSourceDto>, auto: bool) {
+    pub fn set_sources(
+        &mut self,
+        path: &Path,
+        sources: Vec<SyncSourceDto>,
+        auto: bool,
+        limit: Option<u32>,
+        policy: LimitPolicyDto,
+    ) {
         if sources.is_empty() {
             self.synced_databases.retain(|d| d.path != path);
             return;
@@ -396,6 +403,8 @@ impl Settings {
         }
         sync.sources = kept;
         sync.auto = auto;
+        sync.limit = limit;
+        sync.limit_policy = policy;
     }
 
     /// Notes how far an update of `source` got in the database at `path`,
@@ -685,10 +694,13 @@ mod tests {
             username: "DrNykterstein".into(),
             speeds: vec![SpeedDto::Blitz, SpeedDto::Bullet],
             rated_only: false,
+            color: None,
+            since: None,
+            until: None,
             reached,
         };
         let mut s = Settings::default();
-        s.set_sources(path, vec![player(Some(5))], true);
+        s.set_sources(path, vec![player(Some(5))], true, None, LimitPolicyDto::Stop);
         assert_eq!(s.synced(path).unwrap().sources, [player(None)], "a new source starts afresh");
         s.note_source(path, &player(Some(9)));
         // The same games again (another case, speeds in another order): kept, as it was.
@@ -697,11 +709,19 @@ mod tests {
             *username = "drnykterstein".into();
             speeds.reverse();
         }
-        s.set_sources(path, vec![again, player(None)], false);
+        s.set_sources(path, vec![again, player(None)], false, Some(1000), LimitPolicyDto::KeepLatest);
         let sync = s.synced(path).unwrap();
         assert_eq!((sync.sources.len(), sync.auto), (1, false));
+        assert_eq!((sync.limit, sync.limit_policy), (Some(1000), LimitPolicyDto::KeepLatest));
         assert_eq!(sync.sources[0], player(Some(9)));
-        s.set_sources(path, vec![], false);
+        // Other games (another color, other days) are another source: it starts afresh.
+        let mut white = player(None);
+        if let SyncSourceDto::Player { color, .. } = &mut white {
+            *color = Some(crate::dto::sync::ColorDto::White);
+        }
+        s.set_sources(path, vec![player(None), white.clone()], false, None, LimitPolicyDto::Stop);
+        assert_eq!(s.synced(path).unwrap().sources, [player(Some(9)), white]);
+        s.set_sources(path, vec![], false, None, LimitPolicyDto::Stop);
         assert!(s.synced(path).is_none());
         // A source a newer version wrote is left out when read.
         let json = r#"{"syncedDatabases":[{"path":"/b","sync":{"sources":[{"kind":"fromTheFuture"}],"auto":true}}]}"#;

@@ -13,8 +13,19 @@
   import type { ServerDbDto } from "../bindings/ServerDbDto";
   import type { SpeedDto } from "../bindings/SpeedDto";
   import type { SyncSourceDto } from "../bindings/SyncSourceDto";
-  import { requestSpeeds, SITE_NAMES, SITES, siteSpeeds, speedLabel, usernameProblem } from "../online";
-  import { describeSource, hostOf, nameFor } from "../sync";
+  import {
+    localMidnight,
+    requestSpeeds,
+    SITE_NAMES,
+    SITES,
+    siteSpeeds,
+    sinceProblem,
+    speedLabel,
+    usernameProblem,
+  } from "../online";
+  import { describeSource, endOfDay, hostOf, nameFor } from "../sync";
+  import type { ColorDto } from "../bindings/ColorDto";
+  import type { LimitPolicyDto } from "../bindings/LimitPolicyDto";
   import { db, inDocuments } from "../stores/db.svelte";
   import LichessAccount from "./LichessAccount.svelte";
   import Modal from "./Modal.svelte";
@@ -68,6 +79,13 @@
   let username = $state("");
   let speeds = $state<SpeedDto[]>(siteSpeeds("lichess"));
   let ratedOnly = $state(false);
+  let color = $state<ColorDto | "">("");
+  let fromDay = $state("");
+  let toDay = $state("");
+  // A limit on the games, over all the sources
+  let limitOn = $state(false);
+  let limitText = $state("1000");
+  let policy = $state<LimitPolicyDto>("keepLatest");
   // A study
   let link = $state("");
   let studies = $state<StudyInfoDto[] | null>(null);
@@ -84,6 +102,9 @@
     if (mode === "open" && db.syncInfo) {
       sources = db.syncInfo.sources.map((s) => ({ ...s }));
       auto = db.syncInfo.auto;
+      limitOn = db.syncInfo.limit !== null;
+      if (db.syncInfo.limit !== null) limitText = String(db.syncInfo.limit);
+      policy = db.syncInfo.limitPolicy;
     }
     void loadAccount();
   });
@@ -172,7 +193,27 @@
         error = problem ?? "Pick at least one time control.";
         return;
       }
-      source = { kind: "player", site, username: username.trim(), speeds: chosen, ratedOnly, reached: null };
+      const dateProblem =
+        (fromDay.trim() ? sinceProblem(fromDay, "9999-12-31") : null) ??
+        (toDay.trim() ? sinceProblem(toDay, "9999-12-31") : null) ??
+        (fromDay.trim() && toDay.trim() && fromDay.trim() > toDay.trim()
+          ? "The first day is after the last day."
+          : null);
+      if (dateProblem) {
+        error = dateProblem;
+        return;
+      }
+      source = {
+        kind: "player",
+        site,
+        username: username.trim(),
+        speeds: chosen,
+        ratedOnly,
+        color: color || null,
+        since: fromDay.trim() ? localMidnight(fromDay.trim()) : null,
+        until: toDay.trim() ? endOfDay(toDay.trim()) : null,
+        reached: null,
+      };
     } else if (kind === "study") {
       if (!link.trim()) {
         error = "Paste the study's link.";
@@ -210,12 +251,24 @@
     link = "";
   }
 
+  /** The limit as a number, null when off; or undefined when it isn't one. */
+  function limit(): number | null | undefined {
+    if (!limitOn || allowed[0] !== "player") return null;
+    const n = Number(limitText.trim());
+    return Number.isInteger(n) && n >= 1 && n <= 100_000_000 ? n : undefined;
+  }
+
   async function saveOpen(updateNow: boolean) {
     const handle = db.info?.handle;
     if (handle === undefined || busy) return;
     busy = true;
     try {
-      await api.setDbSync(handle, sources, auto);
+      const max = limit();
+      if (max === undefined) {
+        error = "The limit is a whole number of games, 1 or more.";
+        return;
+      }
+      await api.setDbSync(handle, sources, auto, max, policy);
       await db.loadSync();
       onClose();
       if (updateNow && sources.length) void db.update();
@@ -229,6 +282,10 @@
   /** Makes the database, with its sources; opening it starts the first update. */
   async function create() {
     if (!sources.length || busy) return;
+    if (limit() === undefined) {
+      error = "The limit is a whole number of games, 1 or more.";
+      return;
+    }
     const path = await save({
       title: "Save the new database as",
       defaultPath: await inDocuments(`${nameFor(sources[0])}.chessdb`),
@@ -238,7 +295,7 @@
     error = "";
     try {
       const info = await api.createDb(path);
-      await api.setDbSync(info.handle, sources, auto);
+      await api.setDbSync(info.handle, sources, auto, limit() ?? null, policy);
       await api.openEditorWindow(path);
       onClose();
     } catch (e) {
@@ -336,6 +393,22 @@
         {/each}
         <label class="check"><input type="checkbox" bind:checked={ratedOnly} /> Rated only</label>
       </div>
+      <div class="row">
+        <label class="field">
+          Played as
+          <select bind:value={color}>
+            <option value="">White or Black</option>
+            <option value="white">White only</option>
+            <option value="black">Black only</option>
+          </select>
+        </label>
+        <label class="field">
+          From day <input bind:value={fromDay} placeholder="YYYY-MM-DD" inputmode="numeric" />
+        </label>
+        <label class="field">
+          To day <input bind:value={toDay} placeholder="YYYY-MM-DD" inputmode="numeric" />
+        </label>
+      </div>
     {:else if kind === "study"}
       <LichessAccount
         why="Log in to list your own studies, private and unlisted ones too, and to keep them up to date. The login stays in this app (in the system's keyring); public studies need none."
@@ -410,6 +483,28 @@
     {/if}
   </fieldset>
 
+  {#if allowed[0] === "player"}
+    <fieldset>
+      <legend>Limit</legend>
+      <label class="check">
+        <input type="checkbox" bind:checked={limitOn} />
+        Hold at most
+        <input class="num" bind:value={limitText} disabled={!limitOn} inputmode="numeric" aria-label="Most games" />
+        games, over all the accounts together
+      </label>
+      {#if limitOn}
+        <label class="check">
+          <input type="radio" name="sync-policy" checked={policy === "keepLatest"} onchange={() => (policy = "keepLatest")} />
+          Keep only the latest: older games over the limit are marked as deleted (Compact frees the space)
+        </label>
+        <label class="check">
+          <input type="radio" name="sync-policy" checked={policy === "stop"} onchange={() => (policy = "stop")} />
+          Stop updating when the limit is hit
+        </label>
+      {/if}
+    </fieldset>
+  {/if}
+
   <label class="check">
     <input type="checkbox" bind:checked={auto} />
     Update on its own when the database is opened
@@ -458,6 +553,9 @@
     border: 1px solid var(--brass);
     border-radius: 8px;
     background: var(--brass-soft);
+  }
+  .num {
+    width: 7em;
   }
   .add {
     justify-self: start;
