@@ -18,7 +18,19 @@
   import { db, inDocuments } from "../stores/db.svelte";
   import Modal from "./Modal.svelte";
 
-  let { mode, onClose }: { mode: "open" | "new"; onClose: () => void } = $props();
+  let {
+    mode,
+    onClose,
+    only,
+    onBack,
+  }: {
+    mode: "open" | "new";
+    onClose: () => void;
+    /** Limits the dialog to one place the games come from (the new-database chooser's). */
+    only?: "lichess" | "chesscom" | "server";
+    /** Back to the chooser. */
+    onBack?: () => void;
+  } = $props();
 
   let sources = $state<SyncSourceDto[]>([]);
   let auto = $state(true);
@@ -42,6 +54,9 @@
   let pickedDb = $state("");
 
   onMount(() => {
+    if (only === "server") kind = "server";
+    if (only === "chesscom") site = "chessCom";
+    if (only === "chesscom" || only === "lichess") speeds = siteSpeeds(site);
     if (mode === "open" && db.syncInfo) {
       sources = db.syncInfo.sources.map((s) => ({ ...s }));
       auto = db.syncInfo.auto;
@@ -184,7 +199,11 @@
 </script>
 
 <Modal
-  title={mode === "new" ? "New database from Lichess, Chess.com or my server" : "Keep this database up to date"}
+  title={only
+    ? `New database from ${only === "server" ? "my server" : only === "chesscom" ? "Chess.com" : "Lichess"}`
+    : mode === "new"
+      ? "New database from Lichess, Chess.com or my server"
+      : "Keep this database up to date"}
   {onClose}
   width="600px"
 >
@@ -213,8 +232,8 @@
 
   <fieldset disabled={busy}>
     <legend>Add a source</legend>
-    <div class="kinds" role="radiogroup" aria-label="Kind of source">
-      {#each [["player", "A player's games"], ["study", "A Lichess study"], ["server", "My server"]] as [k, label] (k)}
+    <div class="kinds" role="radiogroup" aria-label="Kind of source" hidden={only === "server" || only === "chesscom"}>
+      {#each [["player", "A player's games"], ["study", "A Lichess study"], ["server", "My server"]].filter(([k]) => !only || (only === "server" ? k === "server" : only === "chesscom" ? k === "player" : k !== "server")) as [k, label] (k)}
         <label class="check">
           <input type="radio" name="sync-kind" checked={kind === k} onchange={() => (kind = k as typeof kind)} />
           {label}
@@ -223,7 +242,7 @@
     </div>
 
     {#if kind === "player"}
-      <div class="row">
+      <div class="row" hidden={only !== undefined}>
         {#each SITES as s (s)}
           <label class="check">
             <input
@@ -313,6 +332,7 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
   {#snippet actions()}
+    {#if onBack}<button onclick={onBack}>Back</button>{/if}
     <button onclick={onClose}>Cancel</button>
     {#if mode === "new"}
       <button class="primary" disabled={busy || sources.length === 0} onclick={create}>Create and download…</button>
@@ -359,6 +379,10 @@
     justify-content: space-between;
     gap: 8px;
     align-items: center;
+  }
+  .kinds[hidden],
+  .row[hidden] {
+    display: none;
   }
   .kinds,
   .row {
