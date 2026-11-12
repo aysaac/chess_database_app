@@ -31,11 +31,11 @@ A database is a directory named `<Name>.chessdb/`:
 `games.ids`. Version 2 meant the database keeps `positions.dirty` up to date
 when a game is replaced; version 1 came before the position index. Both open
 fine and are upgraded to 3 on open ([the upgrade](#the-upgrade-to-version-3)).
-An app from before version 3 refuses a version 3 database ("unsupported
-format version 3"), in its library too, and can't open it again once a newer
-app has: it would add, copy or compact games without their ids, and a
-compaction would leave each id on another game. The binary files keep their
-own header versions (all 1).
+Once a newer app has opened a database, an app from before version 3
+refuses it ("unsupported format version 3"), in its library too, and
+changes nothing: it would add, copy or compact games without their ids, and
+a compaction would leave each id on another game. The binary files keep
+their own header versions (all 1).
 
 A game's **id** in the code and the UI (`GameId`) is its **slot**: its
 zero-based position in `games.idx`. Deleting a game only sets a flag, but a
@@ -99,9 +99,10 @@ copying or moving games to another database (DB-06, QOL-04) appends the
 blob bytes unchanged and writes a new record whose names are looked up (or
 added) in the target's tables. Nothing is decoded, and the copy is exactly
 the original. It gets its own permanent id there, and the original's is
-recorded as its origin (`games.origins`). Copies go in batches of 2,000 games, each a normal crash-safe
-commit; a move marks the originals as deleted only after their copies are
-committed, so a crash in between leaves duplicates, never a lost game.
+recorded as its origin (`games.origins`). Copies go in batches of 2,000
+games, each a normal crash-safe commit; a move marks the originals as
+deleted only after their copies are committed, so a crash in between leaves
+duplicates, never a lost game.
 
 Deleting duplicate games (DB-08) gives the same guarantee. Each kept game
 first takes the fields of its index record that it lacks from the copies
@@ -370,3 +371,23 @@ after the click): a 600-player 11-round Swiss (19,200 cells) 0.9–1.1 s, a
 bigger tables get the standings only: 2,000 players 0.6–0.7 s, "Rated
 UltraBullet game" (1,130 players without rounds, one with 138 games: 3.3 s
 as a full table) 0.4 s.
+
+Permanent ids (format version 3; release build, Nov 2026, page cache warm,
+on a laptop in use): `import_bench` built from before them (`main` at
+`118a278`) and after, run in turns on Mega Database 2019 (7,623,531 games)
+and the first 1M Lichess games:
+
+| | Mega Database 2019 | Lichess, 1M games |
+|---|---|---|
+| Size | 1,353.1 → 1,475.1 MB: +16 bytes a game and 32 bytes of headers | 697.3 → 713.3 MB |
+| First open of a version 2 database (the upgrade) | 361 ms | — |
+| Open, before → after | 94, 107, 113 → 81–88, 110, 111 ms | 483, 449 → 449, 450 ms |
+| Import, before → after | 370.8 → 393.6 s (one run each) | 51.9, 49.9 → 50.7, 50.8 s |
+| Map of ids: first lookup, memory | 131–149 ms, 61 MB | 17 ms, 8 MB |
+| A lookup after | 1.3–1.6 µs | 0.7–0.9 µs |
+
+The import's extra fsync per batch and the ids it writes are within the
+noise on Lichess, where the runs alternated. Lists, sorts, searches, trees
+and the Reference tab don't touch the ids and measure the same: on Mega,
+sort by White 485 → 497 ms, header search 141 → 140 ms, tree at the start
+261 → 231 ms, Reference lines at the start 9.2 → 8.9 s (second runs).
