@@ -15,6 +15,12 @@
 //!   `daily_limit` a day (then 429); `import-pgn` makes a chapter per game,
 //!   64 at most in a study, and `initial=true` replaces the empty first one.
 //!   Bodies over 512 KiB get a 413.
+//! - `POST /api/study/{id}/{chapter}/moves` (NET-13) replaces a chapter's
+//!   moves with those of the `pgn` field and answers 204; the chapter keeps
+//!   its id and tags, whatever tags the PGN has.
+//! - It keeps what it's sent as it is, unless `rewrite` says otherwise: a
+//!   function every game's PGN goes through on its way in (`import-pgn`,
+//!   `moves`), to stand for Lichess changing or dropping things.
 //!
 //! Every request is logged (method, path and query, and whether it had a
 //! token) in `requests`. `fail` makes the next request that starts with a
@@ -73,6 +79,9 @@ pub struct State {
     /// ("METHOD /path" prefix, status): the next request it starts gets
     /// the status instead of an answer, once.
     pub fail: Vec<(String, u16)>,
+    /// What a game's PGN goes through as it comes in (`import-pgn`,
+    /// `moves`); `None`: kept as it is.
+    pub rewrite: Option<fn(&str) -> String>,
     codes: HashMap<String, Grant>,
     next: u64,
     clock: i64,
@@ -161,9 +170,8 @@ impl Lichess {
     }
 }
 
-/// A chapter's PGN as the export writes it: the game's tags without the
-/// study ones, then the study's.
-fn tagged(pgn: &str, base: &str, study: &Study, chapter: &str) -> String {
+/// A game's tag lines and its movetext.
+fn split_tags(pgn: &str) -> (Vec<String>, String) {
     let (mut tags, mut moves) = (Vec::new(), String::new());
     let mut in_tags = true;
     for line in pgn.trim().lines() {
@@ -175,6 +183,13 @@ fn tagged(pgn: &str, base: &str, study: &Study, chapter: &str) -> String {
             moves.push('\n');
         }
     }
+    (tags, moves)
+}
+
+/// A chapter's PGN as the export writes it: the game's tags without the
+/// study ones, then the study's.
+fn tagged(pgn: &str, base: &str, study: &Study, chapter: &str) -> String {
+    let (mut tags, moves) = split_tags(pgn);
     let value = |name: &str| {
         tags.iter().find_map(|t| {
             let rest = t.strip_prefix('[')?.strip_prefix(name)?.trim_start().strip_prefix('"')?;
@@ -524,7 +539,8 @@ fn route(req: &Request, state: &Mutex<State>, base: &str) -> Reply {
             let version = st.tick();
             let mut ids = Vec::new();
             for g in split_games(pgn).into_iter().take(64) {
-                ids.push((st.next_id("ch"), g.to_owned()));
+                let g = st.rewrite.map_or_else(|| g.to_owned(), |r| r(g));
+                ids.push((st.next_id("ch"), g));
             }
             let Some(study) = st.studies.iter_mut().find(|s| s.id == *id) else {
                 return reply(404, "<html>");
@@ -549,6 +565,35 @@ fn route(req: &Request, state: &Mutex<State>, base: &str) -> Reply {
             }
             study.version = version;
             json_reply(200, json!({ "chapters": made, "error": error }))
+        }
+        ("POST", ["api", "study", id, chapter, "moves"]) => {
+            let Some((user, _)) = who.clone() else {
+                return json_reply(401, json!({ "error": "No such token" }));
+            };
+            if !can("study:write") {
+                return json_reply(403, json!({ "error": "Missing scope" }));
+            }
+            let f = req.form();
+            let Some(pgn) = f.get("pgn").filter(|p| !p.trim().is_empty()) else {
+                return json_reply(400, json!({ "error": { "pgn": ["This field is required"] } }));
+            };
+            let pgn = st.rewrite.map_or_else(|| pgn.clone(), |r| r(pgn));
+            let version = st.tick();
+            let Some(study) = st.studies.iter_mut().find(|s| s.id == *id) else {
+                return reply(404, "<html>");
+            };
+            if study.owner != user {
+                return json_reply(403, json!({ "error": "No permission to change the chapter" }));
+            }
+            let Some((_, text)) = study.chapters.iter_mut().find(|(c, _)| c == chapter) else {
+                return reply(404, "<html>");
+            };
+            // The chapter's own tags stay; only the moves are the PGN's.
+            let (tags, _) = split_tags(text);
+            let (_, moves) = split_tags(&pgn);
+            *text = format!("{}\n\n{}", tags.join("\n"), moves.trim());
+            study.version = version;
+            reply(204, "")
         }
         // NET-01, enough to see who sends a token: a profile and one game.
         ("GET", ["api", "user", name]) => json_reply(

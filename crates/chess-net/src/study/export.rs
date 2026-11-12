@@ -8,6 +8,7 @@
 //! same 429 as too many requests, and asking again can't help. The client
 //! is kept to requests one at a time, so NET-13's chapter updates
 //! (`…/{chapter}/moves`, `…/tags`, `DELETE …/{chapter}`) fit beside these.
+//! The first of them is here: [`replace_chapter_moves`].
 
 use chess_db::Progress;
 use serde::Deserialize;
@@ -375,6 +376,46 @@ fn import_pgn(
     }
     let made: Made = read_json(Site::Lichess, &mut resp, 4 << 20)?;
     Ok((made.chapters.len(), made.error.filter(|e| !e.trim().is_empty())))
+}
+
+/// Replaces a chapter's whole move tree with the moves of `pgn`, one game
+/// (NET-13): `POST /api/study/{study}/{chapter}/moves`, which Lichess
+/// answers with a 204. The chapter keeps its id, URL and tags; anything a
+/// collaborator added since it was last fetched is gone. Sent once, like
+/// every write. Whether Lichess keeps the comments, glyphs and clocks
+/// isn't documented.
+pub fn replace_chapter_moves(
+    client: &Client,
+    token: &Token,
+    study: &str,
+    chapter: &str,
+    pgn: &str,
+) -> Result<(), NetError> {
+    // Ids go into the URL's path: only Lichess's 8 letters and digits.
+    if !is_lichess_id(study) || !is_lichess_id(chapter) {
+        return Err(NetError::NoSuchStudy);
+    }
+    let pgn = pgn.trim();
+    if encoded_len(pgn) > MAX_BODY {
+        return Err(NetError::Refused(format!(
+            "the game is over {} kB, more than Lichess takes",
+            MAX_BODY >> 10
+        )));
+    }
+    let url = format!("{}/api/study/{study}/{chapter}/moves", client.lichess);
+    let mut resp = client.post_form(Site::Lichess, &url, Some(token), &[("pgn", pgn)])?;
+    match resp.status().as_u16() {
+        200..=299 => Ok(()),
+        429 => Err(NetError::RateLimited(Site::Lichess)),
+        401 => Err(NetError::TokenRejected),
+        403 => Err(NetError::NotContributor),
+        404 => Err(NetError::NoSuchStudy),
+        400 => {
+            let why = error_message(Site::Lichess, &mut resp).unwrap_or_else(|| "it didn't say why".into());
+            Err(NetError::Refused(why))
+        }
+        _ => Err(status_error(Site::Lichess, &resp)),
+    }
 }
 
 #[cfg(test)]

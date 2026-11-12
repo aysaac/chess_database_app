@@ -632,3 +632,65 @@ fn a_round_trip_through_a_study_keeps_the_moves_and_comments() {
 fn chess_core_pgn(game: &chess_core::game::Game) -> String {
     chess_core::pgn::write_game(game)
 }
+
+// ---- NET-13: a chapter's moves replaced in place ----------------------------
+
+#[test]
+fn a_chapters_moves_are_replaced_in_place() {
+    let server = Lichess::start(0);
+    let token = writer(&server);
+    let two = numbered(2);
+    let refs: Vec<&str> = two.iter().map(String::as_str).collect();
+    server.add_study("Exists01", "Repertoire", "Owner", "private", &refs);
+    server.add_study("Theirs01", "Not mine", "Other", "public", &refs[..1]);
+    let client = client(&server);
+    let chapter = server.study("Exists01").unwrap().chapters[0].0.clone();
+    let before = server.study("Exists01").unwrap();
+    let pgn = "[Event \"Not the chapter's\"]\n[White \"Someone else\"]\n\n1. d4 { New moves } d5 2. c4 $1 *";
+    chess_net::study::replace_chapter_moves(&client, &token, "Exists01", &chapter, pgn).unwrap();
+    let after = server.study("Exists01").unwrap();
+    assert_eq!(after.chapters.len(), 2, "replaced in place, no chapter added");
+    let (id, text) = &after.chapters[0];
+    assert_eq!(id, &chapter);
+    assert!(text.contains("[Event \"Game 1\"]") && text.contains("[White \"W1\"]"), "its tags stay: {text}");
+    assert!(!text.contains("Someone else") && !text.contains("1. e4"), "{text}");
+    assert!(text.ends_with("1. d4 { New moves } d5 2. c4 $1 *"), "{text}");
+    assert_eq!(after.chapters[1], before.chapters[1], "the other chapter is untouched");
+    assert!(after.version > before.version, "the study changed");
+    let posts: Vec<String> = server.requests().into_iter().filter(|r| r.starts_with("POST")).collect();
+    assert_eq!(posts, [format!("POST /api/study/Exists01/{chapter}/moves [token]")]);
+
+    // Fetched back, the chapter has the new moves and its own URL.
+    let link = StudyRef { study: "Exists01".into(), chapter: Some(chapter.clone()) };
+    let back = fetch_study(&client, &link, Some(&token), None, &|| false).unwrap().unwrap();
+    assert_eq!(back.chapters.len(), 1);
+    assert!(back.chapters[0].pgn.contains("1. d4 { New moves }"));
+    assert_eq!(back.chapters[0].key.as_deref(), Some(format!("lichess-study:Exists01/{chapter}").as_str()));
+
+    let replace = |study: &str, ch: &str, token: &Token, pgn: &str| {
+        chess_net::study::replace_chapter_moves(&client, token, study, ch, pgn).unwrap_err()
+    };
+    let e = replace("Exists01", "Nochap01", &token, pgn);
+    assert!(matches!(e, NetError::NoSuchStudy), "{e}");
+    let sent = server.requests().len();
+    let e = replace("Exists01", "../token", &token, pgn);
+    assert!(matches!(e, NetError::NoSuchStudy), "{e}");
+    assert_eq!(server.requests().len(), sent, "an id that isn't one isn't sent");
+    let theirs = server.study("Theirs01").unwrap().chapters[0].0.clone();
+    let e = replace("Theirs01", &theirs, &token, pgn);
+    assert!(matches!(e, NetError::NotContributor), "{e}");
+    let e = replace("Exists01", &chapter, &Token::new("lio_gone"), pgn);
+    assert!(matches!(e, NetError::TokenRejected), "{e}");
+    let e = replace("Exists01", &chapter, &token, "  ");
+    assert!(matches!(e, NetError::Refused(_)), "{e}");
+    let big = format!("{{ {} }} 1. e4 *", "a".repeat(500 << 10));
+    let sent = server.requests().len();
+    let e = replace("Exists01", &chapter, &token, &big);
+    assert!(matches!(e, NetError::Refused(_)), "{e}");
+    assert_eq!(server.requests().len(), sent, "too long to send");
+    server.state.lock().unwrap().fail.push((format!("POST /api/study/Exists01/{chapter}/moves"), 429));
+    let e = replace("Exists01", &chapter, &token, pgn);
+    assert!(matches!(e, NetError::RateLimited(Site::Lichess)), "{e}");
+    let moves_posts = server.requests().iter().filter(|r| r.ends_with("/moves [token]")).count();
+    assert_eq!(moves_posts, 6, "each sent once, a 429 too");
+}
