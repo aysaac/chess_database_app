@@ -109,7 +109,10 @@ pub(crate) fn fetch(
     months.sort_unstable();
     months.dedup();
     let first = what.since.map(month_of);
-    for (y, m) in months.into_iter().filter(|&ym| first.is_none_or(|f| ym >= f)) {
+    let last = what.until.map(month_of);
+    for (y, m) in
+        months.into_iter().filter(|&ym| first.is_none_or(|f| ym >= f) && last.is_none_or(|l| ym <= l))
+    {
         // The archive's own URL is the same one; built here so that only
         // the configured server is ever asked.
         let mut resp =
@@ -134,7 +137,8 @@ pub(crate) fn fetch(
                 && (!what.rated_only || g.rated)
                 && speed_of(&g.time_class)
                     .is_some_and(|s| what.speeds.is_empty() || what.speeds.contains(&s))
-                && what.since.is_none_or(|s| at >= s);
+                && what.since.is_none_or(|s| at >= s)
+                && what.until.is_none_or(|u| at <= u);
             let (true, Some(pgn), Some(key)) = (wanted, g.pgn, key_of_url(&g.url)) else { continue };
             if !send(Fetched::Game { key, at, pgn }) {
                 return Ok(());

@@ -68,6 +68,13 @@ pub enum Speed {
     Correspondence,
 }
 
+/// Which side of the board: only the games the player had it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Color {
+    White,
+    Black,
+}
+
 /// Which of the player's games to download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Period {
@@ -85,6 +92,15 @@ pub struct Request {
     pub speeds: Vec<Speed>,
     pub rated_only: bool,
     pub period: Period,
+    /// Games from this time on and before it (ms since the epoch), by when
+    /// they started (Lichess) or ended (Chess.com); `Period::Since` is the
+    /// start.
+    pub until: Option<i64>,
+    /// Only the games the player had this color; `None`: both.
+    pub color: Option<Color>,
+    /// At most this many new games: the download stops cleanly there, and
+    /// `covered` says how far it got.
+    pub max_games: Option<u64>,
 }
 
 /// A player as the site knows them.
@@ -222,6 +238,8 @@ pub(crate) struct Fetch {
     pub speeds: Vec<Speed>,
     pub rated_only: bool,
     pub since: Option<i64>,
+    pub until: Option<i64>,
+    pub color: Option<Color>,
     /// When the last bytes came (ms since the epoch): a download is stalled
     /// when nothing comes for a while, not when a game takes long.
     pub alive: Arc<AtomicI64>,
@@ -310,6 +328,23 @@ fn known_games(db: &Mutex<Database>, progress: &dyn Progress) -> Result<HashSet<
     Ok(keys)
 }
 
+/// The value of the PGN tag `name` in `pgn`'s header.
+fn pgn_tag<'a>(pgn: &'a str, name: &str) -> Option<&'a str> {
+    let prefix = format!("[{name} \"");
+    pgn.lines()
+        .take_while(|l| l.starts_with('['))
+        .find_map(|l| l.strip_prefix(prefix.as_str())?.rsplit_once('"').map(|(v, _)| v))
+}
+
+/// Whether `player` had `color` in the game `pgn` (names compare without case).
+fn had_color(pgn: &str, player: &str, color: Color) -> bool {
+    let tag = match color {
+        Color::White => "White",
+        Color::Black => "Black",
+    };
+    pgn_tag(pgn, tag).is_some_and(|name| name.eq_ignore_ascii_case(player))
+}
+
 /// The downloaded games as one PGN text, for the importer: games the
 /// database has are left out, and it ends early (cleanly, between games)
 /// when the job is cancelled, the server fails or stops sending.
@@ -331,6 +366,13 @@ struct Feed<'a> {
     already: u64,
     stopped: Option<NetError>,
     ended: bool,
+    /// The player's name as the site writes it, for `color`.
+    username: String,
+    color: Option<Color>,
+    until: Option<i64>,
+    /// The most games to hand over, and how many were.
+    max: Option<u64>,
+    handed: u64,
     /// When anything last came (ms since the epoch), and how long nothing
     /// may.
     alive: Arc<AtomicI64>,
@@ -344,9 +386,17 @@ impl Feed<'_> {
             if self.ended || self.progress.is_cancelled() {
                 return false;
             }
+            if self.max.is_some_and(|m| self.handed >= m) {
+                self.ended = true;
+                return false;
+            }
             match self.rx.recv_timeout(POLL) {
                 Ok(Ok(Fetched::Game { key, at, pgn })) => {
                     self.alive.store(time::now_ms(), Ordering::Relaxed);
+                    // After the last day wanted: not this game, and it doesn't count as covered.
+                    if self.until.is_some_and(|u| at > u) {
+                        continue;
+                    }
                     self.reached.set(self.reached.get().max(at));
                     self.newest = self.newest.max(Some(at));
                     // A game sent again (a resumed stream) is skipped and
@@ -358,6 +408,13 @@ impl Feed<'_> {
                         self.already += 1;
                         continue;
                     }
+                    // The wrong side of the board: covered, but not wanted.
+                    if let Some(color) = self.color
+                        && !had_color(&pgn, &self.username, color)
+                    {
+                        continue;
+                    }
+                    self.handed += 1;
                     self.buf.clear();
                     self.buf.extend_from_slice(pgn.trim().as_bytes());
                     self.buf.extend_from_slice(b"\n\n");
@@ -425,6 +482,8 @@ pub fn download_into(
         speeds: request.speeds.clone(),
         rated_only: request.rated_only,
         since,
+        until: request.until,
+        color: request.color,
         alive: alive.clone(),
     };
 
@@ -469,6 +528,11 @@ pub fn download_into(
         already: 0,
         stopped: None,
         ended: false,
+        username: player.username.clone(),
+        color: request.color,
+        until: request.until,
+        max: request.max_games,
+        handed: 0,
         alive,
         stall: client.stall,
     };
@@ -505,6 +569,17 @@ pub fn download_into(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colors_are_read_from_the_header() {
+        let pgn = "[Event \"x\"]\n[White \"DrNykterstein\"]\n[Black \"Other\"]\n\n1. e4 *";
+        assert!(had_color(pgn, "drnykterstein", Color::White));
+        assert!(!had_color(pgn, "drnykterstein", Color::Black));
+        assert!(had_color(pgn, "OTHER", Color::Black));
+        assert!(!had_color("1. e4 *", "x", Color::White), "no header: not told");
+        // A tag in the moves isn't the header's.
+        assert_eq!(pgn_tag("[White \"a\"]\n\n[Black \"b\"]", "Black"), None);
+    }
 
     #[test]
     fn usernames() {

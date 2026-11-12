@@ -140,7 +140,16 @@ fn new_db() -> (tempfile::TempDir, Mutex<Database>) {
 }
 
 fn request(site: Site, period: Period) -> Request {
-    Request { site, username: "drnykterstein".into(), speeds: Vec::new(), rated_only: false, period }
+    Request {
+        site,
+        username: "drnykterstein".into(),
+        speeds: Vec::new(),
+        rated_only: false,
+        period,
+        until: None,
+        color: None,
+        max_games: None,
+    }
 }
 
 /// The games as (White, Black, Date), in the database's order.
@@ -220,6 +229,53 @@ fn lichess_games_then_only_the_new_ones() {
     // Everything again: nothing new.
     let s = download_into(&client, &db, &request(Site::Lichess, Period::All), &NoProgress).unwrap();
     assert_eq!((s.import.imported, s.already), (0, 3));
+}
+
+#[test]
+fn a_color_a_last_day_and_a_limit_narrow_the_games() {
+    // The server sends all three games whatever it's asked: the filters are
+    // checked on this side too (Chess.com has none).
+    let server = Server::start(move |path, _| match path {
+        "/api/user/drnykterstein" => profile("DrNykterstein"),
+        "/api/games/user/DrNykterstein" => {
+            Reply::Ok(200, GAMES.iter().map(|(id, w, b, d, t)| lichess_line(id, w, b, d, t)).collect())
+        }
+        _ => Reply::Ok(404, "<html>".into()),
+    });
+    let client = Client::with_servers(&server.url, &server.url);
+    let run = |change: &dyn Fn(&mut Request)| {
+        let (_dir, db) = new_db();
+        let mut req = request(Site::Lichess, Period::All);
+        change(&mut req);
+        let s = download_into(&client, &db, &req, &NoProgress).unwrap();
+        (games(&db).into_iter().map(|g| g.2).collect::<Vec<_>>(), s.covered)
+    };
+    let at = |d: &str, t: &str| date_time_ms(d, Some(t)).unwrap() + 345;
+
+    let (dates, _) = run(&|r| r.color = Some(chess_net::Color::White));
+    assert_eq!(dates, ["2026.09.01", "2026.10.02"], "DrNykterstein's white games");
+    let (dates, _) = run(&|r| r.color = Some(chess_net::Color::Black));
+    assert_eq!(dates, ["2026.09.15"]);
+
+    let last_day = date_time_ms("2026.09.20", None).unwrap();
+    let (dates, covered) = run(&|r| r.until = Some(last_day));
+    assert_eq!(dates, ["2026.09.01", "2026.09.15"]);
+    assert_eq!(covered, Some(at("2026.09.15", "11:30:00")), "games after it aren't covered");
+
+    // A limit: the newest game handed over is how far it got, so the next update goes on from there.
+    let (dates, covered) = run(&|r| r.max_games = Some(2));
+    assert_eq!(dates, ["2026.09.01", "2026.09.15"]);
+    assert_eq!(covered, Some(at("2026.09.15", "11:30:00")));
+    // Games of the other color don't count toward it.
+    let (dates, _) = run(&|r| {
+        r.color = Some(chess_net::Color::White);
+        r.max_games = Some(1);
+    });
+    assert_eq!(dates, ["2026.09.01"]);
+
+    let sent = server.requests().into_iter().filter(|r| r.starts_with("/api/games/")).collect::<Vec<_>>();
+    assert!(sent[0].contains("color=white"), "{sent:?}");
+    assert!(sent[2].contains(&format!("until={last_day}")), "{sent:?}");
 }
 
 #[test]

@@ -50,7 +50,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db =
         if Database::dir_for(&path).exists() { Database::open(&path)? } else { Database::create(&path)? };
     let db = Mutex::new(db);
-    let request = Request { site, username: user.clone(), speeds: Vec::new(), rated_only: false, period };
+    let request = Request {
+        site,
+        username: user.clone(),
+        speeds: Vec::new(),
+        rated_only: false,
+        period,
+        until: None,
+        color: None,
+        max_games: None,
+    };
     let t = Instant::now();
     let s = download_into(&Client::new(), &db, &request, &Print { last: Cell::new(u64::MAX) })?;
     eprintln!();

@@ -1612,6 +1612,9 @@ impl DownloadRequestDto {
             speeds: speeds_of(&self.speeds),
             rated_only: self.rated_only,
             period,
+            until: None,
+            color: None,
+            max_games: None,
         })
     }
 }

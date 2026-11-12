@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::commands::db::{thousands, to_job_error};
 use crate::commands::online::claim_download;
-use crate::dto::sync::{DbSyncDto, ServerAccountDto, ServerDbDto, SyncSourceDto};
+use crate::dto::sync::{DbSyncDto, LimitPolicyDto, ServerAccountDto, ServerDbDto, SyncSourceDto};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -96,9 +96,14 @@ pub async fn server_databases(app: AppHandle) -> AppResult<Vec<ServerDbDto>> {
 /// written one way, a username checked.
 fn normalized(source: SyncSourceDto) -> AppResult<SyncSourceDto> {
     Ok(match source {
-        SyncSourceDto::Player { site, username, speeds, rated_only, reached } => {
+        SyncSourceDto::Player { site, username, speeds, rated_only, color, since, until, reached } => {
             let username = chess_net::check_username(&username)?.to_owned();
-            SyncSourceDto::Player { site, username, speeds, rated_only, reached }
+            if let (Some(from), Some(to)) = (since, until)
+                && from > to
+            {
+                return Err(AppError::invalid("The first day is after the last day"));
+            }
+            SyncSourceDto::Player { site, username, speeds, rated_only, color, since, until, reached }
         }
         SyncSourceDto::Study { study, chapter, name, last_modified } => {
             // The study field may hold a pasted link.
@@ -127,11 +132,16 @@ pub async fn set_db_sync(
     handle: u32,
     sources: Vec<SyncSourceDto>,
     auto: bool,
+    limit: Option<u32>,
+    limit_policy: LimitPolicyDto,
 ) -> AppResult<Option<DbSyncDto>> {
+    if limit == Some(0) {
+        return Err(AppError::invalid("A limit is at least 1 game"));
+    }
     let path = state.list_path(handle).ok_or_else(|| AppError::not_found(format!("database {handle}")))?;
     let sources = sources.into_iter().map(normalized).collect::<AppResult<Vec<_>>>()?;
     Ok(state.update_settings(|s| {
-        s.set_sources(&path, sources, auto);
+        s.set_sources(&path, sources, auto, limit, limit_policy);
         s.synced(&path).cloned()
     }))
 }
@@ -154,18 +164,27 @@ fn update_player(
     db: &Mutex<Database>,
     path: &Path,
     source: &SyncSourceDto,
+    max_games: Option<u64>,
     ctx: &JobContext,
 ) -> Result<(SyncSourceDto, u64), NetError> {
-    let SyncSourceDto::Player { site, username, speeds, rated_only, reached } = source else {
+    let SyncSourceDto::Player { site, username, speeds, rated_only, color, since, until, reached } = source
+    else {
         unreachable!("a player's source")
     };
-    let period = reached.map_or(Period::All, Period::Since);
+    // From where the last update got to, or the first day asked for.
+    let from = match (reached, since) {
+        (Some(a), Some(b)) => Some(*a.max(b)),
+        (a, b) => a.or(*b),
+    };
     let req = Request {
         site: (*site).into(),
         username: username.clone(),
         speeds: crate::dto::speeds_of(speeds),
         rated_only: *rated_only,
-        period,
+        period: from.map_or(Period::All, Period::Since),
+        until: *until,
+        color: color.map(Into::into),
+        max_games,
     };
     let own = match req.site {
         chess_net::Site::Lichess => crate::lichess::login_of(state, username).unwrap_or_else(|e| {
@@ -280,15 +299,35 @@ fn run_update(
     state: &AppState,
     db: &Mutex<Database>,
     path: &Path,
-    sources: &[SyncSourceDto],
+    sync: &DbSyncDto,
     ctx: &JobContext,
 ) -> Result<Vec<Outcome>, JobError> {
     let mut out = Vec::new();
-    for source in sources {
+    // The limit counts the live games of every source together, and is for
+    // players' games.
+    let limit = sync.limit.filter(|_| sync.sources.iter().any(|s| matches!(s, SyncSourceDto::Player { .. })));
+    for source in &sync.sources {
         ctx.check_cancelled()?;
         let what = source.describe();
+        let mut room = None;
+        if let (Some(limit), LimitPolicyDto::Stop, SyncSourceDto::Player { .. }) =
+            (limit, sync.limit_policy, source)
+        {
+            let live = live_count(db).map_err(to_job_error)?;
+            if live >= limit {
+                out.push(Outcome {
+                    text: format!(
+                        "{what} not updated: the database has its {} games",
+                        thousands(limit.into())
+                    ),
+                    failed: false,
+                });
+                continue;
+            }
+            room = Some(u64::from(limit - live));
+        }
         let result = match source {
-            SyncSourceDto::Player { .. } => update_player(state, db, path, source, ctx),
+            SyncSourceDto::Player { .. } => update_player(state, db, path, source, room, ctx),
             SyncSourceDto::Study { .. } => update_study(state, db, path, source, ctx),
             SyncSourceDto::Server { .. } => update_server(state, db, path, source, ctx),
         };
@@ -300,7 +339,59 @@ fn run_update(
             Err(e) => Outcome { text: format!("{what}: {e}"), failed: true },
         });
     }
+    if let Some(limit) = limit {
+        let thousands = |n: u32| thousands(n.into());
+        match sync.limit_policy {
+            LimitPolicyDto::KeepLatest => {
+                let trimmed = trim_oldest(db, limit, ctx).map_err(to_job_error)?;
+                if trimmed > 0 {
+                    out.push(Outcome {
+                        text: format!(
+                            "the {} oldest games over the limit of {} were marked as deleted (Compact the database to free the space)",
+                            thousands(trimmed),
+                            thousands(limit)
+                        ),
+                        failed: false,
+                    });
+                }
+            }
+            LimitPolicyDto::Stop if live_count(db).map_err(to_job_error)? >= limit => out.push(Outcome {
+                text: format!(
+                    "the database has its limit of {} games: it stops updating until the limit is raised or games are removed",
+                    thousands(limit)
+                ),
+                failed: false,
+            }),
+            LimitPolicyDto::Stop => {}
+        }
+    }
     Ok(out)
+}
+
+/// The games in the database, not counting those marked as deleted.
+fn live_count(db: &Mutex<Database>) -> Result<u32, chess_db::DbError> {
+    let mut db = db.lock().expect("db lock");
+    Ok(db.game_stats()?.iter().filter(|g| !g.deleted).count() as u32)
+}
+
+/// Marks the oldest games (by date, then as they came) over `limit` as
+/// deleted; how many.
+fn trim_oldest(
+    db: &Mutex<Database>,
+    limit: u32,
+    progress: &dyn chess_db::Progress,
+) -> Result<u32, chess_db::DbError> {
+    use chess_db::{SortKey, SortSpec, ensure_sort};
+    let order = ensure_sort(db, SortSpec::new(SortKey::Date, false), progress)?;
+    let mut db = db.lock().expect("db lock");
+    let deleted: Vec<bool> = db.game_stats()?.iter().map(|g| g.deleted).collect();
+    let live: Vec<chess_db::GameId> =
+        order.iter().copied().filter(|&id| !deleted.get(id as usize).copied().unwrap_or(false)).collect();
+    let over = live.len().saturating_sub(limit as usize);
+    if over > 0 {
+        db.set_deleted_many(&live[..over], true)?;
+    }
+    Ok(over as u32)
 }
 
 /// Updates the database from its sources as a job, one download at a time.
@@ -310,13 +401,13 @@ fn run_update(
 pub async fn sync_database(app: AppHandle, state: State<'_, AppState>, handle: u32) -> AppResult<u64> {
     let db = state.db(handle)?;
     let path = state.list_path(handle).ok_or_else(|| AppError::not_found(format!("database {handle}")))?;
-    let sources = state
+    let sync = state
         .settings
         .lock()
         .expect("settings lock")
         .synced(&path)
-        .map(|d| d.sources.clone())
-        .filter(|s| !s.is_empty())
+        .cloned()
+        .filter(|d| !d.sources.is_empty())
         .ok_or_else(|| AppError::invalid("This database has no sources to update from"))?;
     let label = "Updating the database".to_owned();
     let slot = claim_download(&app, &label)?;
@@ -324,7 +415,7 @@ pub async fn sync_database(app: AppHandle, state: State<'_, AppState>, handle: u
     Ok(state.jobs.spawn("sync", label, move |ctx| {
         let _slot = slot;
         let state = app.state::<AppState>();
-        let result = run_update(&state, &db, &path, &sources, ctx);
+        let result = run_update(&state, &db, &path, &sync, ctx);
         let (message, failed) = match &result {
             Ok(outcomes) => {
                 let failed = outcomes.iter().any(|o| o.failed);
@@ -350,4 +441,50 @@ pub async fn sync_database(app: AppHandle, state: State<'_, AppState>, handle: u
         result?;
         if failed { Err(JobError::failed(message)) } else { Ok(message) }
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chess_db::{NoProgress, import_pgn};
+
+    fn db_with(fixture: &str) -> (tempfile::TempDir, Mutex<Database>) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Mutex::new(Database::create(&dir.path().join("Sync")).unwrap());
+        let file =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/pgn").join(fixture);
+        import_pgn(&db, &file, &NoProgress).unwrap();
+        (dir, db)
+    }
+
+    /// The dates of the games not marked as deleted, in game order.
+    fn live_dates(db: &Mutex<Database>) -> Vec<String> {
+        let mut db = db.lock().unwrap();
+        let gone: Vec<bool> = db.game_stats().unwrap().iter().map(|g| g.deleted).collect();
+        (0..db.count()).filter(|&i| !gone[i as usize]).map(|i| db.row(i).unwrap().date).collect()
+    }
+
+    #[test]
+    fn the_oldest_games_over_the_limit_are_marked_as_deleted() {
+        let (_dir, db) = db_with("crosstable.pgn");
+        let total = live_count(&db).unwrap();
+        assert!(total > 4);
+        let mut dates = live_dates(&db);
+        dates.sort();
+        // Nothing over the limit: nothing goes.
+        assert_eq!(trim_oldest(&db, total, &NoProgress).unwrap(), 0);
+        // A game already deleted doesn't count toward it.
+        db.lock().unwrap().set_deleted_many(&[0], true).unwrap();
+        assert_eq!(live_count(&db).unwrap(), total - 1);
+        assert_eq!(trim_oldest(&db, total - 1, &NoProgress).unwrap(), 0);
+        // Over it: the oldest by date go, and what's left is the newest.
+        let left = trim_oldest(&db, 3, &NoProgress).unwrap();
+        assert_eq!(left, total - 1 - 3);
+        assert_eq!(live_count(&db).unwrap(), 3);
+        let mut kept = live_dates(&db);
+        kept.sort();
+        assert_eq!(kept, dates[dates.len() - 3..], "the three newest dates");
+        // Again: nothing more.
+        assert_eq!(trim_oldest(&db, 3, &NoProgress).unwrap(), 0);
+    }
 }

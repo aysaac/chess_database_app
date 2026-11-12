@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SyncSourceDto } from "./bindings/SyncSourceDto";
-import { describeSource, hostOf, lastUpdate, nameFor } from "./sync.ts";
+import { day, describeSource, endOfDay, hostOf, lastUpdate, nameFor } from "./sync.ts";
 
 const player: SyncSourceDto = {
   kind: "player",
@@ -9,6 +9,9 @@ const player: SyncSourceDto = {
   username: "hikaru",
   speeds: ["blitz", "correspondence"],
   ratedOnly: true,
+  color: null,
+  since: null,
+  until: null,
   reached: null,
 };
 
@@ -37,9 +40,32 @@ test("sources are described in a few words", () => {
   assert.equal(hostOf("http://192.168.1.2:8080"), "192.168.1.2:8080");
 });
 
+test("filters are part of the description", () => {
+  const first = new Date(2025, 0, 31).getTime();
+  const last = endOfDay("2025-12-31");
+  assert.equal(day(first), "2025-01-31");
+  assert.equal(day(last), "2025-12-31", "the last millisecond is still that day");
+  assert.equal(
+    describeSource({ ...player, speeds: [], ratedOnly: false, color: "white", since: first, until: last }),
+    "hikaru's Chess.com games — as white, from 2025-01-31 to 2025-12-31",
+  );
+  assert.equal(
+    describeSource({ ...player, speeds: [], ratedOnly: false, until: last }),
+    "hikaru's Chess.com games — to 2025-12-31",
+  );
+});
+
 test("the last update is told in words", () => {
   const now = 10_000_000_000;
-  const sync = { sources: [], auto: true, lastUpdate: now - 5 * 60000, lastResult: "2 new games", lastFailed: false };
+  const sync = {
+    sources: [],
+    auto: true,
+    limit: null,
+    limitPolicy: "stop" as const,
+    lastUpdate: now - 5 * 60000,
+    lastResult: "2 new games",
+    lastFailed: false,
+  };
   assert.equal(lastUpdate(null, now), "Not updated yet");
   assert.equal(lastUpdate({ ...sync, lastUpdate: null }, now), "Not updated yet");
   assert.equal(lastUpdate(sync, now), "Updated 5 min ago: 2 new games");

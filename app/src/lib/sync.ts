@@ -11,6 +11,19 @@ function speedLabel(site: keyof typeof SITE_NAMES, speed: string): string {
   return speed[0].toUpperCase() + speed.slice(1);
 }
 
+/** A day (ms since the epoch) as `YYYY-MM-DD` where the user is. */
+export function day(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** The end of a day (`YYYY-MM-DD`) where the user is, in ms: its last millisecond. */
+export function endOfDay(date: string): number {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y, m - 1, d + 1).getTime() - 1;
+}
+
 /** A server's address without its scheme, as people say it. */
 export function hostOf(url: string): string {
   return url.replace(/^[a-z]+:\/\//i, "");
@@ -25,7 +38,13 @@ export function describeSource(source: SyncSourceDto): string {
         : source.ratedOnly
           ? " (rated)"
           : "";
-      return `${source.username}'s ${SITE_NAMES[source.site]} games${speeds}`;
+      const extra = [
+        source.color ? `as ${source.color}` : "",
+        source.since !== null || source.until !== null
+          ? `${source.since !== null ? "from " + day(source.since) : ""}${source.since !== null && source.until !== null ? " " : ""}${source.until !== null ? "to " + day(source.until) : ""}`
+          : "",
+      ].filter(Boolean);
+      return `${source.username}'s ${SITE_NAMES[source.site]} games${speeds}${extra.length ? ` — ${extra.join(", ")}` : ""}`;
     }
     case "study":
       return `Lichess study: ${source.name}${source.chapter ? " (one chapter)" : ""}`;
