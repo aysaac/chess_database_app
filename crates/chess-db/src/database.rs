@@ -212,7 +212,7 @@ pub struct Database {
     dir: PathBuf,
     id: String,
     // Held for the lifetime of the database; dropping it releases the lock.
-    _lock: File,
+    _lock: DirLock,
     idx: File,
     blob: File,
     names: [NameTable; 4],
@@ -253,11 +253,29 @@ fn random_id() -> String {
     out
 }
 
-fn lock_dir(dir: &Path) -> Result<File, DbError> {
+/// The lock on a database's folder (its `LOCK_FILE`), held while it's open.
+///
+/// Dropping it unlocks the file before closing it. Closing alone isn't
+/// enough on Unix: a process that another thread is starting holds a copy of
+/// every descriptor from its fork until it runs its program, and an flock
+/// lasts while any copy is open. The database then stayed locked for that
+/// moment, so reopening it right after closing it could fail with `Locked`
+/// while an engine started (the `chess-app` tests did, 1 run in 2 at worst;
+/// `tests/lock_race.rs`). Unlocking releases it at once, copies or not.
+struct DirLock(File);
+
+impl Drop for DirLock {
+    fn drop(&mut self) {
+        // An error leaves it to the close, which releases it once no copy is left.
+        let _ = self.0.unlock();
+    }
+}
+
+fn lock_dir(dir: &Path) -> Result<DirLock, DbError> {
     let lock =
         OpenOptions::new().read(true).write(true).create(true).truncate(false).open(dir.join(LOCK_FILE))?;
     match lock.try_lock() {
-        Ok(()) => Ok(lock),
+        Ok(()) => Ok(DirLock(lock)),
         Err(std::fs::TryLockError::WouldBlock) => Err(DbError::Locked(dir.to_path_buf())),
         Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
     }
