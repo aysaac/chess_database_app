@@ -27,7 +27,7 @@
     mode: "open" | "new";
     onClose: () => void;
     /** Limits the dialog to one place the games come from (the new-database chooser's). */
-    only?: "lichess" | "chesscom" | "server";
+    only?: "online" | "study" | "server";
     /** Back to the chooser. */
     onBack?: () => void;
   } = $props();
@@ -35,6 +35,28 @@
   let sources = $state<SyncSourceDto[]>([]);
   let auto = $state(true);
   let kind = $state<"player" | "study" | "server">("player");
+
+  type Kind = typeof kind;
+  /**
+   * What a database can mix: player accounts with each other (Lichess and
+   * Chess.com), but a study or a server database only with its own kind,
+   * so each stays the one thing that owns its games.
+   */
+  const allowed = $derived<Kind[]>(
+    only
+      ? [{ online: "player", study: "study", server: "server" }[only] as Kind]
+      : sources.length
+        ? [sources[0].kind]
+        : ["player", "study", "server"],
+  );
+  $effect(() => {
+    if (!allowed.includes(kind)) kind = allowed[0];
+  });
+  const KIND_LABELS: Record<Kind, string> = {
+    player: "A player's games",
+    study: "A Lichess study",
+    server: "My server",
+  };
   let error = $state("");
   let busy = $state(false);
 
@@ -54,9 +76,6 @@
   let pickedDb = $state("");
 
   onMount(() => {
-    if (only === "server") kind = "server";
-    if (only === "chesscom") site = "chessCom";
-    if (only === "chesscom" || only === "lichess") speeds = siteSpeeds(site);
     if (mode === "open" && db.syncInfo) {
       sources = db.syncInfo.sources.map((s) => ({ ...s }));
       auto = db.syncInfo.auto;
@@ -200,7 +219,7 @@
 
 <Modal
   title={only
-    ? `New database from ${only === "server" ? "my server" : only === "chesscom" ? "Chess.com" : "Lichess"}`
+    ? `New database from ${only === "server" ? "my server" : only === "study" ? "a Lichess study" : "online games"}`
     : mode === "new"
       ? "New database from Lichess, Chess.com or my server"
       : "Keep this database up to date"}
@@ -232,17 +251,24 @@
 
   <fieldset disabled={busy}>
     <legend>Add a source</legend>
-    <div class="kinds" role="radiogroup" aria-label="Kind of source" hidden={only === "server" || only === "chesscom"}>
-      {#each [["player", "A player's games"], ["study", "A Lichess study"], ["server", "My server"]].filter(([k]) => !only || (only === "server" ? k === "server" : only === "chesscom" ? k === "player" : k !== "server")) as [k, label] (k)}
-        <label class="check">
-          <input type="radio" name="sync-kind" checked={kind === k} onchange={() => (kind = k as typeof kind)} />
-          {label}
-        </label>
-      {/each}
-    </div>
+    {#if allowed.length > 1}
+      <div class="kinds" role="radiogroup" aria-label="Kind of source">
+        {#each allowed as k (k)}
+          <label class="check">
+            <input type="radio" name="sync-kind" checked={kind === k} onchange={() => (kind = k)} />
+            {KIND_LABELS[k]}
+          </label>
+        {/each}
+      </div>
+    {:else if !only && sources.length && kind !== "player"}
+      <p class="soft">
+        {kind === "study" ? "A study" : "A server database"} can't be mixed with other kinds of source: the games it
+        owns have to stay clear.
+      </p>
+    {/if}
 
     {#if kind === "player"}
-      <div class="row" hidden={only !== undefined}>
+      <div class="row">
         {#each SITES as s (s)}
           <label class="check">
             <input
@@ -379,10 +405,6 @@
     justify-content: space-between;
     gap: 8px;
     align-items: center;
-  }
-  .kinds[hidden],
-  .row[hidden] {
-    display: none;
   }
   .kinds,
   .row {
