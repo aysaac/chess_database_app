@@ -316,6 +316,13 @@
           </label>
         {/each}
       </div>
+      {#if site === "lichess"}
+        <div class="login">
+          <LichessAccount
+            why="Log in to Lichess so your own games download 3 times as fast. It's optional for public games, and the login stays in this app (in the system's keyring)."
+          />
+        </div>
+      {/if}
       <label class="field">
         Username on {SITE_NAMES[site]}
         <input bind:value={username} autocomplete="off" autocapitalize="off" spellcheck="false" />
@@ -397,7 +404,9 @@
     {/if}
 
     {#if kind !== "server" || account?.username}
-      <button type="button" onclick={add} disabled={kind === "server" && !pickedDb}>Add this source</button>
+      <button type="button" class="add" onclick={add} disabled={kind === "server" && !pickedDb}
+        >+ Add this source</button
+      >
     {/if}
   </fieldset>
 
@@ -443,6 +452,16 @@
     color: var(--ink-soft, inherit);
     opacity: 0.8;
     font-size: 0.92em;
+  }
+  .login {
+    padding: 10px 12px;
+    border: 1px solid var(--brass);
+    border-radius: 8px;
+    background: var(--brass-soft);
+  }
+  .add {
+    justify-self: start;
+    font-weight: 600;
   }
   .studies {
     list-style: none;
