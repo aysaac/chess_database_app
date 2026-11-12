@@ -10,10 +10,13 @@
   import Icon from "./Icon.svelte";
   import LibraryBrowser from "./LibraryBrowser.svelte";
   import SettingsDialog from "./SettingsDialog.svelte";
+  import NewDatabaseDialog, { type NewSource } from "./NewDatabaseDialog.svelte";
   import SyncDialog from "./SyncDialog.svelte";
 
   let showSettings = $state(false);
-  let showSync = $state(false);
+  /** The new-database chooser, and the source it led to (not scratch). */
+  let choosing = $state(false);
+  let source = $state<Exclude<NewSource, "scratch"> | null>(null);
   let busy = $state(false);
 
   async function open(path: string) {
@@ -72,20 +75,33 @@
       onclick={openBoard}>Open board</button
     >
     <button class="btn" disabled={busy} onclick={openExisting}>Open database…</button>
-    <button
-      class="btn"
-      title="Make a database from a player's Lichess or Chess.com games, a Lichess study or your server, and keep it up to date"
-      disabled={busy}
-      onclick={() => (showSync = true)}>New from Lichess, Chess.com or server…</button
-    >
-    <button class="btn primary" disabled={busy} onclick={newDatabase}>+ New database</button>
+    <button class="btn primary" disabled={busy} onclick={() => (choosing = true)}>+ New database</button>
   </header>
 
   <LibraryBrowser onOpen={open} onSettings={() => (showSettings = true)} />
 </div>
 
-{#if showSync}
-  <SyncDialog mode="new" onClose={() => (showSync = false)} />
+{#if choosing}
+  <NewDatabaseDialog
+    onClose={() => (choosing = false)}
+    onPick={(pick) => {
+      choosing = false;
+      if (pick === "scratch") void newDatabase();
+      else source = pick;
+    }}
+  />
+{/if}
+
+{#if source}
+  <SyncDialog
+    mode="new"
+    only={source}
+    onClose={() => (source = null)}
+    onBack={() => {
+      source = null;
+      choosing = true;
+    }}
+  />
 {/if}
 
 {#if showSettings}
