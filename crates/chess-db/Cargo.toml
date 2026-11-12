@@ -12,6 +12,8 @@ chess-jobs.workspace = true
 shakmaty.workspace = true
 thiserror.workspace = true
 log.workspace = true
+# Permanent game ids (NET-13): 16 random bytes each, from the OS.
+getrandom = "0.4"
 
 [dev-dependencies]
 proptest.workspace = true

@@ -180,7 +180,8 @@ The ones for one area are in its file (see the table at the top).
 
 - **Game ids change on compaction.** Anything that stores `(handle, game)`
   must be remapped (`AppState::remap_sources`) or dropped (filters, sorts,
-  the position index).
+  the position index), or store the game's permanent id (`chess_db::GameUid`,
+  see `crates/chess-db/AGENTS.md`), which never changes.
 - **`tauri dev` reloads on edits.** Editing files under `app/src`
   hot-reloads the UI, and **any write under `app/src-tauri/` or `crates/*`
   rebuilds and restarts the app**, which looks like a crash. A smoke run in

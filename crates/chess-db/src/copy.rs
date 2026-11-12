@@ -3,7 +3,9 @@
 //!
 //! Games are copied as stored: the blob bytes are reused and only the names
 //! are looked up again in the target's name tables, so nothing is decoded
-//! and a copy is exactly the original.
+//! and a copy is exactly the original. A copy gets its own permanent id in
+//! the target, which records the original's as its origin
+//! ([`Database::origin`]).
 
 use std::sync::Mutex;
 
@@ -54,7 +56,7 @@ pub fn copy_games(
                 if rec.is_deleted() {
                     summary.skipped_deleted += 1;
                 } else {
-                    batch.push(db.prepared_from(&rec)?);
+                    batch.push(db.prepared_from(&rec)?.with_origin(db.uid(id)?));
                     batch_ids.push(id);
                 }
             }
@@ -101,11 +103,14 @@ mod tests {
         let summary = copy_games(&source, &ids, &target, &NoProgress).unwrap();
         assert_eq!(summary, CopySummary { copied: vec![4, 0, 2], skipped_deleted: 1, cancelled: false });
 
-        let (src, dst) = (source.lock().unwrap(), target.lock().unwrap());
+        let (src, mut dst) = (source.lock().unwrap(), target.lock().unwrap());
         assert_eq!(dst.count(), 4, "appended after the target's own game");
+        assert_eq!(dst.origin(0).unwrap(), None);
         for (copy, &id) in (1..).zip(&summary.copied) {
             assert_eq!(dst.read_game(copy).unwrap(), src.read_game(id).unwrap(), "game {id}");
             assert_eq!(dst.read_blob(copy).unwrap(), src.read_blob(id).unwrap(), "same bytes");
+            assert_ne!(dst.uid(copy).unwrap(), src.uid(id).unwrap(), "a new permanent id");
+            assert_eq!(dst.origin(copy).unwrap(), Some(src.uid(id).unwrap()), "naming the original's");
             let (a, b) = (dst.row(copy).unwrap(), src.row(id).unwrap());
             assert_eq!(
                 (a.white, a.date, a.round, a.eco, a.plies),

@@ -610,6 +610,7 @@ version = "0.1.0"
 dependencies = [
  "chess-core",
  "chess-jobs",
+ "getrandom 0.4.3",
  "log",
  "proptest",
  "shakmaty",

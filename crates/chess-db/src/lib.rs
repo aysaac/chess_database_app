@@ -20,6 +20,7 @@ pub mod reference;
 mod search;
 mod sort;
 mod tags;
+mod uid;
 
 use std::path::PathBuf;
 
@@ -50,8 +51,12 @@ pub use reference::{
 pub use search::{EloMode, GameSet, HeaderQuery, ResultFilter, fold, games_with_name, search_headers};
 pub use sort::{SortKey, SortSpec, build_sort, ensure_sort, page_ids, sorted_subset, subset_in};
 pub use tags::{TaggedGame, scan_tags};
+pub use uid::GameUid;
 
-/// Zero-based index of a game in its database.
+/// Zero-based index (slot) of a game in its database: what lists, sorts,
+/// the position index and every other hot path use. A compaction changes
+/// it ([`CompactSummary::mapping`]); what must outlive one keeps the game's
+/// permanent id ([`GameUid`], [`Database::uid`]) instead.
 pub type GameId = u32;
 
 #[derive(Debug, thiserror::Error)]
