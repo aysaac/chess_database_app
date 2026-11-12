@@ -10,7 +10,9 @@
 //! keeps us waiting. No UI dependencies: blocking HTTP through `ureq`.
 //!
 //! Lichess studies too: logging in (NET-11, [`oauth`]), a study's chapters
-//! into a database and games out to studies (IO-10, NET-12, [`study`]).
+//! into a database and games out to studies (IO-10, NET-12, [`study`]), and
+//! the check NET-13 needs first: what Lichess keeps of annotated games
+//! ([`study::roundtrip`], run by `examples/study_roundtrip.rs`).
 //! And the self-hosted server (NET-03, [`server`]): signing in, its
 //! databases, and a local copy of one kept up to date.
 
