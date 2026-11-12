@@ -251,6 +251,8 @@ pub struct AppState {
     pub download: Mutex<Option<String>>,
     /// The Lichess login (NET-11), and what the study commands keep.
     pub lichess: crate::lichess::Lichess,
+    /// The sign-in to the self-hosted server (NET-03).
+    pub server: crate::server_login::Server,
     /// The last import into each database (by handle), while it had warnings.
     pub import_reports: Mutex<HashMap<u32, ImportReportDto>>,
     /// The searches for duplicate games (DB-08) in each database in the

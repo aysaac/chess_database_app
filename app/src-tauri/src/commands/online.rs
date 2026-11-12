@@ -14,7 +14,7 @@ use crate::settings::DownloadMark;
 use crate::state::AppState;
 
 /// One client for the app, so connections are kept between requests.
-fn client() -> &'static Client {
+pub(crate) fn client() -> &'static Client {
     static CLIENT: OnceLock<Client> = OnceLock::new();
     CLIENT.get_or_init(Client::new)
 }

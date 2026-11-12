@@ -19,6 +19,8 @@
   import BlunderCheckDialog from "./BlunderCheckDialog.svelte";
   import BoardImageMenu from "./BoardImageMenu.svelte";
   import DownloadGamesDialog from "./DownloadGamesDialog.svelte";
+  import SyncDialog from "./SyncDialog.svelte";
+  import { lastUpdate } from "../sync";
   import DuplicatesDialog from "./DuplicatesDialog.svelte";
   import EngineDialog from "./EngineDialog.svelte";
   import FenDialog from "./FenDialog.svelte";
@@ -36,6 +38,7 @@
   let libraryView = $state(false);
   let gotoDialog = $state(false);
   let engineDialog = $state(false);
+  let syncDialog = $state(false);
   let blunderDialog = $state(false);
   let duplicatesDialog = $state(false);
 
@@ -298,6 +301,24 @@
       onclick={() => (online.dialog = true)}
     />
     <RibbonButton
+      icon="refresh-cw"
+      label="Update"
+      title={db.syncInfo?.sources.length
+        ? `Bring the new games in from this database's sources. ${lastUpdate(db.syncInfo, Date.now())}`
+        : "This database has no sources to update from: set them with Keep up to date…"}
+      {compact}
+      disabled={!db.info || !db.syncInfo?.sources.length}
+      onclick={() => db.update()}
+    />
+    <RibbonButton
+      icon="cloud-download"
+      label="Keep up to date…"
+      title="Choose where this database gets its games (a player on Lichess or Chess.com, a Lichess study, your server) and whether it updates when opened"
+      {compact}
+      disabled={!db.info}
+      onclick={() => (syncDialog = true)}
+    />
+    <RibbonButton
       icon="file-up"
       label="Export PGN"
       title="Save the games of the list (filtered or all) as a PGN file"
@@ -396,6 +417,10 @@
     </div>
   </div>
 </section>
+
+{#if syncDialog}
+  <SyncDialog mode="open" onClose={() => (syncDialog = false)} />
+{/if}
 
 {#if engineDialog}
   <EngineDialog onClose={() => (engineDialog = false)} />

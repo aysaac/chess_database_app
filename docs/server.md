@@ -664,6 +664,7 @@ must offer them its source) is an open question for the project.
 
 ## What's next
 
+- **Done in part (NET-14)**: the app signs in with an API token and keeps a local copy of a database up to date by game number (new games only; no edits or deletions yet).
 - **Phase 2**: the desktop app as a client (open a server database like a
   local one, through an API token), with its DTOs and the server's shared
   in one crate; sync of a user's own databases; an offline copy per

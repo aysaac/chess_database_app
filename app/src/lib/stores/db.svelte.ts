@@ -1,3 +1,4 @@
+import type { DbSyncDto } from "../bindings/DbSyncDto";
 import { documentDir, join } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api, isAppError } from "../api";
@@ -318,6 +319,42 @@ class DbStore {
     }
   }
 
+  /** How the open database keeps up to date (NET-01, IO-10, NET-03); null if it doesn't. */
+  syncInfo = $state<DbSyncDto | null>(null);
+
+  async loadSync() {
+    const handle = this.info?.handle;
+    if (handle === undefined) {
+      this.syncInfo = null;
+      return;
+    }
+    try {
+      const sync = await api.dbSync(handle);
+      if (this.info?.handle === handle) this.syncInfo = sync;
+    } catch (e) {
+      notices.error(e);
+    }
+  }
+
+  /** Brings the new games from the database's sources in, as a job. */
+  async update(): Promise<JobDto | null> {
+    const done = await this.#addGames((handle) => api.syncDatabase(handle));
+    // The job noted how it went when it ended.
+    await this.loadSync();
+    return done;
+  }
+
+  /**
+   * A database that keeps up to date on its own updates when it's opened,
+   * and one made from a source that never was starts its first update now.
+   */
+  async #autoUpdate(handle: number) {
+    await this.loadSync();
+    const sync = this.syncInfo;
+    if (this.info?.handle !== handle || !sync || sync.sources.length === 0) return;
+    if (sync.auto || sync.lastUpdate === null) void this.update();
+  }
+
   async #use(info: DbInfoDto) {
     if (this.info && this.info.handle !== info.handle) {
       await this.#saving;
@@ -332,9 +369,11 @@ class DbStore {
     this.quickText = "";
     this.filterVersion++;
     this.listVersion++;
+    this.syncInfo = null;
     void this.loadRecent();
     void this.ensureIndex();
     await this.#restoreView(info.handle);
+    void this.#autoUpdate(info.handle);
   }
 
   /**
