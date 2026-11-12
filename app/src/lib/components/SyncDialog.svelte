@@ -16,7 +16,10 @@
   import { requestSpeeds, SITE_NAMES, SITES, siteSpeeds, speedLabel, usernameProblem } from "../online";
   import { describeSource, hostOf, nameFor } from "../sync";
   import { db, inDocuments } from "../stores/db.svelte";
+  import LichessAccount from "./LichessAccount.svelte";
   import Modal from "./Modal.svelte";
+  import type { StudyInfoDto } from "../bindings/StudyInfoDto";
+  import { lichess } from "../stores/lichess.svelte";
 
   let {
     mode,
@@ -67,6 +70,8 @@
   let ratedOnly = $state(false);
   // A study
   let link = $state("");
+  let studies = $state<StudyInfoDto[] | null>(null);
+  let listing = $state(false);
   // The server
   let account = $state<ServerAccountDto | null>(null);
   let serverUrl = $state("");
@@ -82,6 +87,32 @@
     }
     void loadAccount();
   });
+
+  /** Logged in to Lichess: the user's own studies, private and unlisted ones too. */
+  $effect(() => {
+    const user = lichess.username;
+    if (kind !== "study" || !user || studies !== null || listing) return;
+    void listStudies(user);
+  });
+
+  async function listStudies(user: string) {
+    listing = true;
+    try {
+      studies = await api.lichessStudies(user);
+    } catch (e) {
+      studies = [];
+      error = errorMessage(e);
+      void lichess.checkError(e);
+    } finally {
+      listing = false;
+    }
+  }
+
+  /** Adds the study picked from the list. */
+  function pick(s: StudyInfoDto) {
+    link = s.link;
+    void add();
+  }
 
   async function loadAccount() {
     try {
@@ -153,6 +184,7 @@
         source = { kind: "study", study: study.link, chapter: null, name: study.name, lastModified: null };
       } catch (e) {
         error = errorMessage(e);
+        void lichess.checkError(e);
         return;
       } finally {
         busy = false;
@@ -298,11 +330,30 @@
         <label class="check"><input type="checkbox" bind:checked={ratedOnly} /> Rated only</label>
       </div>
     {:else if kind === "study"}
+      <LichessAccount
+        why="Log in to list your own studies, private and unlisted ones too, and to keep them up to date. The login stays in this app (in the system's keyring); public studies need none."
+      />
+      {#if lichess.username}
+        {#if listing}
+          <p class="soft">Listing your studies…</p>
+        {:else if studies?.length}
+          <ul class="studies" aria-label="Your studies">
+            {#each studies as s (s.id)}
+              <li>
+                <button type="button" onclick={() => pick(s)} title="Add {s.name}">
+                  <span>{s.name}</span><span class="soft">{s.updated}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {:else if studies}
+          <p class="soft">{lichess.username} has no studies.</p>
+        {/if}
+      {/if}
       <label class="field">
-        Study link
+        Or paste a study's link
         <input bind:value={link} placeholder="https://lichess.org/study/…" spellcheck="false" />
       </label>
-      <p class="soft">Private studies need the Lichess login (Import study… has it).</p>
     {:else if account?.username}
       <p class="who">
         Signed in to {hostOf(account.url ?? "")} as <strong>{account.username}</strong>.
@@ -392,6 +443,28 @@
     color: var(--ink-soft, inherit);
     opacity: 0.8;
     font-size: 0.92em;
+  }
+  .studies {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 160px;
+    overflow: auto;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+  }
+  .studies button {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: left;
+  }
+  .studies button:hover {
+    background: var(--brass-soft);
   }
   .sources {
     list-style: none;
