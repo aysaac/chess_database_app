@@ -1051,8 +1051,10 @@ impl Database {
         const CHUNK: u32 = 16 * 1024;
         self.flush_names()?;
         recover_compaction(&self.dir)?;
+        // Which origins to keep is found through the map of ids. Built here
+        // only for that, it goes after (8 bytes a game nothing asked for).
+        let keep_map = self.uid_index.is_some();
         if !self.origins.is_empty() {
-            // Which origins to keep is found by the games' ids.
             self.ensure_uid_index()?;
         }
         let bytes_before = self.info().size_bytes;
@@ -1132,16 +1134,19 @@ impl Database {
             Ok(())
         })();
         if let Err(e) = result {
+            if !keep_map {
+                self.uid_index = None;
+            }
             drop((new_idx, new_blob, new_names, new_ids, new_origins));
             recover_compaction(&self.dir)?;
             return Err(e);
         }
 
+        // Put back, renumbered, once the swap is done, if it was there
+        // before: a swap cut short leaves no map of the old slots behind.
+        let uid_index = self.uid_index.take().filter(|_| keep_map);
         // Commit: from here on, opening the database finishes the swap.
         write_atomic(&self.dir.join(COMPACT_MARKER), b"compact\n")?;
-        // Put back, renumbered, once the swap is done: a swap cut short
-        // leaves no map of the old slots behind.
-        let uid_index = self.uid_index.take();
         // Swap handles first (closing the old files: Windows can't replace
         // open files), then the files.
         self.idx = new_idx;
@@ -1689,6 +1694,33 @@ mod tests {
         assert_eq!(db.uids(0, 3).unwrap(), [uids[1], uids[2], uids[5]]);
         assert_eq!(db.game_by_uid(uids[5]).unwrap(), Some(2));
         assert_eq!(db.game_by_uid(uids[0]).unwrap(), None);
+    }
+
+    /// A compaction of a database holding copies builds the map of ids to
+    /// find which origins to keep; the map stays only if it was there
+    /// before, renumbered.
+    #[test]
+    fn compaction_keeps_the_map_of_ids_only_if_it_was_built() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Map")).unwrap();
+        let origin = mint(1).unwrap()[0];
+        for _ in 0..2 {
+            let game = &sample_games()[0];
+            db.append(game).unwrap();
+            db.append_prepared(&[PreparedGame::new(game).with_origin(origin)]).unwrap();
+        }
+        let copy = db.uid(3).unwrap();
+        db.set_deleted(0, true).unwrap();
+        db.compact(&crate::NoProgress).unwrap();
+        assert!(db.uid_index.is_none(), "nothing had looked an id up");
+        assert_eq!(db.origin(2).unwrap(), Some(origin));
+
+        assert_eq!(db.game_by_uid(copy).unwrap(), Some(2));
+        db.set_deleted(0, true).unwrap();
+        db.compact(&crate::NoProgress).unwrap();
+        assert!(db.uid_index.is_some(), "it had been built: it follows");
+        assert_eq!(db.game_by_uid(copy).unwrap(), Some(1));
+        assert_eq!(db.origin(1).unwrap(), Some(origin));
     }
 
     /// A commit writes its permanent ids, and its copies' origins, before
