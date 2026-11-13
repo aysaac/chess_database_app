@@ -461,9 +461,14 @@ impl Database {
 
     pub fn open(path: &Path) -> Result<Database, DbError> {
         let dir = path.to_path_buf();
-        let (version, id) = read_meta(&dir)?;
-
+        // Checked before locking, which would leave a `.lock` in a folder
+        // that isn't a database.
+        read_meta(&dir)?;
         let lock = lock_dir(&dir)?;
+        // Read again under the lock: another handle may have upgraded the
+        // database and handed out its permanent ids in between, and an
+        // upgrade from the version read before would replace them all.
+        let (version, id) = read_meta(&dir)?;
         recover_compaction(&dir)?;
         let open = |name: &str| OpenOptions::new().read(true).write(true).open(dir.join(name));
         let idx = open(IDX_FILE)?;
