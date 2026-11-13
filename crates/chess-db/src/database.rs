@@ -486,6 +486,10 @@ impl Database {
             // Left over from a rename interrupted before its swap.
             let _ = std::fs::remove_file(tmp_path(&dir.join(name)));
         }
+        for name in [META_FILE, COMPACT_MARKER] {
+            // `write_atomic`'s, likewise (`db.tmp`, `compact.tmp`).
+            let _ = std::fs::remove_file(dir.join(name).with_extension("tmp"));
+        }
         if version < META_VERSION {
             // Version 1 had no position index, version 2 no permanent ids.
             // Every game gets one now. A `games.ids` already there is from

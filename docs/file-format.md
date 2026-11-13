@@ -34,8 +34,11 @@ fine and are upgraded to 3 on open ([the upgrade](#the-upgrade-to-version-3)).
 Once a newer app has opened a database, an app from before version 3
 refuses it ("unsupported format version 3"), in its library too, and
 changes nothing: it would add, copy or compact games without their ids, and
-a compaction would leave each id on another game. The binary files keep
-their own header versions (all 1).
+a compaction would leave each id on another game. To open one in an older
+app again, set `db.meta`'s first line back to `chessdb 2`: that app leaves
+`games.ids` and `games.origins` alone, and the next newer one upgrades the
+database again, with a new id for every game. The binary files keep their
+own header versions (all 1).
 
 A game's **id** in the code and the UI (`GameId`) is its **slot**: its
 zero-based position in `games.idx`. Deleting a game only sets a flag, but a
@@ -175,7 +178,9 @@ so export stays lossless.
 Every game has a permanent id: 16 random bytes from the OS's random source,
 laid out as a UUID version 4 (RFC 9562) and written as one in text
 (`1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b`). With 122 random bits it's unique
-across databases, and it's never reused: a game keeps it through edits,
+across databases (a database folder copied outside the app, by a file
+manager or a backup, keeps its ids, as it keeps its `db.meta` id), and it's
+never reused: a game keeps it through edits,
 deletion, undeletion and compactions, and a game a compaction removes takes
 its id with it. It's the groundwork for NET-13 (games kept in step with a
 Lichess study's chapters) and for editing a server's games from the app.
@@ -225,7 +230,8 @@ Opening a version 1 or 2 database:
 No id is handed out before step 3. After a crash before it, the database is
 still version 2 and the next open does it all again, replacing a
 `games.ids` already there (an older app may have changed the games since).
-`*.tmp` files left over are deleted on open. What it costs is under
+Temp files left over (`games.ids.tmp`, `games.origins.tmp`, `db.tmp`) are
+deleted on open. What it costs is under
 [Measured](#measured-prototype-release-build-sep-2026).
 
 ## Position index (SRCH-04)
@@ -315,8 +321,8 @@ In-place updates (soft delete, repointing a replaced game) rewrite a single
 
 Compacting (DB-06) writes the new files next to the old ones as `*.new`:
 `games.idx`, `games.blob` and the name tables, `games.ids` (the kept games'
-ids, in their new slots) and `games.origins` (the kept games' entries, when
-there are any), and fsyncs them. Then `compact.commit` is written, the `.new`
+ids, in their new slots) and `games.origins` (the kept games' entries; only
+when the table has any entries), and fsyncs them. Then `compact.commit` is written, the `.new`
 files are renamed over the old ones and the marker is removed. Opening a
 database finishes the renames if the marker exists, and deletes `.new` files
 otherwise.
