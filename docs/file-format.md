@@ -238,8 +238,9 @@ again after every push, so that what Lichess rewrites is in the base too
 and never looks like an edit made there), and what only this database
 holds of the game, which Lichess can't (the local-only layer: evals,
 `%emt`, comments before a variation's first move…, made by `chess-net`;
-opaque bytes here). The file exists once a game was ever linked, and is
-read on the first call that needs it, never by opening the database.
+opaque bytes here, laid out in [`net-13-sync.md`](net-13-sync.md#stored)).
+The file exists once a game was ever linked, and is read on the first call
+that needs it, never by opening the database.
 
 Header (32 bytes):
 

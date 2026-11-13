@@ -354,6 +354,18 @@ here drops. Next: what's held on each side (the local-only layer), then
 follow only with change detection, the tree merge, push, the conflict
 dialog.
 
+**What each side holds** (built 2026-11-12, `chess_net::study::layer`;
+[`docs/net-13-sync.md`](net-13-sync.md)): `lichess_projection` (the game cut
+down to what lichess.org kept in the round-trip check: no evals, `%emt`,
+comments before a variation's first move or NAGs off its list; clocks to the
+second; no ECO, Opening, Annotator, EventDate or study tags),
+`local_only_layer` (the rest, by move path), `apply_layer` (it put back on a
+pulled game; what has no move left comes back as orphaned), and
+`normalize_for_compare` and `is_lichess_addition` for the merge. Exact:
+projection plus layer is the game, also through an emulation of
+lichess.org. Not built: pushing (an open question about comments we didn't
+change, and a proposal, in the note).
+
 #### NET-13 round-trip check
 
 What Lichess keeps, changes or drops of annotated games, so that a sync
