@@ -1691,6 +1691,46 @@ mod tests {
         assert_eq!(db.game_by_uid(uids[0]).unwrap(), None);
     }
 
+    /// A commit writes its permanent ids, and its copies' origins, before
+    /// the records and the count: one whose ids or origins can't be written
+    /// (their files are open read-only under the database here) commits
+    /// nothing, on disk or in memory, and the next one works.
+    #[test]
+    fn a_commit_whose_ids_or_origins_fail_commits_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Failing")).unwrap();
+        let [a, b] = <[Game; 2]>::try_from(sample_games()).unwrap();
+        db.append(&a).unwrap();
+        let first = db.uid(0).unwrap();
+        assert_eq!(db.game_by_uid(first).unwrap(), Some(0), "the map is built");
+        let path = db.path().to_path_buf();
+        let committed = |db: &Database| (db.count(), Database::summary(&path).unwrap().games);
+
+        let ids = std::mem::replace(&mut db.ids, IdsFile::read_only(&path.join(IDS_FILE)));
+        assert!(db.append(&b).is_err());
+        assert_eq!(committed(&db), (1, 1), "a failed id write commits nothing");
+        db.ids = ids;
+
+        let copy = || PreparedGame::new(&b).with_origin(first);
+        let origins = std::mem::replace(&mut db.origins, Origins::read_only(&path.join(ORIGINS_FILE)));
+        assert!(db.append_prepared(&[copy()]).is_err());
+        assert_eq!(committed(&db), (1, 1), "nor a failed origin write");
+        assert_eq!(db.append(&b).unwrap(), 1, "a game that isn't a copy writes no origin");
+        db.origins = origins;
+        assert_eq!(db.append_prepared(&[copy()]).unwrap(), 2..3);
+
+        let uids = db.uids(0, 9).unwrap();
+        assert_eq!(uids.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+        for (slot, uid) in (0..).zip(&uids) {
+            assert_eq!(db.game_by_uid(*uid).unwrap(), Some(slot));
+        }
+        assert_eq!((db.origin(1).unwrap(), db.origin(2).unwrap()), (None, Some(first)));
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        assert_eq!(db.uids(0, 9).unwrap(), uids);
+        assert_eq!(db.origin(2).unwrap(), Some(first));
+    }
+
     #[test]
     fn summary_reads_the_count_and_size_without_opening() {
         let dir = tempfile::tempdir().unwrap();
