@@ -19,13 +19,15 @@
 //! the account.
 
 use std::fmt;
+use std::io::{self, Write as _};
+use std::path::Path;
 
 use chess_core::game::{Game, Nag, NagCategory, Node, NodeId, Shape, ShapeColor};
 use chess_core::notation::san;
 use chess_core::pgn::{PgnReader, write_game};
 use chess_core::position::to_fen;
 use chess_core::shakmaty::{Chess, Move, Position, Square};
-use chess_db::Progress;
+use chess_db::{DbError, Progress};
 
 use super::{
     Chapter, ExportTarget, MAX_CHAPTERS, SentStudy, StudyRef, Visibility, check_study_name,
@@ -1136,6 +1138,39 @@ impl fmt::Display for RoundTrip {
         }
         writeln!(f)?;
         writeln!(f, "The study stays on the account: delete it on Lichess when you're done with it.")
+    }
+}
+
+impl RoundTrip {
+    /// The files [`save`](RoundTrip::save) writes, in order.
+    pub const FILES: [&'static str; 5] =
+        ["report.txt", "1-sent.pgn", "2-back.pgn", "3-pushed.pgn", "4-pushed-back.pgn"];
+
+    /// Saves the report and the PGN of each step in `dir` (made if need
+    /// be), each file as a temp file renamed over the old one. A step that
+    /// has no text (not reached) has no file: one an earlier run left there
+    /// is removed, so the folder never mixes two runs.
+    pub fn save(&self, dir: &Path) -> Result<(), NetError> {
+        let t = &self.texts;
+        let report = self.to_string();
+        let texts = [&report, &t.sent, &t.back, &t.pushed, &t.pushed_back];
+        std::fs::create_dir_all(dir).map_err(DbError::Io)?;
+        for (name, text) in Self::FILES.into_iter().zip(texts) {
+            let path = dir.join(name);
+            if text.is_empty() {
+                match std::fs::remove_file(&path) {
+                    Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(DbError::Io(e).into()),
+                    _ => continue,
+                }
+            }
+            let temp = dir.join(format!("{name}.tmp"));
+            {
+                let mut f = std::fs::File::create(&temp).map_err(DbError::Io)?;
+                f.write_all(text.as_bytes()).and_then(|()| f.sync_all()).map_err(DbError::Io)?;
+            }
+            std::fs::rename(&temp, &path).map_err(DbError::Io)?;
+        }
+        Ok(())
     }
 }
 

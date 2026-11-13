@@ -26,8 +26,7 @@
 //! those are what the report is for. Once the study is made, an error still
 //! prints (and saves) the report so far, with the study's link.
 
-use std::io::{self, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use chess_core::pgn::PgnReader;
@@ -35,7 +34,7 @@ use chess_db::NoProgress;
 use chess_net::Client;
 use chess_net::oauth::{Token, account};
 use chess_net::study::MAX_CHAPTERS;
-use chess_net::study::roundtrip::{RoundTrip, round_trip};
+use chess_net::study::roundtrip::round_trip;
 use chess_net::time::{now_ms, ymd};
 
 const USAGE: &str = "usage: study_roundtrip [FILE.pgn] [--out FOLDER]   (LICHESS_TOKEN must be set)";
@@ -104,7 +103,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     println!();
     print!("{report}");
     if let Some(dir) = &out {
-        save(dir, &report)?;
+        report.save(dir)?;
         println!("The PGN of each step and this report are in {}", dir.display());
     }
     if let Some(e) = &report.stopped {
@@ -116,32 +115,4 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         return Ok(ExitCode::FAILURE);
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// The report and the PGN of each step, in `dir`.
-fn save(dir: &Path, report: &RoundTrip) -> io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let t = &report.texts;
-    let report = report.to_string();
-    for (name, text) in [
-        ("report.txt", &report),
-        ("1-sent.pgn", &t.sent),
-        ("2-back.pgn", &t.back),
-        ("3-pushed.pgn", &t.pushed),
-        ("4-pushed-back.pgn", &t.pushed_back),
-    ] {
-        if text.is_empty() {
-            continue;
-        }
-        // A temp file renamed over the old one, closed before the rename.
-        let path = dir.join(name);
-        let temp = dir.join(format!("{name}.tmp"));
-        {
-            let mut f = std::fs::File::create(&temp)?;
-            f.write_all(text.as_bytes())?;
-            f.sync_all()?;
-        }
-        std::fs::rename(&temp, &path)?;
-    }
-    Ok(())
 }

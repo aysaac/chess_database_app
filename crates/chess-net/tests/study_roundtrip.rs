@@ -14,7 +14,7 @@ use chess_core::game::Game;
 use chess_core::pgn::read_pgn_str;
 use chess_db::NoProgress;
 use chess_net::oauth::Token;
-use chess_net::study::roundtrip::{Feature, round_trip};
+use chess_net::study::roundtrip::{Feature, RoundTrip, round_trip};
 use chess_net::{Client, NetError, Site};
 use standin::Lichess;
 
@@ -287,6 +287,48 @@ fn a_check_that_stops_after_making_its_study_still_reports_it() {
     assert!(r.games.is_empty() && r.push.is_none());
     assert!(r.to_string().contains("6 games sent, 6 chapters made, 0 chapters fetched back."), "{r}");
     assert_eq!(server.requests().len(), 3, "nothing after the failure: {:?}", server.requests());
+}
+
+/// `--out`: the report and each step's PGN, never the token, and nothing
+/// of an earlier run left beside a later one.
+#[test]
+fn the_report_and_texts_are_saved_without_the_token() {
+    let server = Lichess::start(0);
+    let token = writer(&server);
+    let client = client(&server);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("roundtrip");
+    let files = |r: &RoundTrip| {
+        [
+            r.to_string(),
+            r.texts.sent.clone(),
+            r.texts.back.clone(),
+            r.texts.pushed.clone(),
+            r.texts.pushed_back.clone(),
+        ]
+    };
+
+    let r = round_trip(&client, &token, &fixture(), "Round-trip check", &NoProgress).unwrap();
+    r.save(&out).unwrap();
+    for (name, text) in RoundTrip::FILES.iter().zip(files(&r)) {
+        let saved = std::fs::read_to_string(out.join(name)).unwrap();
+        assert!(!text.is_empty(), "{name}");
+        assert_eq!(saved, text, "{name}");
+        assert!(!saved.contains(token.secret()), "{name} has the token");
+    }
+
+    // A later run whose moves weren't replaced (no game of four moves).
+    let short = read_pgn_str("[Event \"Short\"]\n\n1. e4 e5 *");
+    let r = round_trip(&client, &token, &short, "Round-trip check", &NoProgress).unwrap();
+    assert!(r.push.is_none() && r.texts.pushed.is_empty());
+    r.save(&out).unwrap();
+    let mut left: Vec<String> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["1-sent.pgn", "2-back.pgn", "report.txt"], "nothing of the first run, no temp files");
+    assert_eq!(std::fs::read_to_string(out.join("report.txt")).unwrap(), r.to_string());
 }
 
 #[test]
