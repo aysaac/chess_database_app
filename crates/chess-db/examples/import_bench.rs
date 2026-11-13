@@ -112,6 +112,31 @@ fn run(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("read game   {:.1} µs avg ({n} random games)", t.elapsed().as_secs_f64() * 1e6 / f64::from(n));
 
+    // Permanent ids (NET-13): the first lookup reads them all into a map.
+    {
+        let mut db = db.lock().unwrap();
+        let count = db.count();
+        if count > 0 {
+            let t = Instant::now();
+            let last = db.uid(count - 1)?;
+            db.game_by_uid(last)?;
+            println!("id map      {:.0} ms (first lookup, {count} games)", t.elapsed().as_secs_f64() * 1e3);
+            let n = 1000.min(count);
+            let picks: Vec<u32> = (0..n).map(|i| (u64::from(i) * 7919 % u64::from(count)) as u32).collect();
+            let uids = picks.iter().map(|&id| db.uid(id)).collect::<Result<Vec<_>, _>>()?;
+            let t = Instant::now();
+            for (&uid, &id) in uids.iter().zip(&picks) {
+                if db.game_by_uid(uid)? != Some(id) {
+                    return Err(format!("game {id}'s permanent id {uid} isn't found").into());
+                }
+            }
+            println!(
+                "id lookup   {:.1} µs avg ({n} random games)",
+                t.elapsed().as_secs_f64() * 1e6 / f64::from(n)
+            );
+        }
+    }
+
     for (label, query) in [
         ("quick filter", HeaderQuery { text: "magnus".into(), ..HeaderQuery::default() }),
         ("  again", HeaderQuery { text: "carl".into(), ..HeaderQuery::default() }),

@@ -15,6 +15,20 @@ in [`docs/io-03-cbh.md`](../../docs/io-03-cbh.md).
   generation order.
 - Import must stay lossless: `cargo test --release -p chess-db -- --ignored`
   re-imports an export and compares blob bytes.
+- **Two kinds of game id.** `GameId` is the game's slot in `games.idx`:
+  lists, sorts, searches, the position index and every other hot path use
+  it, and a compaction renumbers it. `GameUid` (`uid.rs`) is permanent:
+  unique across databases, never reused, kept through edits, deletion and
+  compaction. Keep the hot paths on slots; what must outlive a compaction
+  (links, sync state, an API) stores the `GameUid` and finds the slot with
+  `Database::game_by_uid`. A game that's appended gets a new `GameUid`; a
+  copy from another database also records the original's
+  (`PreparedGame::with_origin`, `Database::origin`).
+- Data about a game that a compaction must keep goes in a side table keyed
+  by `GameUid`, like `games.origins`, not in the 64-byte record.
+- A new file in a database must be added to compaction (its `.new` file
+  and `recover_compaction`) and, if it's created on upgrade, to the upgrade
+  in `Database::open`. The server's backup copies every file in the folder.
 
 ## Commands
 

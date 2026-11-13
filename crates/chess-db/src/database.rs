@@ -4,14 +4,17 @@
 //! - `games.idx`: 64-byte header + one 64-byte [`IndexRecord`] per game.
 //! - `games.blob`: 16-byte header + append-only game blobs.
 //! - `players.names`, `events.names`, `sites.names`, `annotators.names`.
+//! - `games.ids`, `games.origins`: each game's permanent id, and the id a
+//!   copied game has in the database it came from (see [`crate::uid`]).
 //! - `.lock`: held exclusively while the database is open (single writer).
 //! - Derived, rebuildable files: the position index and opening
 //!   classification (see [`crate::positions`]).
 //!
-//! Commit protocol (crash safety): blobs → fsync → names → fsync → index
-//! records → fsync → committed count in the index header → fsync. On open,
-//! index bytes beyond the committed count are truncated; unreferenced blob
-//! bytes are harmless garbage.
+//! Commit protocol (crash safety): blobs → fsync → names → fsync →
+//! permanent ids → fsync → origins of copies → fsync → index records →
+//! fsync → committed count in the index header → fsync. On open, index
+//! records and ids beyond the committed count are truncated; unreferenced
+//! blob bytes and origins of ids no game has are harmless garbage.
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -30,12 +33,16 @@ use crate::record::{
     pack_date, pack_eco, pack_round, result_from_u8, result_to_u8, unpack_date, unpack_eco, unpack_round,
 };
 use crate::sort::SortSpec;
+use crate::uid::{GameUid, IDS_FILE, IdsFile, ORIGINS_FILE, Origins, UidIndex, mint, tmp_path};
 use crate::{DbError, GameId};
 
 pub const EXTENSION: &str = "chessdb";
 /// Version in `db.meta`. 2: games replaced are recorded in
 /// `positions.dirty` (older versions didn't, so they must not open it).
-const META_VERSION: u32 = 2;
+/// 3: every game has a permanent id in `games.ids` (an older version would
+/// add, compact or copy games without keeping them, so it must not open
+/// it either).
+const META_VERSION: u32 = 3;
 /// Version in the headers of `games.idx` and `games.blob`.
 const FORMAT_VERSION: u32 = 1;
 
@@ -99,6 +106,8 @@ pub struct PreparedGame {
     flags: u32,
     plies: u16,
     blob: Vec<u8>,
+    /// The permanent id of the game this is a copy of, in its database.
+    origin: Option<GameUid>,
 }
 
 impl PreparedGame {
@@ -126,7 +135,15 @@ impl PreparedGame {
             flags,
             plies: game.mainline_len().min(u16::MAX as usize) as u16,
             blob: encode_game(game),
+            origin: None,
         }
+    }
+
+    /// This game as a copy of the game with permanent id `origin` in
+    /// another database: appended, it gets its own permanent id, and
+    /// [`Database::origin`] gives `origin`.
+    pub fn with_origin(self, origin: GameUid) -> PreparedGame {
+        PreparedGame { origin: Some(origin), ..self }
     }
 }
 
@@ -170,7 +187,7 @@ pub struct CompactSummary {
 /// files are incomplete and are deleted.
 fn recover_compaction(dir: &Path) -> Result<(), DbError> {
     let committed = dir.join(COMPACT_MARKER).exists();
-    let files = [IDX_FILE, BLOB_FILE].into_iter().chain(NAME_FILES);
+    let files = [IDX_FILE, BLOB_FILE, IDS_FILE, ORIGINS_FILE].into_iter().chain(NAME_FILES);
     for name in files {
         let new = dir.join(format!("{name}{NEW_SUFFIX}"));
         if new.exists() {
@@ -216,6 +233,11 @@ pub struct Database {
     idx: File,
     blob: File,
     names: [NameTable; 4],
+    /// Each game's permanent id, by slot.
+    ids: IdsFile,
+    origins: Origins,
+    /// Slots by permanent id, built on first use and kept up to date after.
+    uid_index: Option<UidIndex>,
     count: u32,
     blob_len: u64,
     sorts: HashMap<SortSpec, Arc<Vec<GameId>>>,
@@ -411,6 +433,8 @@ impl Database {
             NameTable::create(&dir.join(NAME_FILES[2]))?,
             NameTable::create(&dir.join(NAME_FILES[3]))?,
         ];
+        let ids = IdsFile::create(&dir.join(IDS_FILE))?;
+        let origins = Origins::create(&dir.join(ORIGINS_FILE))?;
         let positions = PositionIndex::open(&dir)?;
         Ok(Database {
             dir,
@@ -419,6 +443,9 @@ impl Database {
             idx,
             blob,
             names,
+            ids,
+            origins,
+            uid_index: None,
             count: 0,
             blob_len: BLOB_HEADER,
             sorts: HashMap::new(),
@@ -434,16 +461,15 @@ impl Database {
 
     pub fn open(path: &Path) -> Result<Database, DbError> {
         let dir = path.to_path_buf();
-        let (version, id) = read_meta(&dir)?;
-
+        // Checked before locking, which would leave a `.lock` in a folder
+        // that isn't a database.
+        read_meta(&dir)?;
         let lock = lock_dir(&dir)?;
+        // Read again under the lock: another handle may have upgraded the
+        // database and handed out its permanent ids in between, and an
+        // upgrade from the version read before would replace them all.
+        let (version, id) = read_meta(&dir)?;
         recover_compaction(&dir)?;
-        if version < META_VERSION {
-            // Version 1 databases have no position index yet: nothing else
-            // changes.
-            log::info!("upgrading {} to format version {META_VERSION}", dir.display());
-            write_atomic(&dir.join(META_FILE), format!("chessdb {META_VERSION}\nid {id}\n").as_bytes())?;
-        }
         let open = |name: &str| OpenOptions::new().read(true).write(true).open(dir.join(name));
         let idx = open(IDX_FILE)?;
         let blob = open(BLOB_FILE)?;
@@ -456,10 +482,30 @@ impl Database {
             idx.set_len(expected_len)?;
         }
         let blob_len = blob.metadata()?.len();
-        for name in NAME_FILES {
+        for name in NAME_FILES.into_iter().chain([IDS_FILE, ORIGINS_FILE]) {
             // Left over from a rename interrupted before its swap.
-            let _ = std::fs::remove_file(dir.join(format!("{name}.tmp")));
+            let _ = std::fs::remove_file(tmp_path(&dir.join(name)));
         }
+        for name in [META_FILE, COMPACT_MARKER] {
+            // `write_atomic`'s, likewise (`db.tmp`, `compact.tmp`).
+            let _ = std::fs::remove_file(dir.join(name).with_extension("tmp"));
+        }
+        if version < META_VERSION {
+            // Version 1 had no position index, version 2 no permanent ids.
+            // Every game gets one now. A `games.ids` already there is from
+            // an upgrade a crash cut short (before the version below was
+            // written), and an older app may have changed the games since:
+            // it's replaced. No id was handed out before the version is 3.
+            log::info!(
+                "upgrading {} to format version {META_VERSION}: permanent ids for {count} games",
+                dir.display()
+            );
+            IdsFile::write_fresh(&dir.join(IDS_FILE), count)?;
+            Origins::write_empty(&dir.join(ORIGINS_FILE))?;
+            write_atomic(&dir.join(META_FILE), format!("chessdb {META_VERSION}\nid {id}\n").as_bytes())?;
+        }
+        let ids = IdsFile::open(&dir.join(IDS_FILE), count)?;
+        let origins = Origins::open(&dir.join(ORIGINS_FILE))?;
         let names = [
             NameTable::open(&dir.join(NAME_FILES[0]))?,
             NameTable::open(&dir.join(NAME_FILES[1]))?,
@@ -474,6 +520,9 @@ impl Database {
             idx,
             blob,
             names,
+            ids,
+            origins,
+            uid_index: None,
             count,
             blob_len,
             sorts: HashMap::new(),
@@ -636,11 +685,26 @@ impl Database {
             records.extend_from_slice(&rec.encode());
         }
         self.flush_names()?;
+        // New permanent ids, and the origins of copies, before the records:
+        // a committed game always has its id.
+        let uids = mint(games.len())?;
+        self.ids.put(first, &uids)?;
+        self.ids.sync()?;
+        let origins: Vec<(GameUid, GameUid)> =
+            games.iter().zip(&uids).filter_map(|(g, uid)| Some((*uid, g.origin?))).collect();
+        if !origins.is_empty() {
+            self.origins.append(&origins)?;
+        }
         write_all_at(&self.idx, &records, IDX_HEADER + u64::from(first) * RECORD_SIZE as u64)?;
         self.idx.sync_data()?;
         self.write_count(first + games.len() as u32)?;
         if let Some(stats) = &mut self.stats {
             stats.extend(new_stats);
+        }
+        if let Some(index) = &mut self.uid_index {
+            for (uid, slot) in uids.into_iter().zip(first..) {
+                index.insert(uid, slot);
+            }
         }
         self.generation += 1;
         Ok(first..self.count)
@@ -978,8 +1042,9 @@ impl Database {
 
     /// Compacts the database (DB-06): drops deleted games, the space old
     /// versions of edited games took, and names no game uses any more.
-    /// Game ids change (see the mapping in the summary); the position index
-    /// is deleted and needs rebuilding.
+    /// Game ids (slots) change (see the mapping in the summary); permanent
+    /// ids don't, and the map from them to slots follows. The position
+    /// index is deleted and needs rebuilding.
     ///
     /// Crash safety: the new files are written next to the old ones as
     /// `*.new` and fsynced; then `compact.commit` is written, the `.new`
@@ -990,6 +1055,12 @@ impl Database {
         const CHUNK: u32 = 16 * 1024;
         self.flush_names()?;
         recover_compaction(&self.dir)?;
+        // Which origins to keep is found through the map of ids. Built here
+        // only for that, it goes after (8 bytes a game nothing asked for).
+        let keep_map = self.uid_index.is_some();
+        if !self.origins.is_empty() {
+            self.ensure_uid_index()?;
+        }
         let bytes_before = self.info().size_bytes;
         let new_path = |name: &str| self.dir.join(format!("{name}{NEW_SUFFIX}"));
         let create = |path: &Path, contents: &[u8]| -> Result<File, DbError> {
@@ -1005,6 +1076,8 @@ impl Database {
             NameTable::create(&new_path(NAME_FILES[2]))?,
             NameTable::create(&new_path(NAME_FILES[3]))?,
         ];
+        let new_ids = IdsFile::create(&new_path(IDS_FILE))?;
+        let mut new_origins = None;
 
         let mut mapping = Vec::with_capacity(self.count as usize);
         let mut blob_len = BLOB_HEADER;
@@ -1014,13 +1087,16 @@ impl Database {
             while start < self.count {
                 progress.check_cancelled()?;
                 let recs = self.records(start, CHUNK)?;
+                let uids = self.ids.range(start, recs.len() as u32)?;
                 let mut blobs = Vec::new();
                 let mut out_recs = Vec::new();
-                for r in &recs {
+                let mut out_uids = Vec::new();
+                for (r, uid) in recs.iter().zip(uids) {
                     if r.is_deleted() {
                         mapping.push(None);
                         continue;
                     }
+                    out_uids.push(uid);
                     let mut blob = vec![0u8; r.blob_len as usize];
                     read_exact_at(&self.blob, &mut blob, r.blob_offset)?;
                     let mut n = *r;
@@ -1040,23 +1116,39 @@ impl Database {
                 blob_len += blobs.len() as u64;
                 let first_new = kept - (out_recs.len() / RECORD_SIZE) as u32;
                 write_all_at(&new_idx, &out_recs, IDX_HEADER + u64::from(first_new) * RECORD_SIZE as u64)?;
+                new_ids.put(first_new, &out_uids)?;
                 start = start.saturating_add(CHUNK);
                 progress.report(u64::from(start.min(self.count)), u64::from(self.count));
             }
             write_all_at(&new_idx, &u64::from(kept).to_le_bytes(), IDX_COUNT_OFFSET)?;
             new_idx.sync_all()?;
             new_blob.sync_all()?;
+            new_ids.sync()?;
             for t in &mut new_names {
                 t.flush()?;
+            }
+            if !self.origins.is_empty() {
+                // Those of the games kept.
+                let index = self.uid_index.as_ref().expect("built above");
+                let at = |slot| self.ids.get(slot);
+                let keep =
+                    |uid| Ok(index.find(uid, at)?.is_some_and(|slot| mapping[slot as usize].is_some()));
+                new_origins = Some(self.origins.write_kept(&new_path(ORIGINS_FILE), keep)?);
             }
             Ok(())
         })();
         if let Err(e) = result {
-            drop((new_idx, new_blob, new_names));
+            if !keep_map {
+                self.uid_index = None;
+            }
+            drop((new_idx, new_blob, new_names, new_ids, new_origins));
             recover_compaction(&self.dir)?;
             return Err(e);
         }
 
+        // Put back, renumbered, once the swap is done, if it was there
+        // before: a swap cut short leaves no map of the old slots behind.
+        let uid_index = self.uid_index.take().filter(|_| keep_map);
         // Commit: from here on, opening the database finishes the swap.
         write_atomic(&self.dir.join(COMPACT_MARKER), b"compact\n")?;
         // Swap handles first (closing the old files: Windows can't replace
@@ -1064,7 +1156,13 @@ impl Database {
         self.idx = new_idx;
         self.blob = new_blob;
         self.names = new_names;
-        for name in [IDX_FILE, BLOB_FILE].into_iter().chain(NAME_FILES) {
+        self.ids = new_ids;
+        let mut swapped = vec![IDX_FILE, BLOB_FILE, IDS_FILE];
+        if let Some(origins) = new_origins {
+            self.origins = origins;
+            swapped.push(ORIGINS_FILE);
+        }
+        for name in swapped.into_iter().chain(NAME_FILES) {
             std::fs::rename(new_path(name), self.dir.join(name))?;
         }
         for (table, name) in self.names.iter_mut().zip(NAME_FILES) {
@@ -1085,8 +1183,61 @@ impl Database {
         self.stats = None;
         self.name_counts.clear();
         self.name_ranks.clear();
+        self.uid_index = uid_index.map(|mut index| {
+            index.remap(&mapping);
+            index
+        });
         let bytes_after = self.info().size_bytes;
         Ok(CompactSummary { kept, removed, bytes_before, bytes_after, mapping })
+    }
+
+    // ---- permanent ids ----------------------------------------------------
+
+    /// The permanent id of game `id`: it stays with the game through edits,
+    /// deletion, undeletion and compaction, and no other game, here or in
+    /// any other database, has it. Copying the game to another database
+    /// gives the copy a new one there ([`origin`](Self::origin)).
+    pub fn uid(&self, id: GameId) -> Result<GameUid, DbError> {
+        if id >= self.count {
+            return Err(DbError::NotFound(id));
+        }
+        self.ids.get(id)
+    }
+
+    /// The permanent ids of games `start..start+len` (clamped to the game
+    /// count), in one read.
+    pub fn uids(&self, start: GameId, len: u32) -> Result<Vec<GameUid>, DbError> {
+        let end = start.saturating_add(len).min(self.count);
+        if start >= end {
+            return Ok(Vec::new());
+        }
+        self.ids.range(start, end - start)
+    }
+
+    fn ensure_uid_index(&mut self) -> Result<(), DbError> {
+        if self.uid_index.is_none() {
+            self.uid_index = Some(self.ids.index(self.count)?);
+        }
+        Ok(())
+    }
+
+    /// The game whose permanent id is `uid`, if this database has it:
+    /// deleted games too, until a compaction removes them. The first call
+    /// reads every game's id and keeps a map of 8 bytes a game, which then
+    /// follows appends and compactions until the database is closed.
+    pub fn game_by_uid(&mut self, uid: GameUid) -> Result<Option<GameId>, DbError> {
+        self.ensure_uid_index()?;
+        let index = self.uid_index.as_ref().expect("just built");
+        index.find(uid, |slot| self.ids.get(slot))
+    }
+
+    /// For a game copied in from another database ([`crate::copy_games`],
+    /// or appended [`with_origin`](PreparedGame::with_origin)), the
+    /// permanent id of the game it was copied from, there; `None` for any
+    /// other game (imported, entered, saved here).
+    pub fn origin(&mut self, id: GameId) -> Result<Option<GameUid>, DbError> {
+        let uid = self.uid(id)?;
+        self.origins.get(uid)
     }
 
     /// Per-game stats for every game, loaded on first use.
@@ -1166,7 +1317,7 @@ impl Database {
             extra: Vec::new(),
         };
         let content = FLAG_VARIATIONS | FLAG_COMMENTS | FLAG_ANNOTATIONS | FLAG_SETUP;
-        Ok(PreparedGame { headers, flags: rec.flags & content, plies: rec.plies, blob })
+        Ok(PreparedGame { headers, flags: rec.flags & content, plies: rec.plies, blob, origin: None })
     }
 
     pub fn row_from_record(&self, id: GameId, rec: &IndexRecord) -> GameRow {
@@ -1450,21 +1601,170 @@ mod tests {
         assert!(!path.join("games.idx.new").exists());
         drop(db);
         // Crash after the commit: the .new files replace the old ones.
-        let files = [IDX_FILE, BLOB_FILE].into_iter().chain(NAME_FILES);
+        let files = [IDX_FILE, BLOB_FILE, IDS_FILE, ORIGINS_FILE].into_iter().chain(NAME_FILES);
         let copy = tempfile::tempdir().unwrap();
-        {
+        let uid = {
             let mut other = Database::create(&copy.path().join("Other")).unwrap();
             other.append(&sample_games()[1]).unwrap();
             for name in files.clone() {
                 std::fs::copy(other.path().join(name), path.join(format!("{name}{NEW_SUFFIX}"))).unwrap();
             }
-        }
+            other.uid(0).unwrap()
+        };
         std::fs::write(path.join(COMPACT_MARKER), b"compact\n").unwrap();
         assert_eq!(Database::summary(&path).unwrap().games, 1, "the new index, as opening will make it");
         let db = Database::open(&path).unwrap();
         assert_eq!(db.count(), 1);
         assert_eq!(db.row(0).unwrap().white, "Bob");
+        assert_eq!(db.uids(0, 9).unwrap(), [uid], "with the new ids");
         assert!(!path.join(COMPACT_MARKER).exists());
+        for name in files {
+            assert!(!path.join(format!("{name}{NEW_SUFFIX}")).exists(), "{name}");
+        }
+    }
+
+    #[test]
+    fn permanent_ids_stay_through_edits_deletion_and_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Ids")).unwrap();
+        for g in sample_games() {
+            db.append(&g).unwrap();
+        }
+        let uids = db.uids(0, 2).unwrap();
+        assert_ne!(uids[0], uids[1]);
+        assert_eq!(db.uid(1).unwrap(), uids[1]);
+        assert!(matches!(db.uid(2), Err(DbError::NotFound(2))));
+        assert_eq!(db.uids(1, 5).unwrap(), [uids[1]], "clamped to the count");
+        assert_eq!(db.game_by_uid(uids[1]).unwrap(), Some(1));
+
+        let mut edited = sample_games()[1].clone();
+        edited.headers.white = "Dave".into();
+        db.replace(0, &edited).unwrap();
+        db.set_deleted(1, true).unwrap();
+        assert_eq!(db.uids(0, 2).unwrap(), uids, "an edit and a delete keep them");
+        assert_eq!(db.game_by_uid(uids[1]).unwrap(), Some(1), "a deleted game is found");
+        db.set_deleted(1, false).unwrap();
+        assert_eq!(db.uid(1).unwrap(), uids[1], "an undelete too");
+        let third = db.append(&edited).unwrap();
+        let path = db.path().to_path_buf();
+        drop(db);
+
+        let mut db = Database::open(&path).unwrap();
+        assert_eq!(db.uids(0, 2).unwrap(), uids);
+        assert_eq!(db.game_by_uid(db.uid(third).unwrap()).unwrap(), Some(third));
+        assert!(!uids.contains(&db.uid(third).unwrap()), "a copy of the same game is another game");
+        assert_eq!(db.origin(third).unwrap(), None);
+        assert_eq!(std::fs::read_to_string(path.join(META_FILE)).unwrap().lines().next(), Some("chessdb 3"));
+    }
+
+    /// A compaction moves games to other slots; their permanent ids stay,
+    /// in a handle that had looked them up (its map follows) and in one
+    /// that hadn't.
+    #[test]
+    fn compaction_moves_slots_and_keeps_permanent_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Ids")).unwrap();
+        for _ in 0..3 {
+            for g in sample_games() {
+                db.append(&g).unwrap();
+            }
+        }
+        let uids = db.uids(0, 6).unwrap();
+        db.set_deleted_many(&[0, 3, 4], true).unwrap();
+        let path = db.path().to_path_buf();
+        // The same database, compacted by a handle that had built its map.
+        let copy = dir.path().join("Copy.chessdb");
+        std::fs::create_dir(&copy).unwrap();
+        for entry in std::fs::read_dir(&path).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), copy.join(entry.file_name())).unwrap();
+        }
+        let mut looked_up = Database::open(&copy).unwrap();
+        assert_eq!(looked_up.game_by_uid(uids[5]).unwrap(), Some(5));
+
+        for db in [&mut db, &mut looked_up] {
+            let summary = db.compact(&crate::NoProgress).unwrap();
+            assert_eq!(summary.mapping, [None, Some(0), Some(1), None, None, Some(2)]);
+            assert_eq!(db.uids(0, 9).unwrap(), [uids[1], uids[2], uids[5]]);
+            for (old, new) in summary.mapping.iter().enumerate() {
+                assert_eq!(db.game_by_uid(uids[old]).unwrap(), *new, "game {old}");
+            }
+            let added = db.append(&sample_games()[0]).unwrap();
+            assert_eq!(added, 3);
+            assert_eq!(db.game_by_uid(db.uid(added).unwrap()).unwrap(), Some(3));
+        }
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        assert_eq!(db.uids(0, 3).unwrap(), [uids[1], uids[2], uids[5]]);
+        assert_eq!(db.game_by_uid(uids[5]).unwrap(), Some(2));
+        assert_eq!(db.game_by_uid(uids[0]).unwrap(), None);
+    }
+
+    /// A compaction of a database holding copies builds the map of ids to
+    /// find which origins to keep; the map stays only if it was there
+    /// before, renumbered.
+    #[test]
+    fn compaction_keeps_the_map_of_ids_only_if_it_was_built() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Map")).unwrap();
+        let origin = mint(1).unwrap()[0];
+        for _ in 0..2 {
+            let game = &sample_games()[0];
+            db.append(game).unwrap();
+            db.append_prepared(&[PreparedGame::new(game).with_origin(origin)]).unwrap();
+        }
+        let copy = db.uid(3).unwrap();
+        db.set_deleted(0, true).unwrap();
+        db.compact(&crate::NoProgress).unwrap();
+        assert!(db.uid_index.is_none(), "nothing had looked an id up");
+        assert_eq!(db.origin(2).unwrap(), Some(origin));
+
+        assert_eq!(db.game_by_uid(copy).unwrap(), Some(2));
+        db.set_deleted(0, true).unwrap();
+        db.compact(&crate::NoProgress).unwrap();
+        assert!(db.uid_index.is_some(), "it had been built: it follows");
+        assert_eq!(db.game_by_uid(copy).unwrap(), Some(1));
+        assert_eq!(db.origin(1).unwrap(), Some(origin));
+    }
+
+    /// A commit writes its permanent ids, and its copies' origins, before
+    /// the records and the count: one whose ids or origins can't be written
+    /// (their files are open read-only under the database here) commits
+    /// nothing, on disk or in memory, and the next one works.
+    #[test]
+    fn a_commit_whose_ids_or_origins_fail_commits_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Failing")).unwrap();
+        let [a, b] = <[Game; 2]>::try_from(sample_games()).unwrap();
+        db.append(&a).unwrap();
+        let first = db.uid(0).unwrap();
+        assert_eq!(db.game_by_uid(first).unwrap(), Some(0), "the map is built");
+        let path = db.path().to_path_buf();
+        let committed = |db: &Database| (db.count(), Database::summary(&path).unwrap().games);
+
+        let ids = std::mem::replace(&mut db.ids, IdsFile::read_only(&path.join(IDS_FILE)));
+        assert!(db.append(&b).is_err());
+        assert_eq!(committed(&db), (1, 1), "a failed id write commits nothing");
+        db.ids = ids;
+
+        let copy = || PreparedGame::new(&b).with_origin(first);
+        let origins = std::mem::replace(&mut db.origins, Origins::read_only(&path.join(ORIGINS_FILE)));
+        assert!(db.append_prepared(&[copy()]).is_err());
+        assert_eq!(committed(&db), (1, 1), "nor a failed origin write");
+        assert_eq!(db.append(&b).unwrap(), 1, "a game that isn't a copy writes no origin");
+        db.origins = origins;
+        assert_eq!(db.append_prepared(&[copy()]).unwrap(), 2..3);
+
+        let uids = db.uids(0, 9).unwrap();
+        assert_eq!(uids.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+        for (slot, uid) in (0..).zip(&uids) {
+            assert_eq!(db.game_by_uid(*uid).unwrap(), Some(slot));
+        }
+        assert_eq!((db.origin(1).unwrap(), db.origin(2).unwrap()), (None, Some(first)));
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        assert_eq!(db.uids(0, 9).unwrap(), uids);
+        assert_eq!(db.origin(2).unwrap(), Some(first));
     }
 
     #[test]

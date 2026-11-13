@@ -1,4 +1,4 @@
-# Database File Format (version 2)
+# Database File Format (version 3)
 
 Native storage for games (catalog item DB-01). It's designed for fast
 append-only imports, instant access to any game by id, and crash safety. The
@@ -13,9 +13,11 @@ A database is a directory named `<Name>.chessdb/`:
 
 | File | Contents |
 |---|---|
-| `db.meta` | Text: `chessdb 2` on line 1, `id <32 hex chars>` on line 2 |
+| `db.meta` | Text: `chessdb 3` on line 1, `id <32 hex chars>` on line 2 |
 | `games.idx` | 64-byte header, then one 64-byte record per game |
 | `games.blob` | 16-byte header, then game blobs (append-only) |
+| `games.ids` | 16-byte header, then each game's permanent id (see [below](#permanent-game-ids)) |
+| `games.origins` | 16-byte header, then the origin of each game copied in from another database |
 | `players.names` | Name table for White/Black |
 | `events.names` | Name table for Event |
 | `sites.names` | Name table for Site |
@@ -25,13 +27,23 @@ A database is a directory named `<Name>.chessdb/`:
 | `positions.dirty` | Games replaced since they were indexed |
 | `openings.idx` | Opening classification per game (derived) |
 
-**Versions.** `db.meta` version 2 means the database keeps `positions.dirty`
-up to date when a game is replaced. Version 1 databases (from before the
-position index) open fine and are upgraded to 2 on open; nothing else
-changes. The binary files keep their own header versions (all 1).
+**Versions.** `db.meta` version 3 means every game has a permanent id in
+`games.ids`. Version 2 meant the database keeps `positions.dirty` up to date
+when a game is replaced; version 1 came before the position index. Both open
+fine and are upgraded to 3 on open ([the upgrade](#the-upgrade-to-version-3)).
+Once a newer app has opened a database, an app from before version 3
+refuses it ("unsupported format version 3"), in its library too, and
+changes nothing: it would add, copy or compact games without their ids, and
+a compaction would leave each id on another game. To open one in an older
+app again, set `db.meta`'s first line back to `chessdb 2`: that app leaves
+`games.ids` and `games.origins` alone, and the next newer one upgrades the
+database again, with a new id for every game. The binary files keep their
+own header versions (all 1).
 
-A game's **id** is its zero-based position in `games.idx`. Ids never change;
-deleting a game only sets a flag.
+A game's **id** in the code and the UI (`GameId`) is its **slot**: its
+zero-based position in `games.idx`. Deleting a game only sets a flag, but a
+compaction (DB-06) renumbers the slots. Its **permanent id** never changes
+(see [below](#permanent-game-ids)).
 
 ## `games.idx`
 
@@ -89,9 +101,11 @@ A blob holds no name-table ids, so it means the same in any database:
 copying or moving games to another database (DB-06, QOL-04) appends the
 blob bytes unchanged and writes a new record whose names are looked up (or
 added) in the target's tables. Nothing is decoded, and the copy is exactly
-the original. Copies go in batches of 2,000 games, each a normal crash-safe
-commit; a move marks the originals as deleted only after their copies are
-committed, so a crash in between leaves duplicates, never a lost game.
+the original. It gets its own permanent id there, and the original's is
+recorded as its origin (`games.origins`). Copies go in batches of 2,000
+games, each a normal crash-safe commit; a move marks the originals as
+deleted only after their copies are committed, so a crash in between leaves
+duplicates, never a lost game.
 
 Deleting duplicate games (DB-08) gives the same guarantee. Each kept game
 first takes the fields of its index record that it lacks from the copies
@@ -159,6 +173,67 @@ online games. They are used only when re-rendering reproduces the original
 text exactly (`0:03:00`, `0.17`, `#-9`). Anything else falls back to kind 5,
 so export stays lossless.
 
+## Permanent game ids
+
+Every game has a permanent id: 16 random bytes from the OS's random source,
+laid out as a UUID version 4 (RFC 9562) and written as one in text
+(`1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b`). With 122 random bits it's unique
+across databases (a database folder copied outside the app, by a file
+manager or a backup, keeps its ids, as it keeps its `db.meta` id), and it's
+never reused: a game keeps it through edits,
+deletion, undeletion and compactions, and a game a compaction removes takes
+its id with it. It's the groundwork for NET-13 (games kept in step with a
+Lichess study's chapters) and for editing a server's games from the app.
+Code: `crates/chess-db/src/uid.rs`.
+
+Slots stay what everything else uses: the game list, sorts, searches, the
+position index, the Reference tab, cross-tables and duplicates. Permanent ids
+are for the edges (links, sync state, an API), which find a game's slot
+through a map built on first use: it reads `games.ids` and keeps 8 bytes a
+game in memory (an id's first 4 bytes and its slot, sorted; a lookup reads
+the candidate's whole id from the file), and follows appends and compactions
+until the database is closed.
+
+PGN never carries ids: export and import don't need them, and the lossless
+round trip is unchanged. Importing a game (PGN or `.cbh`), also one imported
+before, gives it a new id.
+
+### `games.ids`
+
+A 16-byte header (magic `CHDBUID1`, version `1`, zero padding), then one
+16-byte id per slot, in slot order: as many as the committed count says (see
+[Crash safety](#crash-safety)).
+
+### `games.origins`
+
+A 16-byte header (magic `CHDBORG1`, version `1`, zero padding), then 32-byte
+entries: a game's permanent id, then its origin's. Copying games into the
+database (DB-06, QOL-04; `copy_games`, or a `PreparedGame` given an origin)
+appends one per copy, naming the id of the game copied, in the database it
+came from: a copy of a copy names the copy. Games imported, entered or
+saved there have none. The last entry for an id wins (there is only ever one
+so far). A compaction keeps the entries of the games it keeps.
+
+It's the first table keyed by permanent id. NET-13's link from a game to a
+study chapter and the base snapshot for merging can be kept the same way,
+in their own table, without touching `games.idx`.
+
+### The upgrade to version 3
+
+Opening a version 1 or 2 database:
+
+1. Writes `games.ids.tmp` with a new id for every committed game (deleted
+   ones too), fsyncs it and renames it to `games.ids`.
+2. Writes an empty `games.origins` the same way.
+3. Writes `db.meta` with version 3 (temp file + rename).
+
+No id is handed out before step 3. After a crash before it, the database is
+still version 2 and the next open does it all again, replacing a
+`games.ids` already there (an older app may have changed the games since).
+Temp files left over (`games.ids.tmp`, `games.origins.tmp`, `db.tmp`) are
+deleted on open. What it costs is under
+[Measured](#measured-prototype-release-build-sep-2026).
+
 ## Position index (SRCH-04)
 
 Derived data: every file below can be deleted at any time and is rebuilt by
@@ -222,18 +297,35 @@ Appending a batch of games (an import commits one batch every ~300 ms):
 
 1. Write the blobs at the end of `games.blob`, then fsync.
 2. Append new names to the name tables, then fsync.
-3. Write the index records after the committed ones, then fsync.
-4. Write the new committed count in the `games.idx` header, then fsync.
+3. Write the new games' permanent ids after the committed ones in
+   `games.ids`, then fsync. For copies, append their origins to
+   `games.origins`, then fsync.
+4. Write the index records after the committed ones, then fsync.
+5. Write the new committed count in the `games.idx` header, then fsync.
 
 Opening a database:
 
-- Index bytes beyond the committed count are truncated.
-- A torn entry at the end of a name table is truncated. It can't be
-  referenced, because records are written after names.
+- Index bytes and ids beyond the committed count are truncated.
+- A torn entry at the end of a name table or of `games.origins` is
+  truncated. A name can't be referenced, because records are written after
+  names. A whole origin entry whose id no game has is never looked up, and
+  the next compaction drops it.
 - Blob bytes nobody references are harmless.
+- `games.ids` holding fewer ids than there are games, or missing (no crash
+  does this: ids are synced before the count), gives the games without one
+  new ids, with a warning, and the database opens. A missing
+  `games.origins` is made again, empty.
 
 In-place updates (soft delete, repointing a replaced game) rewrite a single
-64-byte record, then fsync.
+64-byte record, then fsync. They keep the game's slot, so its permanent id.
+
+Compacting (DB-06) writes the new files next to the old ones as `*.new`:
+`games.idx`, `games.blob` and the name tables, `games.ids` (the kept games'
+ids, in their new slots) and `games.origins` (the kept games' entries; only
+when the table has any entries), and fsyncs them. Then `compact.commit` is written, the `.new`
+files are renamed over the old ones and the marker is removed. Opening a
+database finishes the renames if the marker exists, and deletes `.new` files
+otherwise.
 
 Deleting duplicates (DB-08), a batch of groups at a time (the app takes up to
 16,384 copies a batch):
@@ -285,3 +377,23 @@ after the click): a 600-player 11-round Swiss (19,200 cells) 0.9–1.1 s, a
 bigger tables get the standings only: 2,000 players 0.6–0.7 s, "Rated
 UltraBullet game" (1,130 players without rounds, one with 138 games: 3.3 s
 as a full table) 0.4 s.
+
+Permanent ids (format version 3; release build, Nov 2026, page cache warm,
+on a laptop in use): `import_bench` built from before them (`main` at
+`118a278`) and after, run in turns on Mega Database 2019 (7,623,531 games)
+and the first 1M Lichess games:
+
+| | Mega Database 2019 | Lichess, 1M games |
+|---|---|---|
+| Size | 1,353.1 → 1,475.1 MB: +16 bytes a game and 32 bytes of headers | 697.3 → 713.3 MB |
+| First open of a version 2 database (the upgrade) | 361 ms | — |
+| Open, before → after | 94, 107, 113 → 81–88, 110, 111 ms | 483, 449 → 449, 450 ms |
+| Import, before → after | 370.8 → 393.6 s (one run each) | 51.9, 49.9 → 50.7, 50.8 s |
+| Map of ids: first lookup, memory | 131–149 ms, 61 MB | 17 ms, 8 MB |
+| A lookup after | 1.3–1.6 µs | 0.7–0.9 µs |
+
+The import's extra fsync per batch and the ids it writes are within the
+noise on Lichess, where the runs alternated. Lists, sorts, searches, trees
+and the Reference tab don't touch the ids and measure the same: on Mega,
+sort by White 485 → 497 ms, header search 141 → 140 ms, tree at the start
+261 → 231 ms, Reference lines at the start 9.2 → 8.9 s (second runs).
