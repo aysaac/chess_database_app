@@ -188,11 +188,13 @@ fn an_upgrade_cut_short_is_made_again() {
     std::fs::write(path.join("db.meta"), meta.replace("chessdb 3", "chessdb 2")).unwrap();
     let stale = std::fs::read(path.join("games.ids")).unwrap();
     std::fs::write(path.join("games.ids.tmp"), &stale[..40]).unwrap();
+    std::fs::write(path.join("db.tmp"), "chessdb 3\n").unwrap();
     let stale_uids: HashSet<&[u8]> = stale[16..].chunks(16).collect();
 
     let db = Database::open(&path).unwrap();
     assert_eq!(meta_version(&path), "chessdb 3");
     assert!(!path.join("games.ids.tmp").exists());
+    assert!(!path.join("db.tmp").exists(), "nor db.meta's, from a crash before its rename");
     let uids = all_uids(&db);
     assert_eq!(uids.len(), 7);
     assert_distinct(&uids);

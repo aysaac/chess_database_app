@@ -410,7 +410,8 @@ and renamed once complete) holding:
   writer slot**, so no import, index build or compaction writes to it
   meanwhile and no batch is committing (a backup waits for one running to
   end); `games.idx`, with the committed count, and the name tables are
-  copied first and the append-only `games.blob` and position index after,
+  copied first and the append-only `games.blob`, permanent ids
+  (`games.ids`, `games.origins`) and position index after,
   so a copy never refers to data it lacks (`docs/file-format.md`, Crash
   safety). Requests keep reading it during the copy.
 
