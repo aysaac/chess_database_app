@@ -150,6 +150,14 @@ impl Client {
         Client { retries: 0, timeout: Some(self.lookup_timeout), ..self.clone() }
     }
 
+    /// The same, sending every request once: a GET answered with 429 is
+    /// [`NetError::RateLimited`] at once, never waited on and asked again
+    /// (NET-13's round-trip check against the real Lichess).
+    pub fn without_retries(mut self) -> Client {
+        self.retries = 0;
+        self
+    }
+
     /// GETs `url`, waiting and asking again (up to 3 times) when the site
     /// answers 429, until `stop` says to give up. Any other status comes
     /// back for the caller to judge.
