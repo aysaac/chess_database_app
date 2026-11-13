@@ -383,8 +383,11 @@ fn import_pgn(
 /// (NET-13): `POST /api/study/{study}/{chapter}/moves`, which Lichess
 /// answers with a 204. The chapter keeps its id, URL and tags; anything a
 /// collaborator added since it was last fetched is gone. Sent once, like
-/// every write. Whether Lichess keeps the comments, glyphs and clocks
-/// isn't documented: the round-trip check ([`super::roundtrip`]) finds out.
+/// every write. The round-trip check ([`super::roundtrip`]) tried it on
+/// lichess.org (2026-11-12): it takes a whole PGN, tags and all, and keeps
+/// what `import-pgn` keeps (comments, glyphs, shapes, clocks to the second),
+/// but not evals, `%emt` or a comment before a variation's first move
+/// (`docs/feature-catalog.md` › NET-13 round-trip check).
 /// Refused before sending: ids that aren't Lichess's, a text with no game
 /// or several, a game over 400 kB.
 pub fn replace_chapter_moves(
