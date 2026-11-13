@@ -23,7 +23,8 @@
 //! server. It makes one new private study (Lichess makes 30 a day per
 //! account), sends one request at a time, and leaves the study on the
 //! account. It fails (exit code 1) only on errors, not on differences:
-//! those are what the report is for.
+//! those are what the report is for. Once the study is made, an error still
+//! prints (and saves) the report so far, with the study's link.
 
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -105,6 +106,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     if let Some(dir) = &out {
         save(dir, &report)?;
         println!("The PGN of each step and this report are in {}", dir.display());
+    }
+    if let Some(e) = &report.stopped {
+        eprintln!("error: the check stopped: {e}");
+        return Ok(ExitCode::FAILURE);
     }
     if let Some(e) = &report.push_error {
         eprintln!("error: replacing the chapter's moves failed: {e}");

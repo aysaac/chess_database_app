@@ -626,6 +626,10 @@ pub struct RoundTrip {
     /// Why replacing the moves failed, when it did (the rest of the report
     /// stands).
     pub push_error: Option<NetError>,
+    /// Why the check stopped before the end once the study was made, when
+    /// it did: the games weren't all taken, the study couldn't be fetched
+    /// back, a cancel. What came before stands, the study's link with it.
+    pub stopped: Option<NetError>,
     /// Anything else to know: what Lichess said, what our reader warned
     /// about, chapters that don't line up with the games.
     pub notes: Vec<String>,
@@ -676,8 +680,9 @@ pub struct PushCheck {
 /// them back and compares each with its chapter; then replaces the moves
 /// of the first chapter with at least four moves with an edited version of
 /// its game, fetches that chapter and compares it with what was sent.
-/// Errors up to the comparison of the round trip are errors; a failure to
-/// replace the moves is in the report (`push_error`), with the rest.
+/// Errors before the study is made are errors (nothing is on Lichess then).
+/// After, the report always comes back with the study in it: a failure is
+/// in `stopped` (or `push_error` for the moves), with what came before.
 pub fn round_trip(
     client: &Client,
     token: &Token,
@@ -692,6 +697,7 @@ pub fn round_trip(
         total: Comparison::default(),
         push: None,
         push_error: None,
+        stopped: None,
         notes: Vec::new(),
         texts: Texts::default(),
     };
@@ -704,8 +710,6 @@ pub fn round_trip(
     if games.len() > MAX_CHAPTERS {
         return Err(NetError::StudyFull { name: name.to_owned(), room: MAX_CHAPTERS });
     }
-    let stop = || progress.is_cancelled();
-    let cancelled = || if progress.is_cancelled() { Err(NetError::Cancelled) } else { Ok(()) };
 
     // The app's own PGN goes out, as Send to study… sends it, and what our
     // reader makes of it is what's compared.
@@ -725,13 +729,10 @@ pub fn round_trip(
 
     let target = ExportTarget::New { name: name.to_owned(), visibility: Visibility::Private };
     let summary = export_to_studies(client, token, &target, &sent, progress)?;
-    if summary.cancelled {
-        return Err(NetError::Cancelled);
-    }
-    if let Some(e) = summary.stopped {
-        return Err(e);
-    }
-    let study = summary.studies.into_iter().next().ok_or_else(|| bad("no study was made"))?;
+    // The export is an error when it made no study, but for a cancel.
+    let Some(study) = summary.studies.into_iter().next() else {
+        return Err(if summary.cancelled { NetError::Cancelled } else { bad("no study was made") });
+    };
     if let Some(r) = &study.refused {
         report.notes.push(format!("Lichess said about the games: {r}"));
     }
@@ -739,7 +740,28 @@ pub fn round_trip(
         report.notes.push(format!("{} were too long to send", plural(summary.too_long, "game")));
     }
     report.study = Some(study.clone());
+    // From here the study is on the account: whatever goes wrong, the
+    // report says where it is.
+    report.stopped = match (summary.cancelled, summary.stopped) {
+        (true, _) => Some(NetError::Cancelled),
+        (false, Some(e)) => Some(e),
+        (false, None) => check(client, token, &study, &before, progress, &mut report).err(),
+    };
+    Ok(report)
+}
 
+/// The study fetched back and each game compared with its chapter, then a
+/// chapter's moves replaced (a failure there is in `push_error`).
+fn check(
+    client: &Client,
+    token: &Token,
+    study: &SentStudy,
+    before: &[Game],
+    progress: &dyn Progress,
+    report: &mut RoundTrip,
+) -> Result<(), NetError> {
+    let stop = || progress.is_cancelled();
+    let cancelled = || if progress.is_cancelled() { Err(NetError::Cancelled) } else { Ok(()) };
     cancelled()?;
     let link = StudyRef { study: study.id.clone(), chapter: None };
     let back = fetch_study(client, &link, Some(token), None, &stop)?.ok_or_else(|| bad("a 304 unasked"))?;
@@ -747,14 +769,14 @@ pub fn round_trip(
     let texts: Vec<&str> = back.chapters.iter().map(|c| c.pgn.as_str()).collect();
     report.texts.back = format!("{}\n", texts.join("\n\n\n"));
     let mut chapters: Vec<&Chapter> = back.chapters.iter().collect();
-    if chapters.len() == games.len() + 1 && chapters.first().is_some_and(|c| is_empty_chapter(c)) {
+    if chapters.len() == before.len() + 1 && chapters.first().is_some_and(|c| is_empty_chapter(c)) {
         chapters.remove(0);
         report.notes.push("Lichess kept the empty chapter a new study starts with".into());
     }
-    if chapters.len() != games.len() {
+    if chapters.len() != before.len() {
         report.notes.push(format!(
             "{} sent and the study has {}: compared in order",
-            plural(games.len(), "game"),
+            plural(before.len(), "game"),
             plural(chapters.len(), "chapter")
         ));
     }
@@ -784,19 +806,19 @@ pub fn round_trip(
     });
     let Some(i) = pick else {
         report.notes.push("No chapter with four moves or more had an id: its moves weren't replaced".into());
-        return Ok(report);
+        return Ok(());
     };
     cancelled()?;
     let chapter = report.games[i].chapter.clone().expect("picked for its id");
     let link = StudyRef { study: study.id.clone(), chapter: Some(chapter.clone()) };
     let now = current[i].as_ref().expect("picked as read");
-    match push(client, token, &link, &before[i], now, &stop, &mut report) {
+    match push(client, token, &link, &before[i], now, &stop, report) {
         Ok((edits, kept_id, diff)) => {
             report.push = Some(PushCheck { game: i + 1, chapter, edits, kept_id, diff });
         }
         Err(e) => report.push_error = Some(e),
     }
-    Ok(report)
+    Ok(())
 }
 
 /// Replaces the moves of the chapter `link` names with `sent` edited, under
@@ -1018,38 +1040,12 @@ impl fmt::Display for RoundTrip {
             plural(study.chapters, "chapter"),
             plural(self.chapters, "chapter")
         )?;
-        writeln!(f, "(\"-\": nothing of the kind in the games.)")?;
-        writeln!(f)?;
-        writeln!(f, "1. The games sent to the study and fetched back, compared as move trees")?;
-        table(f, &self.total)?;
-        writeln!(f, "   Not counted: the {} tags every chapter gets.", STUDY_TAGS.join(", "))?;
-        for g in &self.games {
-            let what = match &g.diff {
-                Some(d) if d.differences() == 0 => "nothing differs".to_owned(),
-                Some(d) => plural(d.differences(), "difference"),
-                None => "can't be read".to_owned(),
-            };
-            let chapter = g.chapter.as_deref().unwrap_or("?");
-            writeln!(f, "   game {}: {} (chapter {chapter}): {what}", g.number, g.name)?;
+        if let Some(e) = &self.stopped {
+            writeln!(f, "The check stopped: {e}")?;
         }
-        examples(f, &self.total)?;
-        writeln!(f)?;
-        writeln!(
-            f,
-            "2. A chapter's moves replaced in place (POST /api/study/{{id}}/{{chapter}}/moves) and fetched back"
-        )?;
-        match (&self.push, &self.push_error) {
-            (Some(p), _) => {
-                writeln!(f, "   Game {} (chapter {}), sent with these edits:", p.game, p.chapter)?;
-                for e in &p.edits {
-                    writeln!(f, "   - {e}")?;
-                }
-                writeln!(f, "   The chapter kept its id: {}.", if p.kept_id { "yes" } else { "no" })?;
-                table(f, &p.diff)?;
-                examples(f, &p.diff)?;
-            }
-            (None, Some(e)) => writeln!(f, "   Failed: {e}")?,
-            (None, None) => writeln!(f, "   Not tried (see the notes).")?,
+        // Compared once the study came back.
+        if !self.games.is_empty() {
+            compared(f, self)?;
         }
         if !self.notes.is_empty() {
             writeln!(f)?;
@@ -1060,6 +1056,44 @@ impl fmt::Display for RoundTrip {
         }
         writeln!(f)?;
         writeln!(f, "The study stays on the account: delete it on Lichess when you're done with it.")
+    }
+}
+
+/// The report's two parts: the round trip, and the chapter's moves replaced.
+fn compared(f: &mut fmt::Formatter<'_>, r: &RoundTrip) -> fmt::Result {
+    writeln!(f, "(\"-\": nothing of the kind in the games.)")?;
+    writeln!(f)?;
+    writeln!(f, "1. The games sent to the study and fetched back, compared as move trees")?;
+    table(f, &r.total)?;
+    writeln!(f, "   Not counted: the {} tags every chapter gets.", STUDY_TAGS.join(", "))?;
+    for g in &r.games {
+        let what = match &g.diff {
+            Some(d) if d.differences() == 0 => "nothing differs".to_owned(),
+            Some(d) => plural(d.differences(), "difference"),
+            None => "can't be read".to_owned(),
+        };
+        let chapter = g.chapter.as_deref().unwrap_or("?");
+        writeln!(f, "   game {}: {} (chapter {chapter}): {what}", g.number, g.name)?;
+    }
+    examples(f, &r.total)?;
+    writeln!(f)?;
+    writeln!(
+        f,
+        "2. A chapter's moves replaced in place (POST /api/study/{{id}}/{{chapter}}/moves) and fetched back"
+    )?;
+    match (&r.push, &r.push_error, &r.stopped) {
+        (Some(p), _, _) => {
+            writeln!(f, "   Game {} (chapter {}), sent with these edits:", p.game, p.chapter)?;
+            for e in &p.edits {
+                writeln!(f, "   - {e}")?;
+            }
+            writeln!(f, "   The chapter kept its id: {}.", if p.kept_id { "yes" } else { "no" })?;
+            table(f, &p.diff)?;
+            examples(f, &p.diff)
+        }
+        (None, Some(e), _) => writeln!(f, "   Failed: {e}"),
+        (None, None, Some(_)) => writeln!(f, "   Not tried: the check stopped first."),
+        (None, None, None) => writeln!(f, "   Not tried (see the notes)."),
     }
 }
 

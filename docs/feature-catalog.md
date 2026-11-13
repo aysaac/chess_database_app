@@ -381,11 +381,14 @@ CHESSDB_LICHESS_URL=http://127.0.0.1:18431 LICHESS_TOKEN=lio_standin_roundtrip c
   said, what our reader warned about.
 - **Limits:** one study per run (of the 30 Lichess makes a day per account),
   64 chapters at most (more is refused before asking), one request at a
-  time; the study stays on the account. It exits non-zero only on errors
-  (a failed push still prints the rest), not on differences.
+  time; the study stays on the account. It exits non-zero only on errors,
+  not on differences; once the study is made, an error (the games not
+  taken, the study not fetched back, a failed push) still prints and saves
+  the report so far, with the study's link.
 - **Tested** against the stand-in (`crates/chess-net/tests/study_roundtrip.rs`):
   a server that keeps everything (only the Orientation it adds differs), one
-  that drops clocks and evals, a failed push. **Not yet run against the real
+  that drops clocks and evals, a failed push, a check that stops after
+  making its study. **Not yet run against the real
   Lichess**: its results go here when it is.
 
 ### PUB — Printing, publishing & export

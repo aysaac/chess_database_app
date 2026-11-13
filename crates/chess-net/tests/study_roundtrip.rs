@@ -188,6 +188,46 @@ fn a_push_that_fails_leaves_the_rest_of_the_report() {
     assert_eq!(gets, 1, "no chapter fetched after the failure");
 }
 
+/// Once the study is made, a failure doesn't lose the report: it has the
+/// study's link (the study stays on the account) and why it stopped.
+#[test]
+fn a_check_that_stops_after_making_its_study_still_reports_it() {
+    // The games aren't taken.
+    let server = Lichess::start(0);
+    let token = writer(&server);
+    server.state.lock().unwrap().fail.push(("POST /api/study/st000001/import-pgn".into(), 500));
+    let r = round_trip(&client(&server), &token, &fixture(), "Round-trip check", &NoProgress).unwrap();
+    assert_eq!(r.study.as_ref().map(|s| s.id.as_str()), Some("st000001"));
+    assert!(
+        matches!(r.stopped, Some(NetError::Status { site: Site::Lichess, code: 500 })),
+        "{:?}",
+        r.stopped
+    );
+    assert!(r.games.is_empty() && r.push.is_none() && r.push_error.is_none());
+    assert!(r.texts.sent.contains("[Event \"Round-trip: promotions\"]"), "what was to be sent is kept");
+    let text = r.to_string();
+    for part in [
+        format!("Study: {}/study/st000001 (private, \"Round-trip check\")", server.url),
+        "The check stopped: Lichess answered with an error (HTTP 500)".to_owned(),
+        "delete it on Lichess".to_owned(),
+    ] {
+        assert!(text.contains(&part), "{part:?} in:\n{text}");
+    }
+    assert!(!text.contains("1. The games sent"), "nothing was compared:\n{text}");
+    assert_eq!(server.requests().len(), 2, "{:?}", server.requests());
+
+    // The games went, and the study can't be fetched back.
+    let server = Lichess::start(0);
+    let token = writer(&server);
+    server.state.lock().unwrap().fail.push(("GET /api/study/st000001.pgn".into(), 500));
+    let r = round_trip(&client(&server), &token, &fixture(), "Round-trip check", &NoProgress).unwrap();
+    assert_eq!(r.study.as_ref().map(|s| (s.sent, s.chapters)), Some((6, 6)));
+    assert!(matches!(r.stopped, Some(NetError::Status { code: 500, .. })), "{:?}", r.stopped);
+    assert!(r.games.is_empty() && r.push.is_none());
+    assert!(r.to_string().contains("6 games sent, 6 chapters made, 0 chapters fetched back."), "{r}");
+    assert_eq!(server.requests().len(), 3, "nothing after the failure: {:?}", server.requests());
+}
+
 #[test]
 fn refused_before_asking_lichess() {
     let server = Lichess::start(0);
