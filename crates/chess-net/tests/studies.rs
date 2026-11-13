@@ -681,10 +681,15 @@ fn a_chapters_moves_are_replaced_in_place() {
     assert!(matches!(e, NetError::NotContributor), "{e}");
     let e = replace("Exists01", &chapter, &Token::new("lio_gone"), pgn);
     assert!(matches!(e, NetError::TokenRejected), "{e}");
-    let e = replace("Exists01", &chapter, &token, "  ");
-    assert!(matches!(e, NetError::Refused(_)), "{e}");
-    let big = format!("{{ {} }} 1. e4 *", "a".repeat(500 << 10));
+    // No game, or more than one, isn't sent: a chapter without moves isn't
+    // worth risking.
     let sent = server.requests().len();
+    let e = replace("Exists01", &chapter, &token, "  ");
+    assert!(matches!(&e, NetError::Refused(why) if why == "there's no game to send"), "{e}");
+    let e = replace("Exists01", &chapter, &token, &format!("{pgn}\n\n\n[Event \"Two\"]\n\n1. e4 *"));
+    assert!(matches!(&e, NetError::Refused(why) if why.starts_with("2 games")), "{e}");
+    assert_eq!(server.requests().len(), sent, "neither sent");
+    let big = format!("{{ {} }} 1. e4 *", "a".repeat(500 << 10));
     let e = replace("Exists01", &chapter, &token, &big);
     assert!(matches!(e, NetError::Refused(_)), "{e}");
     assert_eq!(server.requests().len(), sent, "too long to send");
@@ -692,5 +697,5 @@ fn a_chapters_moves_are_replaced_in_place() {
     let e = replace("Exists01", &chapter, &token, pgn);
     assert!(matches!(e, NetError::RateLimited(Site::Lichess)), "{e}");
     let moves_posts = server.requests().iter().filter(|r| r.ends_with("/moves [token]")).count();
-    assert_eq!(moves_posts, 6, "each sent once, a 429 too");
+    assert_eq!(moves_posts, 5, "each sent once, a 429 too");
 }

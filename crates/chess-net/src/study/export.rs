@@ -14,7 +14,7 @@
 use chess_db::Progress;
 use serde::Deserialize;
 
-use super::{StudyRef, fetch};
+use super::{StudyRef, fetch, split_games};
 use crate::http::{Client, encoded_len, error_message, read_json, status_error};
 use crate::keys::is_lichess_id;
 use crate::oauth::Token;
@@ -385,6 +385,8 @@ fn import_pgn(
 /// collaborator added since it was last fetched is gone. Sent once, like
 /// every write. Whether Lichess keeps the comments, glyphs and clocks
 /// isn't documented: the round-trip check ([`super::roundtrip`]) finds out.
+/// Refused before sending: ids that aren't Lichess's, a text with no game
+/// or several, a game over 400 kB.
 pub fn replace_chapter_moves(
     client: &Client,
     token: &Token,
@@ -397,6 +399,13 @@ pub fn replace_chapter_moves(
         return Err(NetError::NoSuchStudy);
     }
     let pgn = pgn.trim();
+    // One game, never none: what Lichess does with an empty one (the
+    // chapter's moves gone?) or several isn't worth finding out.
+    match split_games(pgn).len() {
+        1 => {}
+        0 => return Err(NetError::Refused("there's no game to send".into())),
+        n => return Err(NetError::Refused(format!("{n} games, and a chapter takes one"))),
+    }
     if encoded_len(pgn) > MAX_BODY {
         return Err(NetError::Refused(format!(
             "the game is over {} kB, more than Lichess takes",
