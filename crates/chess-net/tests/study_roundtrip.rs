@@ -249,6 +249,37 @@ fn games_lichess_didnt_take_have_no_chapter_and_the_others_line_up() {
     }
 }
 
+/// A rewrite that keeps the first game's tags and nothing of its moves.
+fn without_the_first_games_moves(pgn: &str) -> String {
+    if !pgn.contains("[Event \"Round-trip: every annotation\"]") {
+        return pgn.to_owned();
+    }
+    let tags: Vec<&str> = pgn.lines().take_while(|l| l.starts_with('[')).collect();
+    format!("{}\n\n*", tags.join("\n"))
+}
+
+/// A chapter of the first game that came back without its moves is that
+/// game's, not the empty chapter a study starts with: its moves are
+/// reported dropped.
+#[test]
+fn a_first_game_without_its_moves_is_still_its_chapter() {
+    let server = Lichess::start(0);
+    let token = writer(&server);
+    server.state.lock().unwrap().rewrite = Some(without_the_first_games_moves);
+    let r = round_trip(&client(&server), &token, &fixture(), "Round-trip check", &NoProgress).unwrap();
+    let first = &r.games[0];
+    assert!(first.in_study && first.chapter.is_some(), "{first:?}");
+    let moves = first.diff.as_ref().expect("compared").get(Feature::Moves);
+    assert_eq!((moves.same, moves.added), (0, 0), "{moves:?}");
+    assert!(moves.dropped > 50, "{moves:?}");
+    assert!(!r.notes.iter().any(|n| n.starts_with("Lichess kept the empty chapter")), "{:?}", r.notes);
+    assert!(
+        r.games[1..]
+            .iter()
+            .all(|g| g.diff.as_ref().is_some_and(|d| d.get(Feature::Moves).differences() == 0))
+    );
+}
+
 /// Once the study is made, a failure doesn't lose the report: it has the
 /// study's link (the study stays on the account) and why it stopped.
 #[test]

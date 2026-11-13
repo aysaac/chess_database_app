@@ -783,10 +783,12 @@ fn check(
         chapters.push((k + 1, chapter, read));
     }
     // The empty chapter a new study starts with, when Lichess kept it (the
-    // games went in after it), unless the first game is as empty.
-    if chapters.first().is_some_and(|(_, _, g)| g.as_ref().is_some_and(is_empty_game))
-        && !before.first().is_some_and(is_empty_game)
-    {
+    // games went in after it): empty, and not the first game (as empty, or
+    // with its tags and its moves gone).
+    let first = chapters.first().and_then(|(_, _, g)| g.as_ref());
+    if first.is_some_and(|c| {
+        is_empty_game(c) && !before.first().is_some_and(|g| is_empty_game(g) || same_game(g, c))
+    }) {
         chapters.remove(0);
         report.notes.push("Lichess kept the empty chapter a new study starts with (not compared)".into());
     }
