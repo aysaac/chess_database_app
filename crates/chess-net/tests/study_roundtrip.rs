@@ -320,6 +320,31 @@ fn a_check_that_stops_after_making_its_study_still_reports_it() {
     assert_eq!(server.requests().len(), 3, "nothing after the failure: {:?}", server.requests());
 }
 
+/// The example's client sends each request once: a 429 on the study's
+/// export ends the check there (the study's link kept), where the usual
+/// client waits and asks again.
+#[test]
+fn a_429_ends_the_check_without_asking_again() {
+    let server = Lichess::start(0);
+    let token = writer(&server);
+    server.state.lock().unwrap().fail.push(("GET /api/study/st000001.pgn".into(), 429));
+    let once = client(&server).without_retries();
+    let r = round_trip(&once, &token, &fixture(), "Round-trip check", &NoProgress).unwrap();
+    assert!(matches!(r.stopped, Some(NetError::RateLimited(Site::Lichess))), "{:?}", r.stopped);
+    assert_eq!(r.study.as_ref().map(|s| s.id.as_str()), Some("st000001"));
+    assert!(r.games.is_empty() && r.push.is_none());
+    let gets = server.requests().iter().filter(|r| r.starts_with("GET")).count();
+    assert_eq!((gets, server.requests().len()), (1, 3), "{:?}", server.requests());
+    assert!(r.to_string().contains("The check stopped: Lichess has had too many requests"), "{r}");
+
+    // The usual client asks again after the wait, and the check goes on.
+    let server = Lichess::start(0);
+    let token = writer(&server);
+    server.state.lock().unwrap().fail.push(("GET /api/study/st000001.pgn".into(), 429));
+    let r = round_trip(&client(&server), &token, &fixture(), "Round-trip check", &NoProgress).unwrap();
+    assert!(r.stopped.is_none() && r.push.is_some(), "{:?}", r.stopped);
+}
+
 /// `--out`: the report and each step's PGN, never the token, and nothing
 /// of an earlier run left beside a later one.
 #[test]

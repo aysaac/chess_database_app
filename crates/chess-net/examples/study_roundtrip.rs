@@ -20,9 +20,11 @@
 //! `LICHESS_TOKEN` (make one at
 //! <https://lichess.org/account/oauth/token/create?scopes[]=study:read&scopes[]=study:write>);
 //! nothing else is read for it. `CHESSDB_LICHESS_URL` points it at another
-//! server. It makes one new private study (Lichess makes 30 a day per
-//! account), sends one request at a time, and leaves the study on the
-//! account. It fails (exit code 1) only on errors, not on differences:
+//! server. The token's scopes are checked before anything is made. It makes
+//! one new private study (Lichess makes 30 a day per account), sends one
+//! request at a time and each only once (a 429 ends the check: nothing is
+//! waited on and asked again), and leaves the study on the account. It
+//! fails (exit code 1) only on errors, not on differences:
 //! those are what the report is for. Once the study is made, an error still
 //! prints (and saves) the report so far, with the study's link.
 
@@ -32,7 +34,7 @@ use std::process::ExitCode;
 use chess_core::pgn::PgnReader;
 use chess_db::NoProgress;
 use chess_net::Client;
-use chess_net::oauth::{Token, account};
+use chess_net::oauth::{Token, check_token};
 use chess_net::study::MAX_CHAPTERS;
 use chess_net::study::roundtrip::round_trip;
 use chess_net::time::{now_ms, ymd};
@@ -71,10 +73,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         .filter(|t| !t.trim().is_empty())
         .map(|t| Token::new(&t))
         .ok_or("set LICHESS_TOKEN to a Lichess token with study:read and study:write")?;
+    // Every request sent once: a 429 is an answer, never a reason to wait
+    // and ask Lichess again.
     let client = match std::env::var("CHESSDB_LICHESS_URL").ok().filter(|u| !u.trim().is_empty()) {
         Some(url) => Client::with_servers(&url, "https://api.chess.com"),
         None => Client::new(),
-    };
+    }
+    .without_retries();
 
     // Games our own reader warns about would blur what Lichess did.
     let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -97,7 +102,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     println!("Lichess: {}", client.lichess_url());
     println!("Games: {} from {}", games.len(), file.display());
-    println!("Logged in as {}", account(&client, &token, &|| false)?);
+    // study:read and study:write, before a study is made: without study:read
+    // the study would be made and then not fetched back.
+    println!("Logged in as {}", check_token(&client, &token, &|| false)?.username);
     let name = format!("Round-trip check {}", ymd(now_ms()));
     let report = round_trip(&client, &token, &games, &name, &NoProgress)?;
     println!();
