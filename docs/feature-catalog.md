@@ -392,7 +392,9 @@ CHESSDB_LICHESS_URL=http://127.0.0.1:18431 LICHESS_TOKEN=lio_standin_roundtrip c
 - **Tested** against the stand-in (`crates/chess-net/tests/study_roundtrip.rs`):
   a server that keeps everything (only the Orientation it adds differs), one
   that drops clocks and evals, a failed push, a check that stops after
-  making its study. **Not yet run against the real
+  making its study, a game it doesn't take (with and without the empty
+  first chapter kept), a first game whose moves it drops; `--out`'s files
+  (no token in them, nothing left of an earlier run). **Not yet run against the real
   Lichess**: its results go here when it is.
 
 ### PUB — Printing, publishing & export
