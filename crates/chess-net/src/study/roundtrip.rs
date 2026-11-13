@@ -304,27 +304,32 @@ fn continuations(c: &mut Comparison, before: &Game, after: &Game, p: &Pair) -> V
             c.added(Feature::Variations, lines, format!("added {} with {label}", plural(lines, "variation")));
         }
     }
-    if order.len() >= 2 {
-        let in_order = order.windows(2).all(|w| w[0].1 < w[1].1);
-        // The main line must stay the main line.
-        let main_kept = order[0].0 != 0 || order[0].1 == 0;
-        if in_order && main_kept {
+    let in_order = order.windows(2).all(|w| w[0].1 < w[1].1);
+    // The main line stays the main line: its move is still the first, and
+    // no variation took its place (even with one continuation in both).
+    let main_kept = order.iter().all(|&(i, j)| (i == 0) == (j == 0));
+    if in_order && main_kept {
+        if order.len() >= 2 {
             c.same(Feature::VariationOrder);
-        } else {
-            let sans = |list: &[(usize, usize)]| {
-                let moves: Vec<String> = list
-                    .iter()
-                    .map(|&(i, _)| san(&p.pos_a, before.node(ac[i]).mv.expect("non-root node has a move")))
-                    .collect();
-                moves.join(", ")
-            };
-            let mut theirs = order.clone();
-            theirs.sort_by_key(|&(_, j)| j);
-            let place =
-                if p.label.is_empty() { "the first moves".into() } else { format!("after {}", p.label) };
-            c.changed(Feature::VariationOrder, format!("{place}: {} → {}", sans(&order), sans(&theirs)));
         }
+        return next;
     }
+    let san_of = |i: usize| san(&p.pos_a, before.node(ac[i]).mv.expect("non-root node has a move"));
+    let what = if !in_order {
+        let sans =
+            |list: &[(usize, usize)]| list.iter().map(|&(i, _)| san_of(i)).collect::<Vec<_>>().join(", ");
+        let mut theirs = order.clone();
+        theirs.sort_by_key(|&(_, j)| j);
+        format!("{} → {}", sans(&order), sans(&theirs))
+    } else if let Some(&(i, _)) = order.iter().find(|&&(i, j)| i != 0 && j == 0) {
+        format!("{} is the main line now", san_of(i))
+    } else {
+        // In order, and no variation took its place: the main line's move
+        // is after another now.
+        format!("{} isn't the main line any more", san_of(0))
+    };
+    let place = if p.label.is_empty() { "the first moves".into() } else { format!("after {}", p.label) };
+    c.changed(Feature::VariationOrder, format!("{place}: {what}"));
     next
 }
 
@@ -1155,6 +1160,40 @@ mod tests {
         assert_eq!(d.get(Feature::StartPosition).changed, 1);
         let d = compare(&from(kp), &game("*"));
         assert_eq!(d.get(Feature::StartPosition).dropped, 1);
+    }
+
+    /// A main line that became a variation, or a variation the main line,
+    /// changed the order even where the moves left are in their order.
+    #[test]
+    fn a_new_main_line_is_a_change_of_order() {
+        let order = |a: &str, b: &str| d_order(&compare(&game(a), &game(b)));
+        fn d_order(d: &Comparison) -> (usize, usize, Vec<String>) {
+            let t = d.get(Feature::VariationOrder);
+            (t.same, t.changed, t.examples.clone())
+        }
+        // 1...d5 came first: 1...e5 is a variation now, 1...c5 still after it.
+        let (same, changed, ex) = order("1. e4 e5 (1... c5) *", "1. e4 d5 (1... e5) (1... c5) *");
+        assert_eq!((same, changed), (0, 1), "{ex:?}");
+        assert_eq!(ex, ["after 1.e4: e5 isn't the main line any more"]);
+        // The main line went and its variation took its place.
+        let (same, changed, ex) = order("1. e4 e5 (1... c5) *", "1. e4 c5 *");
+        assert_eq!((same, changed), (0, 1), "{ex:?}");
+        assert_eq!(ex, ["after 1.e4: c5 is the main line now"]);
+        // Only a variation went: the order of the rest is the same.
+        assert_eq!(order("1. e4 e5 (1... c5) (1... e6) *", "1. e4 e5 (1... e6) *"), (1, 0, vec![]));
+        // One continuation each, the same: nothing to order.
+        assert_eq!(order("1. e4 e5 *", "1. e4 e5 *"), (0, 0, vec![]));
+    }
+
+    /// A comment that went from one move to another, as it was, moved: one
+    /// change, not one dropped and one added.
+    #[test]
+    fn a_comment_moved_as_it_was() {
+        let d =
+            compare(&game("1. e4 { The centre. } e5 2. Nf3 *"), &game("1. e4 e5 { The centre. } 2. Nf3 *"));
+        let c = d.get(Feature::Comments);
+        assert_eq!((c.same, c.changed, c.dropped, c.added), (0, 1, 0, 0), "{c:?}");
+        assert_eq!(c.examples, ["\"The centre.\" moved from after 1.e4 to after 1...e5"]);
     }
 
     #[test]
