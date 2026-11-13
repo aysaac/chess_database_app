@@ -131,7 +131,7 @@ Two sides of one program:
 | IO-07 | EPD read/write with opcodes (test suites, engine matches) | CB+FR | P3 | CORE-03 | |
 | IO-08 | Clipboard: copy/paste FEN, PGN, whole game, position image | CB+FR | P1 | IO-01/02 | Done (2026-09-30, with UI-18): Copy game/position, Board image (QOL-06), Paste position (QOL-10) and Paste game in the ribbon; Ctrl+V takes a position or a PGN game. The clipboard is read and written in Rust |
 | IO-09 | Drag-and-drop PGN/files onto the app to open/import | CB | P2 | IO-01 | |
-| IO-10 | Import from URL (Lichess/Chess.com game or study link) | — | P2 | NET-01 | Not in CB. Cheap and much liked. Study part done (2026-11-10): Import study… in the ribbon's Database group. A study's or a chapter's link (or a study id), or one of a user's studies (with the login, their private and unlisted ones too), looked up to show its chapters, then imported with comments, variations, arrows, clock times and orientation into a new database named after the study or into the open one, as a job (one at a time with NET-01's downloads; Cancel at once). Chapters are told apart by their `ChapterURL`, so importing again adds only the new ones; the import asks again with `If-Modified-Since` (a 304 when unchanged). Private and unlisted studies need the login (NET-11), which goes only with them. Not yet: a Lichess or Chess.com game link (QOL-10 takes Lichess links to a position), Lichess broadcasts (NET-04), keeping a study in step (NET-13) |
+| IO-10 | Import from URL (Lichess/Chess.com game or study link) | — | P2 | NET-01 | Not in CB. Cheap and much liked. Study part done (2026-11-10): Import study… in the ribbon's Database group. A study's or a chapter's link (or a study id), or one of a user's studies (with the login, their private and unlisted ones too), looked up to show its chapters, then imported with comments, variations, arrows, clock times and orientation into a new database named after the study or into the open one, as a job (one at a time with NET-01's downloads; Cancel at once). Chapters are told apart by their `ChapterURL`, so importing again adds only the new ones; the import asks again with `If-Modified-Since` (a 304 when unchanged). Private and unlisted studies need the login (NET-11), which goes only with them. What a study's export has of games sent to it, checked on lichess.org (2026-11-12): [NET-13 round-trip check](#net-13-round-trip-check) › On lichess.org (no evals; ECO and Opening are Lichess's; a game with a result whose last move has no comment comes with one like `{ 1-0 White wins. }`). Not yet: a Lichess or Chess.com game link (QOL-10 takes Lichess links to a position), Lichess broadcasts (NET-04), keeping a study in step (NET-13) |
 | IO-11 | Export filtered/selected games | CB | P1 | IO-02, SRCH-14 | |
 | IO-12 | Text encoding handling (UTF-8, Latin-1/CP1252 legacy PGN) | CB | P1 | IO-01 | |
 | IO-13 | SCID .si4/.si5 import | — | P4 | DB-01 | Migration from SCID users |
@@ -329,9 +329,9 @@ Two sides of one program:
 | NET-09 | Web/mobile companion app | CB | P5 | NET-03 | |
 | NET-10 | Shared/collaborative DBs | CB | P5 | NET-03 | |
 | NET-11 | Lichess login: OAuth (PKCE) or a pasted token, kept in the OS's credential store | — | P2 | NET-01 | Done (2026-11-10): in the study dialogs (IO-10, NET-12). Log in to Lichess… opens the browser on Lichess's page, which sends it back to the app on 127.0.0.1 (scopes `study:read study:write`), with Cancel; or Use a token instead, for a personal token that can read and write studies. The token goes to the system keyring (Secret Service on Linux, Credential Manager on Windows, keychain on macOS), or lasts until the app closes where there is none, as the dialog says; the settings keep only the username. Log out revokes the token. A token Lichess no longer takes is forgotten. NET-01 downloads of the user's own games use it (3× as fast). Not yet: other scopes, more than one account |
-| NET-12 | Send games to a Lichess study | — | P2 | NET-11 | Done (2026-11-10): Send to study… in the ribbon's Database group (the list's games: its filter, or all of them) and in the game list's menu (the selected ones). Each game a chapter of a new study (private by default; 64 chapters a study, so more games make "Name (1/3)", "(2/3)"…) or of one of the user's that has room, sent from the app's own PGN writer, as a job. Lichess makes 30 new studies a day per account: at its refusal the export stops and says which games went to which study and that the rest can be sent tomorrow; over 1,920 games is refused before asking. The games in the database don't change. Not yet: writing the chapters' URLs back (NET-13) |
+| NET-12 | Send games to a Lichess study | — | P2 | NET-11 | Done (2026-11-10): Send to study… in the ribbon's Database group (the list's games: its filter, or all of them) and in the game list's menu (the selected ones). Each game a chapter of a new study (private by default; 64 chapters a study, so more games make "Name (1/3)", "(2/3)"…) or of one of the user's that has room, sent from the app's own PGN writer, as a job. Lichess makes 30 new studies a day per account: at its refusal the export stops and says which games went to which study and that the rest can be sent tomorrow; over 1,920 games is refused before asking. The games in the database don't change. What Lichess keeps of the games sent, checked on lichess.org (2026-11-12): [NET-13 round-trip check](#net-13-round-trip-check) › On lichess.org (moves, variations, comments, arrows, highlights, clocks to the second, start positions and orientation stay; evals, `%emt`, comments before a variation's first move, `$142` and `EventDate` go). Not yet: writing the chapters' URLs back (NET-13) |
 | NET-14 | A database kept up to date from online sources: a player's games on Lichess or Chess.com, a Lichess study, a database on the self-hosted server | — | P2 | NET-01, IO-10, NET-11, NET-03 | Done (2026-11-12): **New from Lichess, Chess.com or server…** in the library makes a database from sources and opens it, where its first update starts; **Keep up to date…** in the ribbon's Database group sets the open database's sources (several, mixed) and whether it updates when opened; **Update** brings only the new games in, as one job (one download at a time with NET-01's). Each source notes how far it got after each step, so a Cancel or a failure keeps what came and the next update goes on from there: a player's games from the newest one's time (`Period::Since`, the keys skip repeats), a study with `If-Modified-Since` (a 304 when unchanged), a server database by game number in parts of 2,000 (`export.pgn?idFrom=&idTo=&idEpoch=`, `chess_net::server`). The server sign-in takes a password once and keeps an API token for this computer in the OS's credential store (revoked on Sign out). A source that fails doesn't stop the others; the ribbon's tooltip says when and how the last update went. Settings: `syncedDatabases` (by folder, apart from the list views). A player's games can be limited to one color and to a range of days (Lichess is asked with `color`, `until`; both sites are filtered on this side too). An account can also take **only its latest N games**: its first update asks for them newest first (Lichess `sort=dateDesc`, Chess.com's months backwards) and stops at N, later updates bring every game since; with a Keep only the latest limit a first update needs no more than the limit. A database of players' games can have a **limit** on its live games (every game it has, hand-added ones too) over all its accounts together: **Keep only the latest** (the oldest by date over it are marked as deleted after each update, and stay until Compact) or **Stop updating when the limit is hit** (each download is cut at the room left). Not yet: games changed, deleted or undeleted on the source since they came over (a copy only adds, by game number); a crash or full disk partway through a part of 2,000 server games brings that part again (no keys to skip repeats by), a compacted server database (the copy is made again), updating on a schedule while the app is open, an app UI for TWIC (NET-06), a list of kept-up-to-date databases in the library |
-| NET-13 | Linked two-way study sync: games in a database kept in step with a Lichess study's chapters | — | P3 | NET-12, permanent game ids | Planned. Its first part is done: permanent game ids, which survive compaction (database format version 3, `docs/file-format.md` › Permanent game ids; a copy into another database records the original's). Next the chapter URLs written back (a table keyed by permanent id, like `games.origins`), and Lichess's chapter API (`/api/study/{id}/{chapter}/moves`, `…/tags`, `DELETE …/{chapter}`) with `Last-Modified` to see what changed on each side. Prerequisite built (2026-11-12): the study round-trip check and `replace_chapter_moves` (the moves endpoint), see [NET-13 round-trip check](#net-13-round-trip-check) below; not yet run against the real Lichess |
+| NET-13 | Linked two-way study sync: games in a database kept in step with a Lichess study's chapters | — | P3 | NET-12, permanent game ids | Planned. Its first part is done: permanent game ids, which survive compaction (database format version 3, `docs/file-format.md` › Permanent game ids; a copy into another database records the original's). Next the chapter URLs written back (a table keyed by permanent id, like `games.origins`), and Lichess's chapter API (`/api/study/{id}/{chapter}/moves`, `…/tags`, `DELETE …/{chapter}`) with `Last-Modified` to see what changed on each side. Prerequisite built (2026-11-12): the study round-trip check and `replace_chapter_moves` (the moves endpoint), see [NET-13 round-trip check](#net-13-round-trip-check) below. Run on lichess.org (2026-11-12): the moves endpoint takes a whole PGN and replaces a chapter's tree in place, its id and URL kept; Lichess drops evals, `%emt`, comments before a variation's first move and `$142`, rounds clocks to the second, adds a result comment to a game's last move when that move has no comment, and puts its own ECO, Opening and Annotator (results there) |
 
 #### NET-13 study links
 
@@ -417,8 +417,10 @@ CHESSDB_LICHESS_URL=http://127.0.0.1:18431 LICHESS_TOKEN=lio_standin_roundtrip c
   its event, site, date, round and players, never just the one at its
   place, and an empty first chapter Lichess kept is left out.
 - **Limits:** one study per run (of the 30 Lichess makes a day per account),
-  64 chapters at most (more is refused before asking), one request at a
-  time; the study stays on the account. It exits non-zero only on errors,
+  64 chapters at most (more is refused before asking), the token's scopes
+  checked before anything is made, one request at a time and each sent once
+  (a 429 ends the check, never waited on and asked again); the study stays
+  on the account. It exits non-zero only on errors,
   not on differences; once the study is made, an error (the games not
   taken, the study not fetched back, a failed push) still prints and saves
   the report so far, with the study's link.
@@ -426,9 +428,91 @@ CHESSDB_LICHESS_URL=http://127.0.0.1:18431 LICHESS_TOKEN=lio_standin_roundtrip c
   a server that keeps everything (only the Orientation it adds differs), one
   that drops clocks and evals, a failed push, a check that stops after
   making its study, a game it doesn't take (with and without the empty
-  first chapter kept), a first game whose moves it drops; `--out`'s files
-  (no token in them, nothing left of an earlier run). **Not yet run against the real
-  Lichess**: its results go here when it is.
+  first chapter kept), a first game whose moves it drops, a 429 that ends
+  the check; `--out`'s files (no token in them, nothing left of an earlier
+  run).
+
+##### On lichess.org, 2026-11-12
+
+Run once with the fixture, on the user's account: one private study
+(named with the UTC date, "Round-trip check 2026-11-13"), 6 games sent and
+6 chapters back. Lichess took every game, and `initial=true` replaced the
+empty first chapter. The report and each step's PGN stayed in
+`target/roundtrip` (not committed).
+
+**The games sent and fetched back** (`import-pgn`, then the study's export):
+
+| Feature | Same | Changed | Dropped | Added | What Lichess did |
+|---|---|---|---|---|---|
+| Moves | 165 | 0 | 0 | 0 | Kept, with promotions to every piece, en passant and both castlings |
+| Variations | 16 | 0 | 0 | 0 | Kept, nested ones too |
+| Variation order | 12 | 0 | 0 | 0 | Kept |
+| Comments | 20 | 0 | 1 | 2 | **A comment before a variation's first move is dropped** (`({The Hungarian, quiet:} 3... Be7 …)`); the one before the game's first move stays. **Added: `{ 1-0 White wins. }` and `{ 1/2-1/2 The game is a draw. }`** on the main line's last move, in the two games with a result whose last move had no comment (not where it had one, not in `*` games). Text as sent, non-ASCII and emoji too |
+| NAGs | 38 | 0 | 1 | 0 | `$142` dropped (not one of Lichess's glyphs). Kept: `$1 $2 $4 $5 $6 $7 $13 $14 $18 $22 $36 $40 $44 $132 $140 $146` (the move ones written `!`, `?!`…) |
+| Arrows (`%cal`) | 8 | 0 | 0 | 0 | Kept, in the four colours |
+| Highlights (`%csl`) | 12 | 0 | 0 | 0 | Kept, in the four colours, before the first move too |
+| Clocks (`%clk`) | 37 | 1 | 0 | 1 | **Rounded to the second** (`0:04:57.5` → `0:04:58`). **Added** where a move had only `[%emt 0:00:04]`: `[%clk 0:04:54]`, the player's last clock (0:04:55) less the 4 s plus the 3 s increment of `TimeControl "300+3"` |
+| Evals (`%eval`) | 0 | 0 | 33 | 0 | **All dropped**: pawns, mates (`#7`), with a depth (`0.25,22`) |
+| Other `[%…]` | 0 | 0 | 1 | 0 | `%emt` dropped (made a clock, above) |
+| Start position | 2 | 0 | 0 | 0 | Kept as sent (below) |
+| Orientation | 3 | 0 | 0 | 3 | `white` and `black` kept; `white` added to the games without one |
+| Tags | 52 | 3 | 1 | 8 | Below |
+
+- **Tags:** kept as sent: Event, Site, Date, Round, White, Black, Result,
+  WhiteElo, BlackElo, WhiteTitle, BlackTitle, TimeControl, Termination,
+  Annotator, SetUp, FEN, non-ASCII values too. **ECO and Opening are
+  Lichess's own**: it names the opening from its book and overwrites ours
+  (ECO `C58` → `C59` and `B03` → `B02`; `B12` stayed, as it agreed; Opening
+  "Caro-Kann Defense: Advance Variation" → "…, Short Variation"), adds them
+  where there were none, and gives games from a position `?` for both.
+  Added: `Annotator "https://lichess.org/@/{owner}"` to each game without
+  an Annotator, `Variant "Standard"` (our reader doesn't keep it), and the
+  StudyName, ChapterName and ChapterURL a study gives (not counted).
+  Dropped: `EventDate`. They come back in Lichess's order.
+- **Start positions:** both kept exactly: the FEN (side to move, halfmove
+  clock, the move numbers 41 and 50), `SetUp`, `Orientation "black"`, the
+  comment and highlights before the first move, a variation at the first
+  move, and the promotions. Lichess gave them `ECO "?"` and `Opening "?"`.
+- **In the text** (which the check doesn't compare): Lichess writes a
+  move's comment and its `[%…]` commands as two comments (`{ text } {
+  [%csl …] [%clk …] }`), and keeps as part of the comment the line breaks
+  our PGN writer puts in a long one (it wraps at 80 columns): "The\nItalian."
+  came back with the break, and the same comment sent again wrapped elsewhere
+  came back without it. Our reader makes any run of whitespace one space and
+  joins a move's comments with a space, so neither shows in the tree.
+
+**A chapter's moves replaced** (`POST /api/study/{id}/{chapter}/moves`, game
+1 with the eight edits, under the chapter's tags as exported): Lichess
+**took the whole PGN, tags and all** (StudyName, ChapterName, ChapterURL,
+ECO, Opening…), and the chapter **kept its id and URL** (its export by id
+has the same ChapterURL) and its tags (sent unchanged: whether the moves
+endpoint ignores other tags wasn't tried). **Every edit came back but the
+eval**: a comment changed and one added, an arrow and a highlight added, a
+NAG added and one changed, a clock changed, a move's variations reordered,
+one removed and one added with its comment. What went is what goes on
+import: the evals, `%emt` (made a clock again), the comment before a
+variation's first move, `$142`, and the clock rounded.
+
+| Feature | Same | Changed | Dropped | Added |
+|---|---|---|---|---|
+| Moves | 52 | 0 | 0 | 0 |
+| Variations | 8 | 0 | 0 | 0 |
+| Variation order | 6 | 0 | 0 | 0 |
+| Comments | 12 | 0 | 1 | 0 |
+| NAGs | 21 | 0 | 1 | 0 |
+| Arrows | 7 | 0 | 0 | 0 |
+| Highlights | 7 | 0 | 0 | 0 |
+| Clocks | 6 | 1 | 0 | 1 |
+| Evals | 0 | 0 | 6 | 0 |
+| Other `[%…]` | 0 | 0 | 1 | 0 |
+| Orientation | 1 | 0 | 0 | 0 |
+| Tags | 11 | 0 | 0 | 0 |
+
+Not tried (nothing of it in the fixture or the run): two move NAGs, or two
+position NAGs, on one move; `$3`; the result comment after a push (game 1's
+result is `*`); other tags in the moves endpoint's PGN, and `…/tags`;
+several comments on one move, or line breaks typed on Lichess; a game
+Lichess refuses; variants.
 
 ### PUB — Printing, publishing & export
 
