@@ -13,6 +13,7 @@ mod duplicates;
 mod export;
 mod import;
 mod io;
+mod links;
 mod names;
 pub mod positions;
 pub mod record;
@@ -39,6 +40,7 @@ pub use import::{
     Checkpoint, ImportResume, ImportSummary, ImportWarning, game_label, import_pgn, import_pgn_resumable,
     import_reader,
 };
+pub use links::{LinkedGame, MAX_LINK_ID, StudyLink, SyncMode};
 pub use names::NameTable;
 pub use positions::{
     IndexPlan, IndexSummary, PositionHits, PositionIndex, PositionTree, TreeStats, find_position,

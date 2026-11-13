@@ -6,15 +6,19 @@
 //! - `players.names`, `events.names`, `sites.names`, `annotators.names`.
 //! - `games.ids`, `games.origins`: each game's permanent id, and the id a
 //!   copied game has in the database it came from (see [`crate::uid`]).
+//! - `games.links`: games linked to Lichess study chapters (NET-13), by
+//!   permanent id; only once one was (see [`crate::links`]).
 //! - `.lock`: held exclusively while the database is open (single writer).
 //! - Derived, rebuildable files: the position index and opening
 //!   classification (see [`crate::positions`]).
 //!
 //! Commit protocol (crash safety): blobs → fsync → names → fsync →
-//! permanent ids → fsync → origins of copies → fsync → index records →
+//! permanent ids → fsync → origins of copies → fsync → links of games
+//! appended linked → fsync → their committed end → fsync → index records →
 //! fsync → committed count in the index header → fsync. On open, index
 //! records and ids beyond the committed count are truncated; unreferenced
-//! blob bytes and origins of ids no game has are harmless garbage.
+//! blob bytes, and origins and links of ids no game has, are harmless
+//! garbage.
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -26,6 +30,7 @@ use chess_core::game::{Game, GameResult, Headers};
 use crate::blob::{date_round_eco, decode_game, encode_game};
 use crate::bytes::u64_at;
 use crate::io::{read_exact_at, write_all_at};
+use crate::links::{LINKS_FILE, LinkedGame, Links, StudyLink, check_link};
 use crate::names::NameTable;
 use crate::positions::PositionIndex;
 use crate::record::{
@@ -108,6 +113,8 @@ pub struct PreparedGame {
     blob: Vec<u8>,
     /// The permanent id of the game this is a copy of, in its database.
     origin: Option<GameUid>,
+    /// Its link to a study chapter (NET-13), committed with it.
+    link: Option<Box<StudyLink>>,
 }
 
 impl PreparedGame {
@@ -136,6 +143,7 @@ impl PreparedGame {
             plies: game.mainline_len().min(u16::MAX as usize) as u16,
             blob: encode_game(game),
             origin: None,
+            link: None,
         }
     }
 
@@ -144,6 +152,14 @@ impl PreparedGame {
     /// [`Database::origin`] gives `origin`.
     pub fn with_origin(self, origin: GameUid) -> PreparedGame {
         PreparedGame { origin: Some(origin), ..self }
+    }
+
+    /// This game linked to a study chapter (NET-13): appended, its link is
+    /// committed with it, as [`Database::set_link`] would set it, so a
+    /// chapter pulled in is never there without its link. A copy
+    /// ([`Database::read_prepared`]) has none.
+    pub fn with_link(self, link: StudyLink) -> PreparedGame {
+        PreparedGame { link: Some(Box::new(link)), ..self }
     }
 }
 
@@ -187,7 +203,7 @@ pub struct CompactSummary {
 /// files are incomplete and are deleted.
 fn recover_compaction(dir: &Path) -> Result<(), DbError> {
     let committed = dir.join(COMPACT_MARKER).exists();
-    let files = [IDX_FILE, BLOB_FILE, IDS_FILE, ORIGINS_FILE].into_iter().chain(NAME_FILES);
+    let files = [IDX_FILE, BLOB_FILE, IDS_FILE, ORIGINS_FILE, LINKS_FILE].into_iter().chain(NAME_FILES);
     for name in files {
         let new = dir.join(format!("{name}{NEW_SUFFIX}"));
         if new.exists() {
@@ -238,6 +254,8 @@ pub struct Database {
     origins: Origins,
     /// Slots by permanent id, built on first use and kept up to date after.
     uid_index: Option<UidIndex>,
+    /// Links to study chapters (NET-13), read on first use.
+    links: Option<Links>,
     count: u32,
     blob_len: u64,
     sorts: HashMap<SortSpec, Arc<Vec<GameId>>>,
@@ -446,6 +464,7 @@ impl Database {
             ids,
             origins,
             uid_index: None,
+            links: None,
             count: 0,
             blob_len: BLOB_HEADER,
             sorts: HashMap::new(),
@@ -482,7 +501,7 @@ impl Database {
             idx.set_len(expected_len)?;
         }
         let blob_len = blob.metadata()?.len();
-        for name in NAME_FILES.into_iter().chain([IDS_FILE, ORIGINS_FILE]) {
+        for name in NAME_FILES.into_iter().chain([IDS_FILE, ORIGINS_FILE, LINKS_FILE]) {
             // Left over from a rename interrupted before its swap.
             let _ = std::fs::remove_file(tmp_path(&dir.join(name)));
         }
@@ -502,6 +521,12 @@ impl Database {
             );
             IdsFile::write_fresh(&dir.join(IDS_FILE), count)?;
             Origins::write_empty(&dir.join(ORIGINS_FILE))?;
+            // Study links (NET-13) name the ids made before (a version 3
+            // database set back to 2 by hand): none of them is a game's now.
+            if dir.join(LINKS_FILE).exists() {
+                log::warn!("{}: its links to study chapters named the old ids: dropped", dir.display());
+                std::fs::remove_file(dir.join(LINKS_FILE))?;
+            }
             write_atomic(&dir.join(META_FILE), format!("chessdb {META_VERSION}\nid {id}\n").as_bytes())?;
         }
         let ids = IdsFile::open(&dir.join(IDS_FILE), count)?;
@@ -523,6 +548,7 @@ impl Database {
             ids,
             origins,
             uid_index: None,
+            links: None,
             count,
             blob_len,
             sorts: HashMap::new(),
@@ -675,6 +701,12 @@ impl Database {
         if games.is_empty() {
             return Ok(first..first);
         }
+        // Links (NET-13) are checked before anything is written.
+        let linked: Vec<(usize, &StudyLink)> =
+            games.iter().enumerate().filter_map(|(i, g)| Some((i, g.link.as_deref()?))).collect();
+        if !linked.is_empty() {
+            self.check_chapters_free(linked.iter().map(|&(_, l)| (None, l)))?;
+        }
         let blobs: Vec<&[u8]> = games.iter().map(|g| g.blob.as_slice()).collect();
         let offsets = self.write_blobs(&blobs)?;
         let mut records = Vec::with_capacity(games.len() * RECORD_SIZE);
@@ -694,6 +726,10 @@ impl Database {
             games.iter().zip(&uids).filter_map(|(g, uid)| Some((*uid, g.origin?))).collect();
         if !origins.is_empty() {
             self.origins.append(&origins)?;
+        }
+        if !linked.is_empty() {
+            let changes: Vec<_> = linked.iter().map(|&(i, l)| (uids[i], Some(l))).collect();
+            self.commit_links(&changes)?;
         }
         write_all_at(&self.idx, &records, IDX_HEADER + u64::from(first) * RECORD_SIZE as u64)?;
         self.idx.sync_data()?;
@@ -1055,10 +1091,22 @@ impl Database {
         const CHUNK: u32 = 16 * 1024;
         self.flush_names()?;
         recover_compaction(&self.dir)?;
-        // Which origins to keep is found through the map of ids. Built here
-        // only for that, it goes after (8 bytes a game nothing asked for).
+        // Study links (NET-13) of the games kept are kept. A file this
+        // version can't read (a newer one's) stays as it is: keyed by
+        // permanent id, it stays right, and only holds links of games
+        // removed here too, which nothing finds.
+        let links = match self.links_loaded() {
+            Ok(links) => links.has_file().then(|| !links.is_empty()),
+            Err(e) => {
+                log::warn!("compacting {}: its study links stay as they are: {e}", self.dir.display());
+                None
+            }
+        };
+        // Which origins and links to keep is found through the map of ids.
+        // Built here only for that, it goes after (8 bytes a game nothing
+        // asked for).
         let keep_map = self.uid_index.is_some();
-        if !self.origins.is_empty() {
+        if !self.origins.is_empty() || links == Some(true) {
             self.ensure_uid_index()?;
         }
         let bytes_before = self.info().size_bytes;
@@ -1127,13 +1175,18 @@ impl Database {
             for t in &mut new_names {
                 t.flush()?;
             }
+            // Those of the games kept.
+            let kept = |uid| match self.uid_index.as_ref() {
+                Some(index) => Ok(index
+                    .find(uid, |slot| self.ids.get(slot))?
+                    .is_some_and(|s| mapping[s as usize].is_some())),
+                None => Ok(false),
+            };
             if !self.origins.is_empty() {
-                // Those of the games kept.
-                let index = self.uid_index.as_ref().expect("built above");
-                let at = |slot| self.ids.get(slot);
-                let keep =
-                    |uid| Ok(index.find(uid, at)?.is_some_and(|slot| mapping[slot as usize].is_some()));
-                new_origins = Some(self.origins.write_kept(&new_path(ORIGINS_FILE), keep)?);
+                new_origins = Some(self.origins.write_kept(&new_path(ORIGINS_FILE), kept)?);
+            }
+            if links.is_some() {
+                self.links.as_ref().expect("read above").write_kept(&new_path(LINKS_FILE), kept)?;
             }
             Ok(())
         })();
@@ -1161,6 +1214,11 @@ impl Database {
         if let Some(origins) = new_origins {
             self.origins = origins;
             swapped.push(ORIGINS_FILE);
+        }
+        if links.is_some() {
+            // Read again from the new file on next use.
+            self.links = None;
+            swapped.push(LINKS_FILE);
         }
         for name in swapped.into_iter().chain(NAME_FILES) {
             std::fs::rename(new_path(name), self.dir.join(name))?;
@@ -1240,6 +1298,175 @@ impl Database {
         self.origins.get(uid)
     }
 
+    // ---- study links (NET-13) ---------------------------------------------
+
+    /// `games.links`, read on first use.
+    fn links_loaded(&mut self) -> Result<&mut Links, DbError> {
+        if self.links.is_none() {
+            self.links = Some(Links::open(&self.dir.join(LINKS_FILE))?);
+        }
+        Ok(self.links.as_mut().expect("just read"))
+    }
+
+    /// Commits link changes, then writes the file again if it's mostly
+    /// entries replaced since. That rewrite is housekeeping: if it fails,
+    /// the file is the old one or the new one, whole, and is read again.
+    fn commit_links(&mut self, changes: &[(GameUid, Option<&StudyLink>)]) -> Result<(), DbError> {
+        let links = self.links_loaded()?;
+        links.commit(changes)?;
+        if links.wants_rewrite()
+            && let Err(e) = links.rewrite()
+        {
+            log::warn!("couldn't tidy the study links of {}: {e}", self.dir.display());
+            self.links = None;
+        }
+        Ok(())
+    }
+
+    /// Checks links about to be set (`(game, link)`, `None` for games about
+    /// to be appended): each can be stored, one game per chapter among them,
+    /// and no chapter linked to another game here already. A link held by
+    /// a game this database doesn't have (see [`links`](Self::links)) is
+    /// free: setting its chapter takes it.
+    fn check_chapters_free<'a>(
+        &mut self,
+        links: impl Iterator<Item = (Option<GameUid>, &'a StudyLink)>,
+    ) -> Result<(), DbError> {
+        let links: Vec<_> = links.collect();
+        let mut chapters: HashMap<(&str, &str), Option<GameUid>> = HashMap::new();
+        for &(uid, link) in &links {
+            check_link(link)?;
+            let key = (link.study.as_str(), link.chapter.as_str());
+            if chapters.insert(key, uid).is_some() {
+                return Err(DbError::Invalid(format!(
+                    "two games for the chapter {}/{}: a chapter is linked to one game",
+                    link.study, link.chapter
+                )));
+            }
+        }
+        let moving: Vec<GameUid> = links.iter().filter_map(|&(uid, _)| uid).collect();
+        for ((study, chapter), uid) in chapters {
+            let Some(holder) = self.links_loaded()?.holder(study, chapter) else { continue };
+            if Some(holder) == uid || moving.contains(&holder) || self.game_by_uid(holder)?.is_none() {
+                continue;
+            }
+            return Err(DbError::Invalid(format!(
+                "the chapter {study}/{chapter} is linked to another game already"
+            )));
+        }
+        Ok(())
+    }
+
+    /// The link to a study chapter of the game with permanent id `uid`, its
+    /// base and layer with it, if it's linked. `None` too for an id no game
+    /// here has (a link left by a commit cut short, or by an older app's
+    /// compaction).
+    pub fn link(&mut self, uid: GameUid) -> Result<Option<StudyLink>, DbError> {
+        if self.game_by_uid(uid)?.is_none() {
+            return Ok(None);
+        }
+        self.links_loaded()?.get(uid)
+    }
+
+    /// Links a game to a study chapter, or changes its link (a new base and
+    /// layer after a sync, another mode), in one crash-safe commit. See
+    /// [`set_links`](Self::set_links).
+    pub fn set_link(&mut self, uid: GameUid, link: &StudyLink) -> Result<(), DbError> {
+        self.set_links(&[(uid, link.clone())])
+    }
+
+    /// Sets games' links in one crash-safe commit, all of them or none. Each
+    /// game must be here (deleted ones too), and each chapter linked to one
+    /// game: a chapter another game here is linked to is refused (remove
+    /// that link first), but games' chapters can be swapped in one call. A
+    /// game's link stays through edits, deletion, undeletion and
+    /// compactions; a copy of the game isn't linked.
+    pub fn set_links(&mut self, links: &[(GameUid, StudyLink)]) -> Result<(), DbError> {
+        if links.is_empty() {
+            return Ok(());
+        }
+        for (uid, _) in links {
+            if self.game_by_uid(*uid)?.is_none() {
+                return Err(DbError::Invalid(format!("no game in this database has the id {uid}")));
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        if let Some((uid, _)) = links.iter().find(|(u, _)| !seen.insert(*u)) {
+            return Err(DbError::Invalid(format!("two links for the game {uid}: a game has one")));
+        }
+        self.check_chapters_free(links.iter().map(|(u, l)| (Some(*u), l)))?;
+        let changes: Vec<_> = links.iter().map(|(u, l)| (*u, Some(l))).collect();
+        self.commit_links(&changes)
+    }
+
+    /// Unlinks a game. Returns whether it was linked.
+    pub fn remove_link(&mut self, uid: GameUid) -> Result<bool, DbError> {
+        Ok(self.remove_links(&[uid])? == 1)
+    }
+
+    /// Unlinks games, in one crash-safe commit. Returns how many were
+    /// linked. Their games stay as they are.
+    pub fn remove_links(&mut self, uids: &[GameUid]) -> Result<u32, DbError> {
+        let links = self.links_loaded()?;
+        let mut gone: Vec<GameUid> = uids.iter().copied().filter(|u| links.meta(*u).is_some()).collect();
+        gone.sort_unstable();
+        gone.dedup();
+        let changes: Vec<_> = gone.iter().map(|u| (*u, None)).collect();
+        self.commit_links(&changes)?;
+        Ok(gone.len() as u32)
+    }
+
+    /// The game linked to this chapter, if one here is.
+    pub fn link_by_chapter(&mut self, study: &str, chapter: &str) -> Result<Option<LinkedGame>, DbError> {
+        let Some(uid) = self.links_loaded()?.holder(study, chapter) else { return Ok(None) };
+        self.linked_game(uid)
+    }
+
+    /// Unlinks the game linked to this chapter. Returns whether one was.
+    pub fn remove_chapter_link(&mut self, study: &str, chapter: &str) -> Result<bool, DbError> {
+        match self.links_loaded()?.holder(study, chapter) {
+            Some(uid) => self.remove_link(uid),
+            None => Ok(false),
+        }
+    }
+
+    /// The games linked to the chapters of a study, by slot.
+    pub fn links_of_study(&mut self, study: &str) -> Result<Vec<LinkedGame>, DbError> {
+        let uids: Vec<GameUid> =
+            self.links_loaded()?.all().filter(|(_, m)| m.study == study).map(|(u, _)| u).collect();
+        self.linked_games(uids)
+    }
+
+    /// Every linked game, by slot. Links of games this database doesn't have
+    /// (one appended linked whose commit a crash cut short, or one an older
+    /// app compacted away) aren't listed; the next compaction drops them.
+    pub fn links(&mut self) -> Result<Vec<LinkedGame>, DbError> {
+        let uids: Vec<GameUid> = self.links_loaded()?.all().map(|(u, _)| u).collect();
+        self.linked_games(uids)
+    }
+
+    fn linked_game(&mut self, uid: GameUid) -> Result<Option<LinkedGame>, DbError> {
+        let Some(game) = self.game_by_uid(uid)? else { return Ok(None) };
+        let Some(m) = self.links_loaded()?.meta(uid) else { return Ok(None) };
+        Ok(Some(LinkedGame {
+            uid,
+            game,
+            study: m.study.clone(),
+            chapter: m.chapter.clone(),
+            mode: m.mode,
+            last_modified: m.last_modified.clone(),
+        }))
+    }
+
+    fn linked_games(&mut self, uids: Vec<GameUid>) -> Result<Vec<LinkedGame>, DbError> {
+        let mut out = Vec::with_capacity(uids.len());
+        for uid in uids {
+            out.extend(self.linked_game(uid)?);
+        }
+        out.sort_by_key(|l| l.game);
+        Ok(out)
+    }
+
     /// Per-game stats for every game, loaded on first use.
     pub fn game_stats(&mut self) -> Result<&[GameStat], DbError> {
         if self.stats.is_none() {
@@ -1317,7 +1544,15 @@ impl Database {
             extra: Vec::new(),
         };
         let content = FLAG_VARIATIONS | FLAG_COMMENTS | FLAG_ANNOTATIONS | FLAG_SETUP;
-        Ok(PreparedGame { headers, flags: rec.flags & content, plies: rec.plies, blob, origin: None })
+        // Not its origin nor its link: a copy is another game, linked to nothing.
+        Ok(PreparedGame {
+            headers,
+            flags: rec.flags & content,
+            plies: rec.plies,
+            blob,
+            origin: None,
+            link: None,
+        })
     }
 
     pub fn row_from_record(&self, id: GameId, rec: &IndexRecord) -> GameRow {
@@ -1765,6 +2000,80 @@ mod tests {
         let mut db = Database::open(&path).unwrap();
         assert_eq!(db.uids(0, 9).unwrap(), uids);
         assert_eq!(db.origin(2).unwrap(), Some(first));
+    }
+
+    fn study_link(chapter: &str) -> StudyLink {
+        StudyLink {
+            study: "Stud1234".into(),
+            chapter: chapter.into(),
+            mode: crate::SyncMode::Follow,
+            last_modified: None,
+            base: format!("[ChapterURL \"https://lichess.org/study/Stud1234/{chapter}\"]\n\n1. e4 *"),
+            layer: vec![9],
+        }
+    }
+
+    /// A game appended linked (NET-13) commits its link before its record
+    /// and the count: when the links can't be written, nothing is committed;
+    /// when the records can't be, the link is left for an id no game has,
+    /// which nothing finds, and the chapter stays free.
+    #[test]
+    fn a_game_appended_linked_commits_its_link_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Linked")).unwrap();
+        let [a, b] = <[Game; 2]>::try_from(sample_games()).unwrap();
+        db.append_prepared(&[PreparedGame::new(&a).with_link(study_link("chap0001"))]).unwrap();
+        let path = db.path().to_path_buf();
+        let committed = |db: &Database| (db.count(), Database::summary(&path).unwrap().games);
+
+        let links = db.links.take();
+        db.links = Some(Links::read_only(&path.join(LINKS_FILE)));
+        let linked = || PreparedGame::new(&b).with_link(study_link("chap0002"));
+        assert!(db.append_prepared(&[linked()]).is_err());
+        assert_eq!(committed(&db), (1, 1), "a failed link write commits nothing");
+        db.links = links;
+        assert_eq!(db.link_by_chapter("Stud1234", "chap0002").unwrap(), None);
+
+        let idx = std::mem::replace(&mut db.idx, File::open(path.join(IDX_FILE)).unwrap());
+        assert!(db.append_prepared(&[linked()]).is_err());
+        assert_eq!(committed(&db), (1, 1));
+        db.idx = idx;
+        assert_eq!(db.link_by_chapter("Stud1234", "chap0002").unwrap(), None, "its game isn't there");
+        assert_eq!(db.links().unwrap().len(), 1);
+        // The chapter is free: the next append takes it.
+        assert_eq!(db.append_prepared(&[linked()]).unwrap(), 1..2);
+        let uid = db.uid(1).unwrap();
+        assert_eq!(
+            db.link_by_chapter("Stud1234", "chap0002").unwrap().map(|l| (l.uid, l.game)),
+            Some((uid, 1))
+        );
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        assert_eq!(db.link(uid).unwrap(), Some(study_link("chap0002")));
+        assert_eq!(db.links().unwrap().iter().map(|l| l.game).collect::<Vec<_>>(), [0, 1]);
+    }
+
+    /// Chapters already linked are refused before anything is written,
+    /// whatever else the batch holds.
+    #[test]
+    fn an_append_linking_a_linked_chapter_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Taken")).unwrap();
+        let g = &sample_games()[0];
+        db.append_prepared(&[PreparedGame::new(g).with_link(study_link("chap0001"))]).unwrap();
+        let blob = std::fs::metadata(db.path().join(BLOB_FILE)).unwrap().len();
+        for batch in [
+            vec![PreparedGame::new(g), PreparedGame::new(g).with_link(study_link("chap0001"))],
+            vec![
+                PreparedGame::new(g).with_link(study_link("chap0002")),
+                PreparedGame::new(g).with_link(study_link("chap0002")),
+            ],
+            vec![PreparedGame::new(g).with_link(StudyLink { study: String::new(), ..study_link("x") })],
+        ] {
+            assert!(matches!(db.append_prepared(&batch), Err(DbError::Invalid(_))));
+            assert_eq!(db.count(), 1);
+            assert_eq!(std::fs::metadata(db.path().join(BLOB_FILE)).unwrap().len(), blob);
+        }
     }
 
     #[test]

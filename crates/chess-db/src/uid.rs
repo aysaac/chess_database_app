@@ -14,8 +14,8 @@
 //! - `games.origins`: a 16-byte header, then `(id, origin id)` for each game
 //!   copied from another database: the id the game has there.
 //!
-//! `games.origins` is the first table keyed by permanent id; NET-13's links
-//! and sync state can be kept the same way.
+//! `games.origins` was the first table keyed by permanent id; NET-13's links
+//! to study chapters are the second ([`crate::links`]).
 
 use std::collections::HashMap;
 use std::fmt;
