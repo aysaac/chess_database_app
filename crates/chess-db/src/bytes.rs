@@ -11,8 +11,13 @@ pub fn put_varint(buf: &mut Vec<u8>, mut v: u64) {
 }
 
 pub fn put_str(buf: &mut Vec<u8>, s: &str) {
-    put_varint(buf, s.len() as u64);
-    buf.extend_from_slice(s.as_bytes());
+    put_bytes(buf, s.as_bytes());
+}
+
+/// `varint length` followed by that many bytes (as [`put_str`], any bytes).
+pub fn put_bytes(buf: &mut Vec<u8>, b: &[u8]) {
+    put_varint(buf, b.len() as u64);
+    buf.extend_from_slice(b);
 }
 
 pub struct ByteReader<'a> {
@@ -68,9 +73,14 @@ impl<'a> ByteReader<'a> {
     }
 
     pub fn str(&mut self) -> Result<String, DbError> {
-        let len = self.varint()? as usize;
-        let bytes = self.bytes(len)?;
+        let bytes = self.len_bytes()?;
         String::from_utf8(bytes.to_vec()).map_err(|_| self.corrupt("invalid UTF-8"))
+    }
+
+    /// What [`put_bytes`] wrote.
+    pub fn len_bytes(&mut self) -> Result<&'a [u8], DbError> {
+        let len = usize::try_from(self.varint()?).map_err(|_| self.corrupt("length too large"))?;
+        self.bytes(len)
     }
 }
 
@@ -97,12 +107,18 @@ mod tests {
             put_varint(&mut buf, v);
         }
         put_str(&mut buf, "Réti");
+        put_bytes(&mut buf, &[0xFF, 0]);
         let mut r = ByteReader::new(&buf);
         for v in [0, 1, 127, 128, 300, u64::from(u32::MAX), u64::MAX] {
             assert_eq!(r.varint().unwrap(), v);
         }
         assert_eq!(r.str().unwrap(), "Réti");
+        assert_eq!(r.len_bytes().unwrap(), [0xFF, 0]);
         assert!(r.is_empty());
         assert!(r.u8().is_err());
+        // A length past the end is an error, not a panic.
+        let mut long = Vec::new();
+        put_varint(&mut long, 1 << 40);
+        assert!(ByteReader::new(&long).len_bytes().is_err());
     }
 }

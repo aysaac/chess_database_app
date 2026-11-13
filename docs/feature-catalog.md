@@ -333,6 +333,27 @@ Two sides of one program:
 | NET-14 | A database kept up to date from online sources: a player's games on Lichess or Chess.com, a Lichess study, a database on the self-hosted server | — | P2 | NET-01, IO-10, NET-11, NET-03 | Done (2026-11-12): **New from Lichess, Chess.com or server…** in the library makes a database from sources and opens it, where its first update starts; **Keep up to date…** in the ribbon's Database group sets the open database's sources (several, mixed) and whether it updates when opened; **Update** brings only the new games in, as one job (one download at a time with NET-01's). Each source notes how far it got after each step, so a Cancel or a failure keeps what came and the next update goes on from there: a player's games from the newest one's time (`Period::Since`, the keys skip repeats), a study with `If-Modified-Since` (a 304 when unchanged), a server database by game number in parts of 2,000 (`export.pgn?idFrom=&idTo=&idEpoch=`, `chess_net::server`). The server sign-in takes a password once and keeps an API token for this computer in the OS's credential store (revoked on Sign out). A source that fails doesn't stop the others; the ribbon's tooltip says when and how the last update went. Settings: `syncedDatabases` (by folder, apart from the list views). A player's games can be limited to one color and to a range of days (Lichess is asked with `color`, `until`; both sites are filtered on this side too). An account can also take **only its latest N games**: its first update asks for them newest first (Lichess `sort=dateDesc`, Chess.com's months backwards) and stops at N, later updates bring every game since; with a Keep only the latest limit a first update needs no more than the limit. A database of players' games can have a **limit** on its live games (every game it has, hand-added ones too) over all its accounts together: **Keep only the latest** (the oldest by date over it are marked as deleted after each update, and stay until Compact) or **Stop updating when the limit is hit** (each download is cut at the room left). Not yet: games changed, deleted or undeleted on the source since they came over (a copy only adds, by game number); a crash or full disk partway through a part of 2,000 server games brings that part again (no keys to skip repeats by), a compacted server database (the copy is made again), updating on a schedule while the app is open, an app UI for TWIC (NET-06), a list of kept-up-to-date databases in the library |
 | NET-13 | Linked two-way study sync: games in a database kept in step with a Lichess study's chapters | — | P3 | NET-12, permanent game ids | Planned. Its first part is done: permanent game ids, which survive compaction (database format version 3, `docs/file-format.md` › Permanent game ids; a copy into another database records the original's). Next the chapter URLs written back (a table keyed by permanent id, like `games.origins`), and Lichess's chapter API (`/api/study/{id}/{chapter}/moves`, `…/tags`, `DELETE …/{chapter}`) with `Last-Modified` to see what changed on each side. Prerequisite built (2026-11-12): the study round-trip check and `replace_chapter_moves` (the moves endpoint), see [NET-13 round-trip check](#net-13-round-trip-check) below. Run on lichess.org (2026-11-12): the moves endpoint takes a whole PGN and replaces a chapter's tree in place, its id and URL kept; Lichess drops evals, `%emt`, comments before a variation's first move and `$142`, rounds clocks to the second, adds a result comment to a game's last move when that move has no comment, and puts its own ECO, Opening and Annotator (results there) |
 
+#### NET-13 study links
+
+Built (2026-11-12), not used by the app yet: a game's **link to a study
+chapter**, kept in the database (`games.links`, keyed by permanent id like
+`games.origins`; `docs/file-format.md` › `games.links`). Per linked game:
+the study and chapter ids, the mode (follow only or two-way; a static copy
+has no link), the study's `Last-Modified`, the **base snapshot** (Lichess's
+own export of the chapter, fetched again after a push; deflated) and the
+**local-only layer** (what only we hold of the game, made by `chess-net`).
+`chess_db::Database`: `set_link`, `set_links`, `link`, `remove_link(s)`,
+`link_by_chapter`, `remove_chapter_link`, `links_of_study`, `links`; a
+chapter pulled in comes with its link in one commit
+(`PreparedGame::with_link`). One game per chapter. Links stay through
+edits, deletion, undeletion and compaction; a copy into another database
+isn't linked. **No format version bump**: an older app ignores the file and
+can't make a link point at another game; what it leaves is the links of
+games its compaction removes, which nothing finds and the next compaction
+here drops. Next: what's held on each side (the local-only layer), then
+follow only with change detection, the tree merge, push, the conflict
+dialog.
+
 #### NET-13 round-trip check
 
 What Lichess keeps, changes or drops of annotated games, so that a sync

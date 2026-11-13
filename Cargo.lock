@@ -612,6 +612,7 @@ dependencies = [
  "chess-jobs",
  "getrandom 0.4.3",
  "log",
+ "miniz_oxide 0.9.1",
  "proptest",
  "shakmaty",
  "tempfile",

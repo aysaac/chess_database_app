@@ -25,7 +25,10 @@ in [`docs/io-03-cbh.md`](../../docs/io-03-cbh.md).
   copy from another database also records the original's
   (`PreparedGame::with_origin`, `Database::origin`).
 - Data about a game that a compaction must keep goes in a side table keyed
-  by `GameUid`, like `games.origins`, not in the 64-byte record.
+  by `GameUid`, like `games.origins` and `games.links` (NET-13's study
+  links, `links.rs`), not in the 64-byte record. A table an older app
+  doesn't know must stay right when that app edits, deletes or compacts
+  games (it will, without reading it): keyed by `GameUid`, it does.
 - A new file in a database must be added to compaction (its `.new` file
   and `recover_compaction`) and, if it's created on upgrade, to the upgrade
   in `Database::open`. The server's backup copies every file in the folder.

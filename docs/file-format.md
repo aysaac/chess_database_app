@@ -18,6 +18,7 @@ A database is a directory named `<Name>.chessdb/`:
 | `games.blob` | 16-byte header, then game blobs (append-only) |
 | `games.ids` | 16-byte header, then each game's permanent id (see [below](#permanent-game-ids)) |
 | `games.origins` | 16-byte header, then the origin of each game copied in from another database |
+| `games.links` | 32-byte header, then the games' links to Lichess study chapters (NET-13; see [below](#gameslinks)); only once a game was linked |
 | `players.names` | Name table for White/Black |
 | `events.names` | Name table for Event |
 | `sites.names` | Name table for Site |
@@ -39,6 +40,17 @@ app again, set `db.meta`'s first line back to `chessdb 2`: that app leaves
 `games.ids` and `games.origins` alone, and the next newer one upgrades the
 database again, with a new id for every game. The binary files keep their
 own header versions (all 1).
+
+`games.links` (NET-13) came later and needed no new version: it's an
+optional file keyed by permanent id, and a version 3 app from before it
+can't make it wrong. That app ignores it: it opens, edits, deletes and
+copies games as before (a copy was never linked), and its compaction moves
+the games but leaves the file as it is, which stays right (links don't
+name slots). What it leaves behind is the links of the games its
+compaction removed: no game has their ids (which are never used again), so
+nothing here finds them, their chapters are free to link again, and the
+next compaction here drops them. A game it edited is, at the next sync,
+like one edited here. Details [below](#what-an-app-without-links-does).
 
 A game's **id** in the code and the UI (`GameId`) is its **slot**: its
 zero-based position in `games.idx`. Deleting a game only sets a flag, but a
@@ -214,9 +226,85 @@ came from: a copy of a copy names the copy. Games imported, entered or
 saved there have none. The last entry for an id wins (there is only ever one
 so far). A compaction keeps the entries of the games it keeps.
 
-It's the first table keyed by permanent id. NET-13's link from a game to a
-study chapter and the base snapshot for merging can be kept the same way,
-in their own table, without touching `games.idx`.
+It was the first table keyed by permanent id; `games.links` is the second.
+
+### `games.links`
+
+A game's link to one chapter of a Lichess study (NET-13, linked study sync;
+code: `crates/chess-db/src/links.rs`): the study and chapter, how the game
+follows them, when Lichess last said the study changed, the chapter as
+Lichess itself last exported it (the base of a three-way merge, fetched
+again after every push, so that what Lichess rewrites is in the base too
+and never looks like an edit made there), and what only this database
+holds of the game, which Lichess can't (the local-only layer: evals,
+`%emt`, comments before a variation's first move…, made by `chess-net`;
+opaque bytes here). The file exists once a game was ever linked, and is
+read on the first call that needs it, never by opening the database.
+
+Header (32 bytes):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 8 | Magic `CHDBLNK1` |
+| 8 | 4 | Version (`1`) |
+| 12 | 4 | Zero |
+| 16 | 8 | **Committed end**: the file's length that holds committed entries, the header included |
+| 24 | 8 | Zero |
+
+Then entries back to back, a log in which the last entry for a game wins:
+
+```text
+entry  := len:u32 body                  -- len: the body's bytes
+body   := op:u8 uid:[16] [link]          -- op 1 sets the game's link, 2 removes it (no link)
+link   := study:str chapter:str mode:u8 last_modified:str
+          base_encoding:u8 base layer:bytes
+base   := bytes                          -- base_encoding 0: the PGN's UTF-8
+        | text_len:varint bytes          -- base_encoding 1: deflated (RFC 1951, raw)
+bytes  := varint length, then that many bytes
+```
+
+- `mode`: 1 follow only (what changes on Lichess comes here, nothing goes
+  back), 2 two-way. A study downloaded once (NET-14's static copy) has no
+  link.
+- `last_modified`: the study's `Last-Modified` as Lichess wrote it when the
+  base was fetched (it dates the whole study, not each chapter; empty when
+  it said none), for `If-Modified-Since`.
+- `base`: deflated when that's shorter (with `miniz_oxide`), else as it is.
+  At most 64 MB of text, like the layer.
+- Study and chapter ids: 1 to 64 bytes, no spaces or control characters.
+- **One game per chapter.** Setting a link takes its chapter from whatever
+  game had it, which then has none (so a batch can swap two games'
+  chapters). The API refuses a chapter another game here is linked to,
+  deleted games included; one held by an id no game has is free.
+- Links are of games this database has, deleted ones too: a link whose id
+  no game has (see below) is never given out, listed or looked up by its
+  chapter.
+
+A compaction keeps the links of the games it keeps, as they are (their ids
+don't change), in `games.links.new` with the others; a file of a version
+this app can't read is left as it is. Once the file is over 1 MB and more
+than half of it is entries replaced since (a base is rewritten at every
+sync), it's written again with only the links (as `games.links.tmp`,
+renamed over it). A copy into another database isn't linked
+(`copy_games`; `Database::read_prepared` has no link).
+
+#### What an app without links does
+
+A version 3 app from before `games.links` opens the database and never
+reads or writes the file:
+
+- Its edits, deletions and undeletions keep each game's slot, so its id,
+  so its link: the next sync here sees an edit as one made here.
+- Its appends and copies give new ids: the games aren't linked, as here.
+- Its compaction renumbers slots but not ids, and leaves `games.links` (and
+  a `games.links.new` from a compaction here cut short, which the next
+  open here deletes) as it is. The links of the games it removed stay,
+  with ids no game has: nothing here finds them, and the next compaction
+  here drops them.
+- A `games.links` of a newer version than this app reads (its header says
+  so) is treated the same way here: the link calls fail with "unsupported
+  format version", everything else works, and a compaction leaves the file
+  as it is.
 
 ### The upgrade to version 3
 
@@ -224,14 +312,16 @@ Opening a version 1 or 2 database:
 
 1. Writes `games.ids.tmp` with a new id for every committed game (deleted
    ones too), fsyncs it and renames it to `games.ids`.
-2. Writes an empty `games.origins` the same way.
+2. Writes an empty `games.origins` the same way, and deletes a
+   `games.links` (only a version 3 database set back to 2 by hand has one:
+   its links name the ids replaced in step 1).
 3. Writes `db.meta` with version 3 (temp file + rename).
 
 No id is handed out before step 3. After a crash before it, the database is
 still version 2 and the next open does it all again, replacing a
 `games.ids` already there (an older app may have changed the games since).
-Temp files left over (`games.ids.tmp`, `games.origins.tmp`, `db.tmp`) are
-deleted on open. What it costs is under
+Temp files left over (`games.ids.tmp`, `games.origins.tmp`,
+`games.links.tmp`, `db.tmp`) are deleted on open. What it costs is under
 [Measured](#measured-prototype-release-build-sep-2026).
 
 ## Position index (SRCH-04)
@@ -299,9 +389,17 @@ Appending a batch of games (an import commits one batch every ~300 ms):
 2. Append new names to the name tables, then fsync.
 3. Write the new games' permanent ids after the committed ones in
    `games.ids`, then fsync. For copies, append their origins to
-   `games.origins`, then fsync.
+   `games.origins`, then fsync. For games pulled in linked to a chapter
+   (NET-13, `PreparedGame::with_link`), write their links after the
+   committed end of `games.links`, fsync, write the new committed end in
+   its header, fsync.
 4. Write the index records after the committed ones, then fsync.
 5. Write the new committed count in the `games.idx` header, then fsync.
+
+Setting or removing links on their own (`Database::set_links`,
+`remove_links`) is the same commit as in step 3, all of a call's links or
+none: entries past the committed end, fsync, the new end, fsync. A
+`games.links` is made empty as `games.links.tmp`, fsynced and renamed.
 
 Opening a database:
 
@@ -309,6 +407,10 @@ Opening a database:
 - A torn entry at the end of a name table or of `games.origins` is
   truncated. A name can't be referenced, because records are written after
   names. A whole origin entry whose id no game has is never looked up, and
+  the next compaction drops it.
+- Bytes past `games.links`'s committed end are truncated when it's first
+  read. A link committed before its game (a crash between steps 3 and 5)
+  names an id no game has: it's never given out, its chapter is free, and
   the next compaction drops it.
 - Blob bytes nobody references are harmless.
 - `games.ids` holding fewer ids than there are games, or missing (no crash
@@ -321,8 +423,9 @@ In-place updates (soft delete, repointing a replaced game) rewrite a single
 
 Compacting (DB-06) writes the new files next to the old ones as `*.new`:
 `games.idx`, `games.blob` and the name tables, `games.ids` (the kept games'
-ids, in their new slots) and `games.origins` (the kept games' entries; only
-when the table has any entries), and fsyncs them. Then `compact.commit` is written, the `.new`
+ids, in their new slots), `games.origins` (the kept games' entries; only
+when the table has any entries) and `games.links` (the kept games' links;
+only when there is the file, and this app can read it), and fsyncs them. Then `compact.commit` is written, the `.new`
 files are renamed over the old ones and the marker is removed. Opening a
 database finishes the renames if the marker exists, and deletes `.new` files
 otherwise.
