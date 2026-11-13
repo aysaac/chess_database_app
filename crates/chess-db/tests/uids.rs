@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use chess_core::game::Game;
 use chess_core::pgn::read_pgn_str;
-use chess_db::{Database, GameId, GameUid, NoProgress, copy_games, export_pgn, import_pgn};
+use chess_db::{Database, DbError, GameId, GameUid, NoProgress, copy_games, export_pgn, import_pgn};
 use proptest::prelude::*;
 
 fn root() -> PathBuf {
@@ -106,6 +106,67 @@ fn a_format_2_database_gets_permanent_ids_on_first_open() {
     assert_eq!(db.game_by_uid(uids[5]).unwrap(), Some(4));
     assert_eq!(db.read_game(5).unwrap().headers.white, "New");
     assert_eq!(new, 6);
+}
+
+fn set_meta_version(path: &Path, version: &str) {
+    let meta = std::fs::read_to_string(path.join("db.meta")).unwrap();
+    let (_, rest) = meta.split_once('\n').unwrap();
+    std::fs::write(path.join("db.meta"), format!("{version}\n{rest}")).unwrap();
+}
+
+/// Every file in the folder, with its bytes.
+fn folder(path: &Path) -> Vec<(std::ffi::OsString, Vec<u8>)> {
+    let mut files: Vec<_> = std::fs::read_dir(path)
+        .unwrap()
+        .map(|e| e.unwrap())
+        .map(|e| (e.file_name(), std::fs::read(e.path()).unwrap()))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Version 1 (from before the position index) is upgraded the same way.
+#[test]
+fn a_format_1_database_gets_permanent_ids_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = format_2_copy(dir.path());
+    set_meta_version(&path, "chessdb 1");
+    let mut db = Database::open(&path).unwrap();
+    assert_eq!(meta_version(&path), "chessdb 3");
+    let uids = all_uids(&db);
+    assert_eq!(uids.len(), 6);
+    assert_distinct(&uids);
+    assert_eq!(db.game_by_uid(uids[5]).unwrap(), Some(5));
+    assert_eq!(db.read_game(0).unwrap(), fixture_games()[0]);
+}
+
+/// A database from a newer app is refused, and nothing in its folder
+/// changes: no lock file, no ids.
+#[test]
+fn a_newer_format_is_refused_and_left_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = format_2_copy(dir.path());
+    set_meta_version(&path, "chessdb 4");
+    let before = folder(&path);
+    assert!(matches!(Database::open(&path), Err(DbError::UnsupportedVersion(4))));
+    assert!(matches!(Database::summary(&path), Err(DbError::UnsupportedVersion(4))));
+    assert_eq!(folder(&path), before);
+}
+
+/// A `games.ids` that isn't one (a damaged header) is refused rather than
+/// replaced: new ids would lose every link to the games.
+#[test]
+fn a_damaged_ids_file_is_refused_not_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Database::create(&dir.path().join("Damaged")).unwrap();
+    db.append(&game("A")).unwrap();
+    let path = db.path().to_path_buf();
+    drop(db);
+    let mut ids = std::fs::read(path.join("games.ids")).unwrap();
+    ids[0] = b'X';
+    std::fs::write(path.join("games.ids"), &ids).unwrap();
+    assert!(matches!(Database::open(&path), Err(DbError::Corrupt(_))));
+    assert_eq!(std::fs::read(path.join("games.ids")).unwrap(), ids);
 }
 
 /// A crash in the upgrade, after `games.ids` was renamed into place but
