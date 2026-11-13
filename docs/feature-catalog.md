@@ -378,7 +378,11 @@ CHESSDB_LICHESS_URL=http://127.0.0.1:18431 LICHESS_TOKEN=lio_standin_roundtrip c
   changed, a clock changed, the variations of a move reordered, one
   removed and one added), under the chapter's tags as Lichess has them; the
   report says whether the chapter kept its id. Then notes: what Lichess
-  said, what our reader warned about.
+  said, what our reader warned about. A game Lichess didn't take (or one
+  too long to send) has no chapter: when the study has fewer chapters than
+  games, each game is compared with the chapter that has its main line or
+  its event, site, date, round and players, never just the one at its
+  place, and an empty first chapter Lichess kept is left out.
 - **Limits:** one study per run (of the 30 Lichess makes a day per account),
   64 chapters at most (more is refused before asking), one request at a
   time; the study stays on the account. It exits non-zero only on errors,

@@ -188,6 +188,67 @@ fn a_push_that_fails_leaves_the_rest_of_the_report() {
     assert_eq!(gets, 1, "no chapter fetched after the failure");
 }
 
+/// A rewrite that stands for Lichess not taking the ending from a position
+/// (the second game): the stand-in makes no chapter of it.
+fn without_the_ending(pgn: &str) -> String {
+    if pgn.contains("[FEN \"8/8/4k3/8/4PK2/8/8/8 b - - 0 41\"]") { String::new() } else { pgn.to_owned() }
+}
+
+/// When Lichess doesn't take a game, or keeps the empty chapter a study
+/// starts with, each other game is still compared with its own chapter,
+/// not with the one at its place.
+#[test]
+fn games_lichess_didnt_take_have_no_chapter_and_the_others_line_up() {
+    for keep_empty_first in [false, true] {
+        let case = if keep_empty_first { "the empty chapter kept" } else { "no empty chapter" };
+        let server = Lichess::start(0);
+        let token = writer(&server);
+        {
+            let mut st = server.state.lock().unwrap();
+            st.rewrite = Some(without_the_ending);
+            st.keep_empty_first = keep_empty_first;
+        }
+        let r = round_trip(&client(&server), &token, &fixture(), "Round-trip check", &NoProgress).unwrap();
+        assert!(r.stopped.is_none(), "{case}: {:?}", r.stopped);
+        assert_eq!(r.chapters, 5 + usize::from(keep_empty_first), "{case}");
+        let made = &server.studies_of("Owner")[0];
+        let ids: Vec<&str> = made.chapters.iter().map(|(id, _)| id.as_str()).collect();
+        let got: Vec<(bool, Option<&str>)> =
+            r.games.iter().map(|g| (g.in_study, g.chapter.as_deref())).collect();
+        let want = [
+            (true, Some(ids[0])),
+            (false, None),
+            (true, Some(ids[1])),
+            (true, Some(ids[2])),
+            (true, Some(ids[3])),
+            (true, Some(ids[4])),
+        ];
+        assert_eq!(got, want, "{case}");
+        assert!(r.games[1].diff.is_none(), "{case}");
+        // The others against their own chapters: only the Orientation the
+        // stand-in gives games without one differs.
+        for f in Feature::ALL {
+            let t = r.total.get(f);
+            if f == Feature::Orientation {
+                assert_eq!((t.changed, t.dropped, t.added), (0, 0, 3), "{case}: {:?}", t.examples);
+            } else {
+                assert_eq!(t.differences(), 0, "{case}, {}: {:?}", f.name(), t.examples);
+            }
+        }
+        let note = |start: &str| r.notes.iter().any(|n| n.starts_with(start));
+        assert!(note("Game 2: the study has no chapter of it"), "{case}: {:?}", r.notes);
+        assert!(note("Lichess said about the games: A game couldn't be imported"), "{case}: {:?}", r.notes);
+        assert_eq!(note("Lichess kept the empty chapter"), keep_empty_first, "{case}: {:?}", r.notes);
+        assert!(note("6 games sent and the study has 5 chapters"), "{case}: {:?}", r.notes);
+        let text = r.to_string();
+        let line = "game 2: Round-trip: an ending from a position, Weiß - Schwarz: no chapter in the study";
+        assert!(text.contains(line), "{case}:\n{text}");
+        // The first game's chapter still has its moves replaced.
+        let push = r.push.as_ref().unwrap_or_else(|| panic!("{case}: {:?}", r.push_error));
+        assert_eq!((push.game, push.chapter.as_str(), push.diff.differences()), (1, ids[0], 0), "{case}");
+    }
+}
+
 /// Once the study is made, a failure doesn't lose the report: it has the
 /// study's link (the study stays on the account) and why it stopped.
 #[test]

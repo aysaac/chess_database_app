@@ -656,9 +656,12 @@ pub struct GameCheck {
     /// 1 for the first game.
     pub number: usize,
     pub name: String,
+    /// The study has a chapter of it (Lichess may not take a game, and one
+    /// too long to send isn't sent).
+    pub in_study: bool,
     /// Its chapter's id (from its `ChapterURL`).
     pub chapter: Option<String>,
-    /// `None` when the chapter can't be read.
+    /// `None` when it has no chapter, or the chapter can't be read.
     pub diff: Option<Comparison>,
 }
 
@@ -768,36 +771,74 @@ fn check(
     report.chapters = back.chapters.len();
     let texts: Vec<&str> = back.chapters.iter().map(|c| c.pgn.as_str()).collect();
     report.texts.back = format!("{}\n", texts.join("\n\n\n"));
-    let mut chapters: Vec<&Chapter> = back.chapters.iter().collect();
-    if chapters.len() == before.len() + 1 && chapters.first().is_some_and(|c| is_empty_chapter(c)) {
+    // Each chapter read once, numbered as in the study.
+    let mut chapters: Vec<(usize, &Chapter, Option<Game>)> = Vec::new();
+    for (k, chapter) in back.chapters.iter().enumerate() {
+        let (read, warnings) = read_one(&chapter.pgn);
+        for w in warnings {
+            report.notes.push(format!("Chapter {}: our PGN reader says: {w}", k + 1));
+        }
+        chapters.push((k + 1, chapter, read));
+    }
+    // The empty chapter a new study starts with, when Lichess kept it (the
+    // games went in after it), unless the first game is as empty.
+    if chapters.first().is_some_and(|(_, _, g)| g.as_ref().is_some_and(is_empty_game))
+        && !before.first().is_some_and(is_empty_game)
+    {
         chapters.remove(0);
-        report.notes.push("Lichess kept the empty chapter a new study starts with".into());
+        report.notes.push("Lichess kept the empty chapter a new study starts with (not compared)".into());
     }
     if chapters.len() != before.len() {
         report.notes.push(format!(
-            "{} sent and the study has {}: compared in order",
+            "{} sent and the study has {}: each game is compared with the chapter that has its main line, \
+             or its event, site, date, round and players",
             plural(before.len(), "game"),
             plural(chapters.len(), "chapter")
         ));
     }
-    let mut current = Vec::new();
-    for (i, (game, chapter)) in before.iter().zip(&chapters).enumerate() {
-        let (read, warnings) = read_one(&chapter.pgn);
-        for w in warnings {
-            report.notes.push(format!("Chapter {}: our PGN reader says: {w}", i + 1));
+    let read: Vec<Option<&Game>> = chapters.iter().map(|(_, _, g)| g.as_ref()).collect();
+    let pairs = pair_chapters(before, &read);
+    for (k, (number, chapter, game)) in chapters.iter().enumerate() {
+        if pairs.contains(&Some(k)) {
+            continue;
         }
+        report.notes.push(match game {
+            Some(_) => {
+                format!("Chapter {number} (\"{}\") isn't one of the games sent: not compared", chapter.name)
+            }
+            None => format!("Chapter {number} (\"{}\") can't be read: not compared", chapter.name),
+        });
+    }
+    let mut current = Vec::new();
+    for (i, (game, pair)) in before.iter().zip(&pairs).enumerate() {
+        let Some(&(number, chapter, ref read)) = pair.map(|k| &chapters[k]) else {
+            report.notes.push(format!(
+                "Game {}: the study has no chapter of it (Lichess didn't take it, or it was too long to send)",
+                i + 1
+            ));
+            report.games.push(GameCheck {
+                number: i + 1,
+                name: game_name(game),
+                in_study: false,
+                chapter: None,
+                diff: None,
+            });
+            current.push(None);
+            continue;
+        };
         let diff = read.as_ref().map(|after| compare(game, after));
         match &diff {
             Some(d) => report.total.absorb(d, &format!("game {}", i + 1)),
-            None => report.notes.push(format!("Chapter {}: our PGN reader can't read it", i + 1)),
+            None => report.notes.push(format!("Chapter {number}: our PGN reader can't read it")),
         }
         report.games.push(GameCheck {
             number: i + 1,
             name: game_name(game),
+            in_study: true,
             chapter: chapter_id(chapter),
             diff,
         });
-        current.push(read);
+        current.push(read.clone());
     }
 
     // Replacing the moves of a chapter, as a sync would push a game.
@@ -871,8 +912,47 @@ fn chapter_id(chapter: &Chapter) -> Option<String> {
     parse_study_link(&url).ok()?.chapter
 }
 
-fn is_empty_chapter(chapter: &Chapter) -> bool {
-    read_one(&chapter.pgn).0.is_some_and(|g| g.mainline_len() == 0 && !g.root().has_annotations())
+/// No moves and no annotations, as a new study's first chapter.
+fn is_empty_game(g: &Game) -> bool {
+    g.mainline_len() == 0 && !g.root().has_annotations()
+}
+
+/// Which chapter (an index in `chapters`, as read) each game went to. As
+/// many chapters as games: the n-th game's is the n-th. Otherwise (Lichess
+/// didn't take some games, or some were too long to send) a game's chapter
+/// is the first after the last one paired that is the same game
+/// ([`same_game`]), and a game with none has none: never the chapter that
+/// happens to be at its place.
+fn pair_chapters(games: &[Game], chapters: &[Option<&Game>]) -> Vec<Option<usize>> {
+    if games.len() == chapters.len() {
+        return (0..games.len()).map(Some).collect();
+    }
+    let mut next = 0;
+    games
+        .iter()
+        .map(|game| {
+            let k = (next..chapters.len()).find(|&k| chapters[k].is_some_and(|c| same_game(game, c)))?;
+            next = k + 1;
+            Some(k)
+        })
+        .collect()
+}
+
+/// Whether a chapter is a game sent, whatever Lichess did to its
+/// annotations: the same main line from the same start, or (when the game
+/// has some of them) the same event, site, date, round and players.
+fn same_game(game: &Game, chapter: &Game) -> bool {
+    let roster = |g: &Game| {
+        let h = &g.headers;
+        [h.event.clone(), h.site.clone(), h.date.clone(), h.round.clone(), h.white.clone(), h.black.clone()]
+    };
+    let line = |g: &Game| main_line(g).into_iter().map(|id| g.node(id).mv).collect::<Vec<_>>();
+    let named = roster(game).iter().any(|v| !v.is_empty());
+    let moved = game.mainline_len() > 0;
+    (named && roster(game) == roster(chapter))
+        || (moved
+            && game.setup.as_ref().map(to_fen) == chapter.setup.as_ref().map(to_fen)
+            && line(game) == line(chapter))
 }
 
 /// "Event, White - Black", or what there is of it.
@@ -1067,6 +1147,10 @@ fn compared(f: &mut fmt::Formatter<'_>, r: &RoundTrip) -> fmt::Result {
     table(f, &r.total)?;
     writeln!(f, "   Not counted: the {} tags every chapter gets.", STUDY_TAGS.join(", "))?;
     for g in &r.games {
+        if !g.in_study {
+            writeln!(f, "   game {}: {}: no chapter in the study", g.number, g.name)?;
+            continue;
+        }
         let what = match &g.diff {
             Some(d) if d.differences() == 0 => "nothing differs".to_owned(),
             Some(d) => plural(d.differences(), "difference"),
@@ -1217,6 +1301,28 @@ mod tests {
         assert_eq!(order("1. e4 e5 (1... c5) (1... e6) *", "1. e4 e5 (1... e6) *"), (1, 0, vec![]));
         // One continuation each, the same: nothing to order.
         assert_eq!(order("1. e4 e5 *", "1. e4 e5 *"), (0, 0, vec![]));
+    }
+
+    /// Games paired with chapters when there are fewer chapters: by their
+    /// tags, or their main line when Lichess changed the tags; never by
+    /// their place alone.
+    #[test]
+    fn games_are_paired_with_their_own_chapters() {
+        let g = |tags: &str, moves: &str| game(&format!("{tags}\n\n{moves}"));
+        let a = g("[Event \"A\"]", "1. e4 e5 *");
+        let b = g("[Event \"B\"]", "1. d4 d5 *");
+        let c = g("[Event \"C\"]", "1. c4 e5 *");
+        // Lichess renamed C's event but kept its moves; B didn't go.
+        let c_renamed = g("[Event \"Study: C\"]", "1. c4 e5 { A comment } *");
+        let chapters = [Some(&a), Some(&c_renamed)];
+        assert_eq!(pair_chapters(&[a.clone(), b.clone(), c.clone()], &chapters), [Some(0), None, Some(1)]);
+        // As many chapters as games: in order, whatever they are.
+        assert_eq!(pair_chapters(&[b.clone(), a.clone()], &chapters), [Some(0), Some(1)]);
+        // An empty game without tags is like no other.
+        let empty = g("", "*");
+        assert!(!same_game(&empty, &empty.clone()));
+        // A chapter is taken once, in order.
+        assert_eq!(pair_chapters(&[a.clone(), a.clone(), b], &[Some(&a), None]), [Some(0), None, None]);
     }
 
     /// A comment that went from one move to another, as it was, moved: one

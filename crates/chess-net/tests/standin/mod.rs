@@ -20,7 +20,10 @@
 //!   its id and tags, whatever tags the PGN has.
 //! - It keeps what it's sent as it is, unless `rewrite` says otherwise: a
 //!   function every game's PGN goes through on its way in (`import-pgn`,
-//!   `moves`), to stand for Lichess changing or dropping things.
+//!   `moves`), to stand for Lichess changing or dropping things. A game it
+//!   makes nothing of isn't taken: `import-pgn` makes no chapter of it and
+//!   says so in its `error`. `keep_empty_first` keeps a new study's empty
+//!   first chapter even with `initial=true`.
 //!
 //! Every request is logged (method, path and query, and whether it had a
 //! token) in `requests`. `fail` makes the next request that starts with a
@@ -82,6 +85,9 @@ pub struct State {
     /// What a game's PGN goes through as it comes in (`import-pgn`,
     /// `moves`); `None`: kept as it is.
     pub rewrite: Option<fn(&str) -> String>,
+    /// `import-pgn` with `initial=true` leaves a new study's empty first
+    /// chapter where it is.
+    pub keep_empty_first: bool,
     codes: HashMap<String, Grant>,
     next: u64,
     clock: i64,
@@ -535,7 +541,7 @@ fn route(req: &Request, state: &Mutex<State>, base: &str) -> Reply {
             let Some(pgn) = f.get("pgn").filter(|p| !p.trim().is_empty()) else {
                 return json_reply(400, json!({ "error": { "pgn": ["This field is required"] } }));
             };
-            let initial = f.get("initial").map(String::as_str) == Some("true");
+            let initial = f.get("initial").map(String::as_str) == Some("true") && !st.keep_empty_first;
             let version = st.tick();
             let mut ids = Vec::new();
             for g in split_games(pgn).into_iter().take(64) {
@@ -550,8 +556,12 @@ fn route(req: &Request, state: &Mutex<State>, base: &str) -> Reply {
             }
             let mut made = Vec::new();
             let mut error = None;
-            for (n, (ch, g)) in ids.into_iter().enumerate() {
-                if n == 0 && initial && study.empty_first && study.chapters.is_empty() {
+            for (ch, g) in ids {
+                if g.trim().is_empty() {
+                    error = Some("A game couldn't be imported".to_owned());
+                    continue;
+                }
+                if made.is_empty() && initial && study.empty_first && study.chapters.is_empty() {
                     study.empty_first = false;
                 }
                 let count = study.chapters.len() + usize::from(study.empty_first);
