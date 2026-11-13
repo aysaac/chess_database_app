@@ -276,6 +276,15 @@ impl IdsFile {
     }
 }
 
+#[cfg(test)]
+impl IdsFile {
+    /// The file at `path` opened read-only, so that every write to it fails
+    /// (a commit whose ids can't be written).
+    pub(crate) fn read_only(path: &Path) -> IdsFile {
+        IdsFile { file: File::open(path).expect("games.ids") }
+    }
+}
+
 /// `games.origins`: `(id, origin id)` of each game copied in from another
 /// database, appended (and synced) before the copies' index records. An
 /// entry for an id no committed game has (a commit a crash cut short) is
@@ -406,6 +415,16 @@ impl Origins {
         }
         out.file.sync_all()?;
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+impl Origins {
+    /// Read-only, as [`IdsFile::read_only`].
+    pub(crate) fn read_only(path: &Path) -> Origins {
+        let file = File::open(path).expect("games.origins");
+        let len = file.metadata().expect("its length").len();
+        Origins { file, entries: ((len - HEADER) / ORIGIN_LEN) as u32, index: None }
     }
 }
 
