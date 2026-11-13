@@ -13,6 +13,16 @@
 //! fixture `testdata/pgn/lichess-study.pgn` (`FxStudy1`) and a private one
 //! (`Private1`). Lichess's daily limit on new studies is 1 here, so a run
 //! reaches it with its second. Every request is printed.
+//!
+//! `SmokeUser` also has the token `lio_standin_roundtrip` (study:read and
+//! study:write), for the study round-trip check (NET-13) without a login:
+//!
+//! ```sh
+//! CHESSDB_LICHESS_URL=http://127.0.0.1:18431 LICHESS_TOKEN=lio_standin_roundtrip \
+//!     cargo run -p chess-net --example study_roundtrip
+//! ```
+//!
+//! It makes a study too, so a stand-in it ran against is at the daily limit.
 
 #[path = "../tests/standin/mod.rs"]
 mod standin;
@@ -28,6 +38,7 @@ fn main() {
     let chapters: Vec<&str> = chess_net::study::split_games(&pgn).into_iter().map(str::trim).collect();
     server.add_study("FxStudy1", "Fixture study", "SmokeUser", "public", &chapters);
     server.add_study("Private1", "My private lines", "SmokeUser", "private", &chapters[..2]);
+    server.add_token("SmokeUser", "lio_standin_roundtrip", "study:read,study:write");
     {
         let mut st = server.state.lock().expect("state");
         st.approve_as = "SmokeUser".into();

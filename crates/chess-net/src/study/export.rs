@@ -8,11 +8,13 @@
 //! same 429 as too many requests, and asking again can't help. The client
 //! is kept to requests one at a time, so NET-13's chapter updates
 //! (`…/{chapter}/moves`, `…/tags`, `DELETE …/{chapter}`) fit beside these.
+//! The first of them is here: [`replace_chapter_moves`], which the study
+//! round-trip check ([`super::roundtrip`]) tries out.
 
 use chess_db::Progress;
 use serde::Deserialize;
 
-use super::{StudyRef, fetch};
+use super::{StudyRef, fetch, split_games};
 use crate::http::{Client, encoded_len, error_message, read_json, status_error};
 use crate::keys::is_lichess_id;
 use crate::oauth::Token;
@@ -375,6 +377,55 @@ fn import_pgn(
     }
     let made: Made = read_json(Site::Lichess, &mut resp, 4 << 20)?;
     Ok((made.chapters.len(), made.error.filter(|e| !e.trim().is_empty())))
+}
+
+/// Replaces a chapter's whole move tree with the moves of `pgn`, one game
+/// (NET-13): `POST /api/study/{study}/{chapter}/moves`, which Lichess
+/// answers with a 204. The chapter keeps its id, URL and tags; anything a
+/// collaborator added since it was last fetched is gone. Sent once, like
+/// every write. Whether Lichess keeps the comments, glyphs and clocks
+/// isn't documented: the round-trip check ([`super::roundtrip`]) finds out.
+/// Refused before sending: ids that aren't Lichess's, a text with no game
+/// or several, a game over 400 kB.
+pub fn replace_chapter_moves(
+    client: &Client,
+    token: &Token,
+    study: &str,
+    chapter: &str,
+    pgn: &str,
+) -> Result<(), NetError> {
+    // Ids go into the URL's path: only Lichess's 8 letters and digits.
+    if !is_lichess_id(study) || !is_lichess_id(chapter) {
+        return Err(NetError::NoSuchStudy);
+    }
+    let pgn = pgn.trim();
+    // One game, never none: what Lichess does with an empty one (the
+    // chapter's moves gone?) or several isn't worth finding out.
+    match split_games(pgn).len() {
+        1 => {}
+        0 => return Err(NetError::Refused("there's no game to send".into())),
+        n => return Err(NetError::Refused(format!("{n} games, and a chapter takes one"))),
+    }
+    if encoded_len(pgn) > MAX_BODY {
+        return Err(NetError::Refused(format!(
+            "the game is over {} kB, more than Lichess takes",
+            MAX_BODY >> 10
+        )));
+    }
+    let url = format!("{}/api/study/{study}/{chapter}/moves", client.lichess);
+    let mut resp = client.post_form(Site::Lichess, &url, Some(token), &[("pgn", pgn)])?;
+    match resp.status().as_u16() {
+        200..=299 => Ok(()),
+        429 => Err(NetError::RateLimited(Site::Lichess)),
+        401 => Err(NetError::TokenRejected),
+        403 => Err(NetError::NotContributor),
+        404 => Err(NetError::NoSuchStudy),
+        400 => {
+            let why = error_message(Site::Lichess, &mut resp).unwrap_or_else(|| "it didn't say why".into());
+            Err(NetError::Refused(why))
+        }
+        _ => Err(status_error(Site::Lichess, &resp)),
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,126 @@
+[Event "Round-trip: every annotation"]
+[Site "Club room"]
+[Date "2026.11.01"]
+[Round "1"]
+[White "Student"]
+[Black "Coach"]
+[Result "*"]
+[ECO "C58"]
+[Annotator "Fixture Coach"]
+[TimeControl "300+3"]
+[Orientation "white"]
+
+{ An opening lesson with every kind of annotation. [%csl Ge4,Rd5] }
+1. e4 { [%clk 0:05:00] [%eval 0.30] } 1... e5 { [%clk 0:05:00] }
+2. Nf3 $1 { Develops with tempo. [%cal Gg1f3,Rf3e5] [%clk 0:04:58] }
+2... Nc6 { [%clk 0:04:57.5] }
+3. Bc4 $5 { The Italian. [%csl Yf7,Bc4] [%cal Bc4f7,Yd1h5] [%clk 0:04:55] [%eval 0.25,22] }
+3... Nf6 { Two Knights. [%clk 0:04:50] }
+( 3... Bc5 { The Giuoco. } 4. c3 Nf6 ( 4... Qe7 { Old-fashioned. } 5. d4 Bb6 ) 5. d4 exd4 6. cxd4 Bb4+ $13 )
+( { The Hungarian, quiet: } 3... Be7 $6 4. d4 d6 $14 )
+( 3... d6 4. d4 $1 { [%cal Rd4e5] } )
+4. Ng5 $6 $146 { The Fried Liver idea. [%emt 0:00:04] }
+4... d5 $1 { [%eval 1.10] }
+( 4... Bc5 $5 { The Traxler. } 5. Nxf7 $2 ( 5. Bxf7+ $1 Ke7 6. Bd5 $14 ) 5... Bxf2+ $40 )
+5. exd5 Na5 $1 { Polerio. }
+( 5... Nxd5 $2 6. Nxf7 ( 6. d4 { Lolli. } exd4 ( 6... Bb4+ 7. c3 ) 7. O-O ) 6... Kxf7 7. Qf3+ Ke6 8. Nc3 $18 $36 { [%eval #7] [%clk 0:03:30] } )
+6. Bb5+ $14 c6 $7 7. dxc6 bxc6 8. Be2 h6 9. Nf3 e4 10. Ne5 Bd6 $44 { [%eval -0.35] }
+11. d4 $142 O-O $132 $36 12. O-O { Castles. Très bien — señor Müller says “½ point saved”. ♘ 🙂 }
+12... c5 $22 $140 { [%csl Bc5,Yd4][%cal Bc5d4] } *
+
+
+[Event "Round-trip: an ending from a position"]
+[Site "Club room"]
+[Date "2026.11.02"]
+[Round "2"]
+[White "Weiß"]
+[Black "Schwarz"]
+[Result "1/2-1/2"]
+[Orientation "black"]
+[SetUp "1"]
+[FEN "8/8/4k3/8/4PK2/8/8/8 b - - 0 41"]
+
+{ Black to move: the opposition. [%csl Re6,Gf4] }
+41... Kf6 $1 ( 41... Kd6 $2 42. Kf5 { The king gets in front. [%cal Gf5f6] } )
+42. e5+ Ke6 43. Ke4 Ke7 44. Kd5 Kd7 45. e6+ Ke7 46. Ke5 Ke8
+47. Kd6 ( 47. Kf6 Kf8 48. e7+ Ke8 49. Ke6 { Stalemate too. } )
+47... Kd8 $1 48. e7+ Ke8 49. Ke6 { Stalemate. [%csl Re8] } 1/2-1/2
+
+
+[Event "Torneo Ciudad de Córdoba"]
+[Site "Zürich SUI"]
+[Date "2025.03.14"]
+[Round "3.2"]
+[White "Ñúñez, José María"]
+[Black "Øvergård, Åse"]
+[Result "0-1"]
+[WhiteElo "2234"]
+[BlackElo "2301"]
+[WhiteTitle "FM"]
+[BlackTitle "WIM"]
+[ECO "B12"]
+[Opening "Caro-Kann Defense: Advance Variation"]
+[TimeControl "5400+30"]
+[EventDate "2025.03.12"]
+[Annotator "Łukasz Żółć"]
+[Termination "Time forfeit"]
+
+1. e4 { [%eval 0.30] [%clk 1:30:00] } 1... c6 { [%eval 0.35] [%clk 1:30:00] }
+2. d4 { [%eval 0.32] [%clk 1:29:41] } 2... d5 { [%eval 0.38] [%clk 1:29:52] }
+3. e5 { [%eval 0.29] [%clk 1:29:20] } 3... Bf5 { [%eval 0.33] [%clk 1:29:30] }
+4. Nf3 { [%eval 0.18] [%clk 1:28:02] } 4... e6 { [%eval 0.20] [%clk 1:28:55] }
+5. Be2 { [%eval 0.11] [%clk 1:26:40] } 5... c5 { [%eval 0.15] [%clk 1:27:10] }
+6. Be3 { [%eval 0.09] [%clk 1:25:01] } 6... Nd7 { [%eval 0.22] [%clk 1:22:31] }
+7. O-O { [%eval 0.05] [%clk 1:20:12] } 7... Ne7 { [%eval 0.12] [%clk 1:19:59] }
+8. c4 { [%eval -0.10] [%clk 1:12:45] } 8... dxc4 { [%eval -0.05] [%clk 1:10:03] }
+9. Na3 { [%eval -0.20] [%clk 1:05:30] } 9... Nd5 { [%eval -0.15] [%clk 1:01:17] }
+10. Nxc4 { [%eval -0.25] [%clk 1:00:02] } 10... Nxe3 { [%eval -0.22] [%clk 0:58:40] }
+11. fxe3 { [%eval -0.30] [%clk 0:59:55] } 11... Be7 { [%eval -0.28] [%clk 0:55:12] }
+12. Qb3 { [%eval -0.41] [%clk 0:40:08] } 12... O-O { [%eval -0.33] [%clk 0:52:46] }
+13. Qxb7 $2 { [%eval -1.40] [%clk 0:21:19] } 13... cxd4 { [%eval -1.35] [%clk 0:50:01] }
+14. exd4 { [%eval -1.52] [%clk 0:00:00] } 14... Nb6 { White lost on time. [%eval -1.48] [%clk 0:49:30] } 0-1
+
+
+[Event "Round-trip: promotions"]
+[Site "Club room"]
+[Date "2026.11.03"]
+[Round "4"]
+[White "Student"]
+[Black "Coach"]
+[Result "*"]
+[Orientation "black"]
+[SetUp "1"]
+[FEN "4k3/1P4P1/8/8/8/8/1p4p1/4K3 w - - 0 50"]
+
+50. b8=Q+ Kd7 51. g8=N $5 { An underpromotion. }
+( 51. g8=Q $1 b1=Q+ 52. Kd2 )
+51... b1=R+ 52. Kd2 g1=B $2 ( 52... g1=Q $1 { [%csl Rg1] } 53. Qb5+ Kd6 ) 53. Qb5+ Ke6 *
+
+
+[Event "Round-trip: en passant, castling, the order of variations"]
+[Site "Club room"]
+[Date "2026.11.04"]
+[Round "5"]
+[White "Student"]
+[Black "Coach"]
+[Result "1-0"]
+[ECO "B03"]
+
+1. e4 Nf6 2. e5 d5 3. exd6 { En passant. [%clk 0:09:58] }
+3... cxd6 { [%clk 0:09:50] }
+( 3... exd6 $1 { The main move today. } 4. d4 Be7 )
+( 3... Qxd6 { [%clk 0:09:40] } 4. d4 $14 )
+( 3... e6 $4 4. dxc7 $1 { [%cal Gd6c7] } 4... Qxc7 )
+4. d4 g6 5. Nc3 Bg7 6. Be3 O-O 7. Qd2 Nc6 8. O-O-O $5 { Opposite sides. [%csl Rc1,Rg8] }
+8... e5 9. d5 Nd4 10. Bxd4 exd4 11. Qxd4 Re8 1-0
+
+
+[Event "Round-trip: no annotations"]
+[Site "Москва RUS"]
+[Date "2026.11.05"]
+[Round "6"]
+[White "Иванов, Иван"]
+[Black "李小龙"]
+[Result "1/2-1/2"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 5. e3 O-O 6. Nf3 h6 7. Bh4 b6 1/2-1/2

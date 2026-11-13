@@ -1,12 +1,15 @@
 [package]
 name = "chess-net"
-description = "Online game sources: a player's games from Lichess and Chess.com, into a database (NET-01); Lichess login and studies (NET-11, IO-10, NET-12)"
+description = "Online game sources: a player's games from Lichess and Chess.com, into a database (NET-01); Lichess login and studies (NET-11, IO-10, NET-12), and the study round-trip check (NET-13)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# The study round-trip check (NET-13) compares games as chess-core's move
+# trees; chess-db depends on it already.
+chess-core.workspace = true
 chess-db.workspace = true
 # NET-06: a TWIC issue is a zip of its PGN (deflate only, through flate2 and miniz_oxide).
 zip = { version = "9.5", default-features = false, features = ["deflate-flate2"] }
@@ -23,5 +26,4 @@ sha2 = "0.10"
 getrandom = "0.3"
 
 [dev-dependencies]
-chess-core.workspace = true
 tempfile.workspace = true
