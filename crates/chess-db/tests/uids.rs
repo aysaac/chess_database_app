@@ -413,9 +413,15 @@ proptest! {
     /// Through any mix of writes, every game keeps its permanent id, found
     /// at its slot whatever compactions moved it; no id is ever given out
     /// twice, here or in the database copied from; an id compacted away
-    /// finds nothing; copies name their origin.
+    /// finds nothing; copies name their origin. With `look_each_time`, ids
+    /// are looked up after every write, so compactions follow a map that's
+    /// built; without, only after the last one, so they run without one
+    /// (or build it for the origins).
     #[test]
-    fn games_keep_their_permanent_ids(ops in prop::collection::vec(op(), 1..12)) {
+    fn games_keep_their_permanent_ids(
+        ops in prop::collection::vec(op(), 1..12),
+        look_each_time in any::<bool>(),
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let source = Mutex::new(Database::create(&dir.path().join("Source")).unwrap());
         for i in 0..4 {
@@ -430,7 +436,8 @@ proptest! {
         let mut gone: Vec<GameUid> = Vec::new();
         let pick = |model: &[Slot], i: u8| (!model.is_empty()).then(|| i as usize % model.len());
 
-        for op in ops {
+        let last = ops.len() - 1;
+        for (step, op) in ops.into_iter().enumerate() {
             match op {
                 Op::Append(n) => {
                     let games: Vec<_> =
@@ -483,12 +490,16 @@ proptest! {
             prop_assert_eq!(d.count() as usize, model.len());
             prop_assert_eq!(all_uids(d), model.iter().map(|s| s.uid).collect::<Vec<_>>());
             for (slot, s) in model.iter().enumerate() {
-                prop_assert_eq!(d.game_by_uid(s.uid).unwrap(), Some(slot as GameId));
                 prop_assert_eq!(d.origin(slot as GameId).unwrap(), s.origin);
                 prop_assert_eq!(d.row(slot as GameId).unwrap().deleted, s.deleted);
             }
-            for uid in gone.iter().chain(&source_uids) {
-                prop_assert_eq!(d.game_by_uid(*uid).unwrap(), None);
+            if look_each_time || step == last {
+                for (slot, s) in model.iter().enumerate() {
+                    prop_assert_eq!(d.game_by_uid(s.uid).unwrap(), Some(slot as GameId));
+                }
+                for uid in gone.iter().chain(&source_uids) {
+                    prop_assert_eq!(d.game_by_uid(*uid).unwrap(), None);
+                }
             }
         }
     }
