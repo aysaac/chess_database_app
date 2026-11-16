@@ -75,12 +75,16 @@ export interface Backup {
   sizeBytes: number;
   databases: number;
   createdAt: number;
+  /** The id of the key it's encrypted with, if it is. */
+  keyId: string | null;
 }
 
 export interface Backups {
   configured: boolean;
   everyHours: number | null;
   keep: number;
+  /** New backups are encrypted with the key of this id; none: they're not. */
+  keyId: string | null;
   backups: Backup[];
 }
 

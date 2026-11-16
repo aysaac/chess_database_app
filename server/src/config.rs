@@ -2,7 +2,7 @@
 //! (`docs/server.md` lists them).
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Default address: this machine only. The container sets `0.0.0.0:8080`.
@@ -53,6 +53,8 @@ pub struct Config {
     pub backup_every: Option<Duration>,
     /// Backups kept; older ones are deleted after a new one.
     pub backup_keep: u32,
+    /// Backups are encrypted with this key (`crate::crypt`), when set.
+    pub backup_key: Option<crate::crypt::BackupKey>,
     /// Databases nothing used for this long are closed (none: never).
     pub idle_close: Option<Duration>,
     /// Requests per minute a user (session or token) may make, and a client
@@ -118,6 +120,7 @@ impl Config {
             backup_dir: None,
             backup_every: None,
             backup_keep: DEFAULT_BACKUP_KEEP,
+            backup_key: None,
             idle_close: Some(Duration::from_secs(30 * 60)),
             rate_user: Some(DEFAULT_RATE_USER),
             rate_anon: Some(DEFAULT_RATE_ANON),
@@ -239,6 +242,11 @@ impl Config {
             return Err(
                 "CHESS_SERVER_BACKUP_EVERY_HOURS needs CHESS_SERVER_BACKUP_DIR (where backups go)".into()
             );
+        }
+        if let Some(file) = env("CHESS_SERVER_BACKUP_KEY_FILE") {
+            let key = crate::crypt::BackupKey::from_file(Path::new(&file))
+                .map_err(|e| format!("CHESS_SERVER_BACKUP_KEY_FILE: {e}"))?;
+            config.backup_key = Some(key);
         }
         if let Some(keep) = number("CHESS_SERVER_BACKUP_KEEP")? {
             config.backup_keep = keep.clamp(1, 10_000) as u32;

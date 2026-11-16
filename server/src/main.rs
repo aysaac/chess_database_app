@@ -2,10 +2,12 @@
 
 use std::io::{BufRead, Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use chess_server::config::Config;
+use chess_server::crypt::BackupKey;
 use chess_server::secret::{check_new_password, hash_password};
 use chess_server::store::Store;
 use chess_server::wire::Role;
@@ -19,6 +21,9 @@ Usage:
   chess-server admin create NAME     Make an admin account
   chess-server admin password NAME   Set a user's password
   chess-server healthcheck           Exit 0 if the server answers (for the container)
+  chess-server backup key FILE       Make a key for encrypted backups (CHESS_SERVER_BACKUP_KEY_FILE)
+  chess-server backup decrypt KEYFILE BACKUP OUT
+                                     Decrypt an encrypted backup into the new folder OUT, to restore from
 
 Options (or environment variables):
   --data DIR    CHESS_SERVER_DATA       Data directory (default ./data)
@@ -26,6 +31,8 @@ Options (or environment variables):
                 CHESS_SERVER_MAX_UPLOAD_MB  Largest PGN upload (default 256)
                 CHESS_SERVER_PUBLIC_URL     e.g. https://chess.example.com (Secure cookies, Origin check)
                 CHESS_SERVER_TRUST_PROXY    1 behind a reverse proxy (X-Forwarded-For/-Proto)
+                CHESS_SERVER_BACKUP_DIR     Where backups go
+                CHESS_SERVER_BACKUP_KEY_FILE  Encrypt backups with this key
                 RUST_LOG                    Log level (default info)
 
 `admin` reads the password from CHESS_SERVER_PASSWORD, or else the first line of
@@ -54,12 +61,33 @@ fn main() -> ExitCode {
         ["admin", "create", name] => set_user(&config, name, true),
         ["admin", "password", name] => set_user(&config, name, false),
         ["healthcheck"] => healthcheck(config.bind),
+        ["backup", "key", file] => backup_key(Path::new(file)),
+        ["backup", "decrypt", key, backup, out] => decrypt(Path::new(key), Path::new(backup), Path::new(out)),
         _ => Err(format!("unknown command: {}\n\n{USAGE}", args.join(" "))),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => fail(&e),
     }
+}
+
+/// Makes a new key file for encrypted backups.
+fn backup_key(file: &Path) -> Result<(), String> {
+    let key = BackupKey::write_new(file).map_err(|e| e.to_string())?;
+    println!(
+        "Made backup key {} in {}. Set CHESS_SERVER_BACKUP_KEY_FILE to it, and keep a copy somewhere safe, away from the backups: without it they can't be restored.",
+        key.id(),
+        file.display()
+    );
+    Ok(())
+}
+
+/// Decrypts an encrypted backup into a new folder.
+fn decrypt(key: &Path, backup: &Path, out: &Path) -> Result<(), String> {
+    let key = BackupKey::from_file(key).map_err(|e| e.to_string())?;
+    let n = chess_server::crypt::decrypt_backup(&key, backup, out).map_err(|e| e.to_string())?;
+    println!("Decrypted {n} files into {}: restore from it as from any backup.", out.display());
+    Ok(())
 }
 
 fn fail(message: &str) -> ExitCode {

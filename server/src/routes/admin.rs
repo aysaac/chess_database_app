@@ -462,6 +462,7 @@ pub async fn backups(State(state): State<Arc<AppState>>, _: AdminAuth) -> ApiRes
             configured: state.config.backup_dir.is_some(),
             every_hours: state.config.backup_every.map(|d| d.as_secs() / 3600),
             keep: state.config.backup_keep,
+            key_id: state.config.backup_key.as_ref().map(|k| k.id()),
             backups: crate::backup::list(&state),
         }))
     })

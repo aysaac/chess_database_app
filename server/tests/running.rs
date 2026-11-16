@@ -302,3 +302,110 @@ fn one_server_per_data_directory() {
     assert!(again(s.data_dir()).is_err());
     s.client().get("/api/health").ok();
 }
+
+/// Every file under `dir`.
+fn all_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for e in std::fs::read_dir(dir).unwrap() {
+        let e = e.unwrap();
+        if e.file_type().unwrap().is_dir() {
+            all_files(&e.path(), out);
+        } else {
+            out.push(e.path());
+        }
+    }
+}
+
+#[test]
+fn encrypted_backups_hold_nothing_readable_and_restore_with_their_key() {
+    let backups = tempfile::tempdir().unwrap();
+    let dir = backups.path().join("backups");
+    // The key made as the documentation says, with the real binary.
+    let key_file = backups.path().join("backup.key");
+    let cli = std::process::Command::new(env!("CARGO_BIN_EXE_chess-server"))
+        .args(["backup", "key"])
+        .arg(&key_file)
+        .output()
+        .unwrap();
+    assert!(cli.status.success(), "{}", String::from_utf8_lossy(&cli.stderr));
+    let key = chess_server::crypt::BackupKey::from_file(&key_file).unwrap();
+    let s = TestServer::with(|c| {
+        c.backup_dir = Some(dir.clone());
+        c.backup_key = Some(key.clone());
+    });
+    let admin = s.admin();
+    let alice = s.user(&admin, "alice");
+    let private = alice.create_db("Alice's prep", "private");
+    alice.import_fixture(&private, "reference.pgn");
+    let games = |c: &common::Client, db: &str| c.get(&format!("/api/databases/{db}/export.pgn")).ok().body;
+    let pgn = games(&alice, &private);
+    assert!(pgn.contains("Carlsen"));
+
+    let job = admin.post("/api/admin/backups", json!({})).ok().json()["job"].as_u64().unwrap();
+    assert_eq!(admin.wait_job_admin(job), "done");
+    let listed = admin.get("/api/admin/backups").ok().json();
+    assert_eq!(listed["keyId"], key.id().as_str());
+    let name = listed["backups"][0]["name"].as_str().unwrap().to_owned();
+    assert_eq!(listed["backups"][0]["keyId"], key.id().as_str());
+    assert_eq!(listed["backups"][0]["databases"], 1);
+    let backup = dir.join(&name);
+
+    // Nothing in it can be read: every file but the marker is encrypted,
+    // and neither the games nor the store show through.
+    let mut files = Vec::new();
+    all_files(&backup, &mut files);
+    assert!(files.len() > 5, "{files:?}");
+    for f in &files {
+        let n = f.file_name().unwrap().to_str().unwrap();
+        assert!(n.ends_with(".enc") || n == "ENCRYPTED", "{n}");
+        let bytes = std::fs::read(f).unwrap();
+        for plain in [&b"Carlsen"[..], b"SQLite format 3", b"alice", b"argon2"] {
+            assert!(
+                !bytes.windows(plain.len()).any(|w| w == plain),
+                "{n} holds {:?}",
+                String::from_utf8_lossy(plain)
+            );
+        }
+    }
+    let tmp: Vec<_> = std::fs::read_dir(s.data_dir().join("tmp")).unwrap().collect();
+    assert!(tmp.is_empty(), "no plain copy of the store left behind: {tmp:?}");
+
+    // Another key can't, nor a backup changed since.
+    let other = backups.path().join("other.key");
+    chess_server::crypt::BackupKey::write_new(&other).unwrap();
+    let out = backups.path().join("plain");
+    let wrong = std::process::Command::new(env!("CARGO_BIN_EXE_chess-server"))
+        .args(["backup", "decrypt"])
+        .args([&other, &backup, &out])
+        .output()
+        .unwrap();
+    assert!(!wrong.status.success());
+    assert!(String::from_utf8_lossy(&wrong.stderr).contains("was made with key"), "{wrong:?}");
+    assert!(!out.exists());
+    let tampered = backups.path().join("tampered");
+    copy_dir(&backup, &tampered);
+    let blob = tampered.join("dbs").join(format!("{private}.chessdb")).join("games.blob.enc");
+    let mut bytes = std::fs::read(&blob).unwrap();
+    let mid = bytes.len() / 2;
+    bytes[mid] ^= 0x40;
+    std::fs::write(&blob, bytes).unwrap();
+    assert!(chess_server::crypt::decrypt_backup(&key, &tampered, &backups.path().join("t-out")).is_err());
+    assert!(!backups.path().join("t-out").exists());
+
+    // With its key: the plain backup, restored as any other.
+    let ok = std::process::Command::new(env!("CARGO_BIN_EXE_chess-server"))
+        .args(["backup", "decrypt"])
+        .args([&key_file, &backup, &out])
+        .output()
+        .unwrap();
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    let restored = tempfile::tempdir().unwrap();
+    let data = restored.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::copy(out.join("server.sqlite"), data.join("server.sqlite")).unwrap();
+    copy_dir(&out.join("dbs"), &data.join("dbs"));
+    drop(s);
+    let r = TestServer::start_in(restored, |_| {});
+    let mut alice2 = r.client();
+    alice2.login("alice", common::PASSWORD).ok();
+    assert_eq!(games(&alice2, &private), pgn);
+}

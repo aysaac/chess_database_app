@@ -60,6 +60,11 @@
     <p>
       {info.everyHours ? `Every ${info.everyHours} hours, and when you ask.` : "Only when you ask (no schedule set)."}
       The newest {info.keep} are kept.
+      {#if info.keyId}
+        They're encrypted with key <code>{info.keyId}</code>: keep its file safe, and away from the backups.
+      {:else}
+        They aren't encrypted: set <code>CHESS_SERVER_BACKUP_KEY_FILE</code> for that.
+      {/if}
     </p>
     <button class="primary" onclick={backUp} disabled={busy}>{busy ? "Backing up…" : "Back up now"}</button>
   {/if}
@@ -71,17 +76,20 @@
   <section class="panel">
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Backup</th><th>Made</th><th class="num">Databases</th><th class="num">Size</th></tr></thead>
+        <thead>
+          <tr><th>Backup</th><th>Made</th><th>Encrypted</th><th class="num">Databases</th><th class="num">Size</th></tr>
+        </thead>
         <tbody>
           {#each info.backups as b (b.name)}
             <tr>
               <td><code>{b.name}</code></td>
               <td class="muted small">{when(b.createdAt)}</td>
+              <td class="small">{#if b.keyId}key <code>{b.keyId}</code>{:else}<span class="muted">no</span>{/if}</td>
               <td class="num">{b.databases}</td>
               <td class="num">{bytes(b.sizeBytes)}</td>
             </tr>
           {:else}
-            <tr><td colspan="4" class="muted">No backups yet.</td></tr>
+            <tr><td colspan="5" class="muted">No backups yet.</td></tr>
           {/each}
         </tbody>
       </table>

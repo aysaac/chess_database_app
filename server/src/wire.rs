@@ -257,6 +257,8 @@ pub struct BackupDto {
     pub size_bytes: u64,
     pub databases: u32,
     pub created_at: i64,
+    /// The id of the key it's encrypted with (`crate::crypt`), if it is.
+    pub key_id: Option<String>,
 }
 
 /// `GET /api/admin/backups`.
@@ -268,6 +270,9 @@ pub struct BackupsDto {
     /// Hours between scheduled backups, if they're on.
     pub every_hours: Option<u64>,
     pub keep: u32,
+    /// New backups are encrypted with the key of this id
+    /// (`CHESS_SERVER_BACKUP_KEY_FILE`); none: they're not.
+    pub key_id: Option<String>,
     pub backups: Vec<BackupDto>,
 }
 

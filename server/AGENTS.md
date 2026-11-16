@@ -18,8 +18,9 @@ architecture, data directory, API, roles and what "private" guarantees.
 | `src/jobs.rs` | `chess-jobs` jobs with their database and user, kept in the store |
 | `src/audit.rs`, `src/metrics.rs`, `src/ratelimit.rs` | The audit log, `/metrics`, the token buckets |
 | `src/backup.rs`, `src/twic.rs`, `src/mail.rs` | Online backups, TWIC updates (NET-06), reset links by e-mail |
+| `src/crypt.rs` | Encrypted backups: the key file, each file sealed (XChaCha20-Poly1305 STREAM), `backup decrypt` |
 | `src/housekeeping.rs` | Once a minute: audit retention, idle databases, scheduled backups and TWIC checks |
-| `src/routes/` | The API, by area; `admin.rs` is the admin's |
+| `src/routes/` | The API, by area; `admin.rs` is the admin's, `sync.rs` editing games by permanent id and the routes copies keep in step with |
 | `src/wire.rs` | The JSON types (mirrors of the app's DTOs where they exist) |
 | `build.rs`, `src/ui.rs` | The admin UI embedded from `admin/dist` |
 | `admin/` | The admin UI: Svelte 5 + TypeScript + Vite, like `app/` |

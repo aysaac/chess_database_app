@@ -11,6 +11,10 @@
 //!   append-only files after it, so the copy never refers to data it
 //!   lacks (`docs/file-format.md`, Crash safety).
 //!
+//! With a backup key (`CHESS_SERVER_BACKUP_KEY_FILE`), every file is written
+//! encrypted (`crate::crypt`), and the plain copy of the store is made in
+//! the data directory's `tmp/`, never in the backup folder.
+//!
 //! Backups are never downloadable through the API: they hold every user's
 //! databases, private ones too, which the admin can't read. Restoring is
 //! done on the server's disk (`docs/server.md`, Backups).
@@ -23,6 +27,7 @@ use chess_jobs::{JobContext, JobError};
 
 use crate::AppState;
 use crate::audit::Target;
+use crate::crypt::BackupKey;
 use crate::error::{ApiError, ApiResult};
 use crate::pool::{dir_size, writer_busy};
 use crate::store::User;
@@ -98,6 +103,7 @@ pub fn list(state: &AppState) -> Vec<BackupDto> {
                 size_bytes: tree_size(&p),
                 databases,
                 created_at,
+                key_id: crate::crypt::marker_key(&p),
             }
         })
         .collect()
@@ -167,7 +173,9 @@ fn take_slot<'a>(
     }
 }
 
-fn copy_db(from: &Path, to: &Path) -> std::io::Result<()> {
+/// Copies a database's files into the backup, encrypted with `key` (as
+/// `<file>.enc`, bound to `dbs/<folder>/<file>`) when there is one.
+fn copy_db(from: &Path, to: &Path, key: Option<&BackupKey>) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     let mut names: Vec<String> = std::fs::read_dir(from)?
         .filter_map(|e| e.ok())
@@ -178,8 +186,22 @@ fn copy_db(from: &Path, to: &Path) -> std::io::Result<()> {
     // The index (its committed count) and the name tables first: the
     // games' blobs and positions copied after hold all they refer to.
     names.sort_by_key(|n| (FIRST.iter().position(|f| f == n).unwrap_or(FIRST.len()), n.clone()));
+    let folder = to.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     for n in names {
-        std::fs::copy(from.join(&n), to.join(&n))?;
+        match key {
+            Some(key) => {
+                let aad = format!("dbs/{folder}/{n}");
+                crate::crypt::encrypt_file(
+                    key,
+                    &from.join(&n),
+                    &to.join(format!("{n}{}", crate::crypt::SUFFIX)),
+                    &aad,
+                )?
+            }
+            None => {
+                std::fs::copy(from.join(&n), to.join(&n))?;
+            }
+        }
     }
     Ok(())
 }
@@ -196,7 +218,17 @@ fn run(state: &AppState, dir: &Path, ctx: &JobContext) -> Result<String, JobErro
     let partial = dir.join(format!("{name}{PARTIAL}"));
     let result = (|| -> Result<(), JobError> {
         std::fs::create_dir_all(partial.join("dbs")).map_err(|e| fail(&e))?;
-        let store = partial.join("server.sqlite");
+        let key = state.config.backup_key.as_ref();
+        if let Some(key) = key {
+            std::fs::write(partial.join(crate::crypt::MARKER), crate::crypt::marker(key))
+                .map_err(|e| fail(&e))?;
+        }
+        // Encrypted, the store is copied where the live data is, and only
+        // its encrypted copy goes to the backup folder.
+        let store = match key {
+            Some(_) => state.config.tmp_dir().join(format!("{name}.sqlite")),
+            None => partial.join("server.sqlite"),
+        };
         state.store.backup_to(&store).map_err(|e| fail(&e.message))?;
         let dbs = state.store.all_databases().map_err(|e| fail(&e.message))?;
         let mut gone = Vec::new();
@@ -215,7 +247,7 @@ fn run(state: &AppState, dir: &Path, ctx: &JobContext) -> Result<String, JobErro
                 }
             };
             let _slot = take_slot(state, &open, ctx)?;
-            copy_db(&state.pool.path(&meta.id), &to).map_err(|e| fail(&e))?;
+            copy_db(&state.pool.path(&meta.id), &to, key).map_err(|e| fail(&e))?;
         }
         if !gone.is_empty() {
             let copy = crate::store::Store::open(&store).map_err(|e| fail(&e))?;
@@ -232,8 +264,15 @@ fn run(state: &AppState, dir: &Path, ctx: &JobContext) -> Result<String, JobErro
             p.push(suffix);
             let _ = std::fs::remove_file(PathBuf::from(p));
         }
+        if let Some(key) = key {
+            let sealed = partial.join(format!("server.sqlite{}", crate::crypt::SUFFIX));
+            crate::crypt::encrypt_file(key, &store, &sealed, "server.sqlite").map_err(|e| fail(&e))?;
+        }
         Ok(())
     })();
+    if state.config.backup_key.is_some() {
+        let _ = std::fs::remove_file(state.config.tmp_dir().join(format!("{name}.sqlite")));
+    }
     if let Err(e) = result {
         let _ = std::fs::remove_dir_all(&partial);
         return Err(e);

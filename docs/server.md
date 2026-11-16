@@ -118,6 +118,7 @@ passes `/api` to a server on 8080.
 | `CHESS_SERVER_BACKUP_DIR` | none | Where backups go ([Backups](#backups)); another volume than the data, ideally |
 | `CHESS_SERVER_BACKUP_EVERY_HOURS` | none | Back up on a schedule too |
 | `CHESS_SERVER_BACKUP_KEEP` | 7 | Backups kept |
+| `CHESS_SERVER_BACKUP_KEY_FILE` | none | A key file (`chess-server backup key FILE`): backups are encrypted with it ([Encrypted backups](#encrypted-backups)) |
 | `CHESS_SERVER_METRICS_TOKEN` | none | Turns `/metrics` on, for requests bearing it (16 characters or more) |
 | `CHESS_SERVER_IDLE_CLOSE_MINUTES` | 30 | Databases unused this long are closed (`0`: never) |
 | `CHESS_SERVER_RATE_LIMIT_PER_MINUTE` | 1200 | Requests a user may make a minute (a quarter of it at once); `0` turns it off |
@@ -260,10 +261,14 @@ it readable to others.
 
 It does **not** protect the files from whoever can read the disk: the
 databases are stored unencrypted, so the server's operator (or anyone with a
-copy of the volume or its backups) can read them with the desktop app. A
-user who needs secrecy from the operator should keep the database on their
-own machine until an encrypted ("sealed") mode exists, a later phase. The
-server process itself can read everything, so its host must be trusted.
+copy of the volume) can read them with the desktop app. Backups can be
+encrypted ([Encrypted backups](#encrypted-backups)), so a copy of the
+backup volume alone reads nothing; for the data directory itself, put it on
+an encrypted disk (LUKS, BitLocker, FileVault), which protects a disk that's
+taken away, not a running server. A user who needs secrecy from the
+operator should keep the database on their own machine until an encrypted
+("sealed") mode exists, a later phase. The server process itself can read
+everything, so its host must be trusted.
 
 ### Importing from the server folder, and licences
 
@@ -525,6 +530,43 @@ Users, password hashes, API tokens, databases, shares and the audit log
 are as they were at the backup; everyone logs in again (sessions aren't
 kept), and jobs that ran then are marked interrupted.
 
+### Encrypted backups
+
+Backups hold every user's databases and the password hashes, and they're
+the copies most likely to leave the machine (another disk, a backup
+service). With a key, every file of a backup is written encrypted
+(`server/src/crypt.rs`):
+
+```sh
+chess-server backup key /etc/chess-server/backup.key   # 64 hex digits, readable by its owner only
+CHESS_SERVER_BACKUP_KEY_FILE=/etc/chess-server/backup.key chess-server serve
+```
+
+- Each file is written as `<name>.enc`: XChaCha20-Poly1305 in the STREAM
+  construction, in chunks of 64 KiB, with the file's path in the backup as
+  associated data, so a file that was changed, cut short, reordered or put
+  in another's place fails to decrypt. A backup's `ENCRYPTED` file names
+  its key's id (the first 8 bytes of the key's SHA-256), which the admin's
+  Backups page shows; the key never leaves its file.
+- The copy of the store is made in the data directory's `tmp/` and only
+  its encrypted copy goes to the backup folder.
+- **Keep the key safe and away from the backups**: without it they can't
+  be restored, and with them it reads everything. A copy offline (a
+  password manager, paper) is wise. A new key applies to the backups made
+  after it; older ones keep needing the old one.
+- **Restoring**: decrypt into a new folder, then restore from that as
+  above (it's then a plain backup: delete it once restored):
+
+```sh
+chess-server backup decrypt /etc/chess-server/backup.key \
+  /path/to/backups/chess-server-20261111-030000 /path/to/plain-backup
+```
+
+  A wrong key, or a file changed since, is refused and nothing is left
+  behind (tested: `server/tests/running.rs`).
+- Encrypting reads and writes every byte, so a backup takes as long as
+  copying the data (btrfs's instant copies don't apply).
+
 ## TWIC updates (NET-06)
 
 The admin's TWIC page (or `PUT /api/admin/twic`) picks a database the
@@ -768,6 +810,7 @@ must offer them its source) is an open question for the project.
 - A web UI for players (NET-09); the web UI is the admin's, plus each
   user's Account page.
 - An encrypted "sealed" visibility, so a database is unreadable on the
-  server's disk.
+  server's disk (backups can be encrypted already; the data directory
+  relies on disk encryption).
 - Material and pattern search (SRCH-05/06), on the server as in the app.
 - Whether the server should be AGPL-3.0 (see Licence).
