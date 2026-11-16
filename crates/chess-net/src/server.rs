@@ -659,15 +659,21 @@ fn changes_into(
         if !changes.games.is_empty() {
             let db = local.db;
             let map = local.map()?;
-            let mut db = db.lock().expect("db lock");
+            // Which to apply, asked of the caller before the database is
+            // locked (`keep_local` may take locks of its own).
+            let mut todo = Vec::with_capacity(changes.games.len());
             for c in &changes.games {
                 let uid = uid_of(url, &c.uid)?;
                 // Not copied yet (it comes with its part), or from before.
                 let Some(&slot) = map.get(&uid) else { continue };
                 if keep_local(uid) {
                     out.kept += 1;
-                    continue;
+                } else {
+                    todo.push((slot, c));
                 }
+            }
+            let mut db = db.lock().expect("db lock");
+            for (slot, c) in todo {
                 if apply(&mut db, slot, url, c.game.as_ref())? {
                     out.changed += 1;
                 }
