@@ -252,6 +252,7 @@
         name: picked.name,
         next: null,
         epoch: null,
+        seq: null,
       };
     }
     sources = [...sources.filter((s) => describeSource(s) !== describeSource(source)), source];
@@ -469,6 +470,11 @@
             {/each}
           </select>
         </label>
+        <p class="soft">
+          A copy on this computer. Each update also brings the games edited or deleted on the server, and sends back the
+          games you save, delete or restore here (with write access there; an edit the server can't take is kept as a new
+          game).
+        </p>
       {/if}
     {:else}
       <form class="signin" onsubmit={signIn}>

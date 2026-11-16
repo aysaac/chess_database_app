@@ -484,6 +484,7 @@ pub(crate) fn save(
     let (game, source) = state.with_session(session, |s| Ok((s.editor.game().clone(), s.source)))?;
     let new_source = match (mode, source) {
         (SaveModeDto::Replace, Some((db_handle, id))) => {
+            crate::commands::sync::note_local_edits(state, db_handle, &[id]);
             state.db(db_handle)?.lock().expect("db lock").replace(id, &game)?;
             (db_handle, id)
         }

@@ -57,4 +57,9 @@ database: string, name: string,
  * The first game number the last update didn't take, and the
  * server's numbering then.
  */
-next: number | null, epoch: number | null, };
+next: number | null, epoch: number | null, 
+/**
+ * The change of the server's journal of changed games the copy
+ * has; none for a copy made before it had one.
+ */
+seq: number | null, };

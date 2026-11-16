@@ -369,6 +369,18 @@ impl Origins {
         Ok(buf.as_chunks::<32>().0.iter().map(|c| (uid_at(c, 0), uid_at(c, 16))).collect())
     }
 
+    /// Every entry, `(id, origin id)`, in the order they were written.
+    pub(crate) fn all(&self) -> Result<Vec<(GameUid, GameUid)>, DbError> {
+        let mut out = Vec::with_capacity(self.entries as usize);
+        let mut start = 0;
+        while start < self.entries {
+            let n = (self.entries - start).min(CHUNK);
+            out.extend(self.range(start, n)?);
+            start += n;
+        }
+        Ok(out)
+    }
+
     /// The origin of the game with id `id`, if it was copied in.
     pub(crate) fn get(&mut self, id: GameUid) -> Result<Option<GameUid>, DbError> {
         if self.index.is_none() {

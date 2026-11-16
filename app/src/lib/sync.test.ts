@@ -34,6 +34,7 @@ test("sources are described in a few words", () => {
     name: "My games",
     next: null,
     epoch: null,
+    seq: null,
   };
   assert.equal(describeSource(server), "My games on chess.example.com");
   assert.equal(nameFor(server), "My games");

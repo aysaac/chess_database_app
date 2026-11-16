@@ -118,7 +118,8 @@ impl From<chess_net::NetError> for AppError {
             }
             NetError::ServerUnreachable { .. }
             | NetError::ServerError { .. }
-            | NetError::ServerBadData { .. } => ErrorCode::Network,
+            | NetError::ServerBadData { .. }
+            | NetError::ServerCompactedMeanwhile => ErrorCode::Network,
             NetError::ServerLoginRefused(_) | NetError::ServerSignInRejected => ErrorCode::Login,
             NetError::NoSuchServerDb => ErrorCode::NotFound,
         };

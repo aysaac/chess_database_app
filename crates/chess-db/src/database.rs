@@ -1240,6 +1240,27 @@ impl Database {
         self.origins.get(uid)
     }
 
+    /// Every game copied in with an origin ([`origin`](Self::origin)), by
+    /// that origin: where a copy of another database (NET-03: a server's)
+    /// has each of its games. Reads every game's permanent id and the
+    /// origins table (24 bytes a game, in chunks of 1 MB).
+    pub fn games_by_origin(&self) -> Result<HashMap<GameUid, GameId>, DbError> {
+        let entries = self.origins.all()?;
+        if entries.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut slots = HashMap::with_capacity(self.count as usize);
+        let mut start = 0;
+        while start < self.count {
+            let n = (self.count - start).min(64 * 1024);
+            slots.extend(self.ids.range(start, n)?.into_iter().zip(start..));
+            start += n;
+        }
+        // The last entry for an id wins, as in `origin`; an entry for an id
+        // no committed game has is left out.
+        Ok(entries.into_iter().filter_map(|(id, origin)| Some((origin, *slots.get(&id)?))).collect())
+    }
+
     /// Per-game stats for every game, loaded on first use.
     pub fn game_stats(&mut self) -> Result<&[GameStat], DbError> {
         if self.stats.is_none() {
@@ -1725,6 +1746,26 @@ mod tests {
         assert!(db.uid_index.is_some(), "it had been built: it follows");
         assert_eq!(db.game_by_uid(copy).unwrap(), Some(1));
         assert_eq!(db.origin(1).unwrap(), Some(origin));
+    }
+
+    /// A copy's games by their origin: only those copied in, at their slots,
+    /// through a compaction too.
+    #[test]
+    fn games_are_found_by_their_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::create(&dir.path().join("Origins")).unwrap();
+        assert!(db.games_by_origin().unwrap().is_empty());
+        let there = mint(2).unwrap();
+        let game = &sample_games()[0];
+        db.append(game).unwrap();
+        db.append_prepared(&[PreparedGame::new(game).with_origin(there[0])]).unwrap();
+        db.append(game).unwrap();
+        db.append_prepared(&[PreparedGame::new(game).with_origin(there[1])]).unwrap();
+        let map = db.games_by_origin().unwrap();
+        assert_eq!(map, HashMap::from([(there[0], 1), (there[1], 3)]));
+        db.set_deleted_many(&[0, 1], true).unwrap();
+        db.compact(&crate::NoProgress).unwrap();
+        assert_eq!(db.games_by_origin().unwrap(), HashMap::from([(there[1], 1)]));
     }
 
     /// A commit writes its permanent ids, and its copies' origins, before

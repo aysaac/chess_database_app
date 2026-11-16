@@ -202,9 +202,13 @@ pub enum NetError {
     )]
     NoSuchServerDb,
     #[error(
-        "the database was compacted on the server since it was copied, which numbers its games again, so the new ones can't be told apart. Make a new copy of it (New database, From my server)"
+        "the database was compacted on the server since it was copied, which numbers its games again, and none of the games the copy took last is there any more to tell where it got to. Make a new copy of it (New database, From my server)"
     )]
     ServerCompacted,
+    #[error(
+        "the database was compacted on the server during the update: the next update goes on from where this one got to"
+    )]
+    ServerCompactedMeanwhile,
 }
 
 /// A server's message after its error, if it sent one.

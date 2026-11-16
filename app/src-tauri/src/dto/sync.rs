@@ -92,7 +92,8 @@ pub enum SyncSourceDto {
         last_modified: Option<String>,
     },
     /// A database on the self-hosted server (NET-03): each update takes the
-    /// games added there since.
+    /// games changed there (edits, deletions) and those added since, and
+    /// sends back the games edited here.
     #[serde(rename_all = "camelCase")]
     Server {
         /// The server's address, as `server_url` writes it.
@@ -109,6 +110,11 @@ pub enum SyncSourceDto {
         #[serde(default)]
         #[ts(type = "number | null")]
         epoch: Option<u64>,
+        /// The change of the server's journal of changed games the copy
+        /// has; none for a copy made before it had one.
+        #[serde(default)]
+        #[ts(type = "number | null")]
+        seq: Option<u64>,
     },
 }
 
@@ -166,9 +172,10 @@ impl SyncSourceDto {
             (SyncSourceDto::Study { last_modified, .. }, SyncSourceDto::Study { last_modified: l, .. }) => {
                 last_modified.clone_from(l)
             }
-            (SyncSourceDto::Server { next, epoch, .. }, SyncSourceDto::Server { next: n, epoch: e, .. }) => {
-                (*next, *epoch) = (*n, *e)
-            }
+            (
+                SyncSourceDto::Server { next, epoch, seq, .. },
+                SyncSourceDto::Server { next: n, epoch: e, seq: q, .. },
+            ) => (*next, *epoch, *seq) = (*n, *e, *q),
             _ => {}
         }
         self
@@ -179,7 +186,7 @@ impl SyncSourceDto {
         match &mut self {
             SyncSourceDto::Player { reached, .. } => *reached = None,
             SyncSourceDto::Study { last_modified, .. } => *last_modified = None,
-            SyncSourceDto::Server { next, epoch, .. } => (*next, *epoch) = (None, None),
+            SyncSourceDto::Server { next, epoch, seq, .. } => (*next, *epoch, *seq) = (None, None, None),
         }
         self
     }

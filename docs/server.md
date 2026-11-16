@@ -286,7 +286,8 @@ JSON over HTTP under `/api`. Errors are
 Types are in `server/src/wire.rs`; where the desktop app has the same thing
 (`GameRowDto`, `GamePage`, `HeadersDto`, `NotationDto`, `ReferenceDto`,
 `LinesDto`, `JobDto`, `ImportReportDto`), the JSON is the same, so the
-desktop client can share the types later.
+desktop client can share the types later (it has its own copies of the
+few it reads, in `chess_net::server`).
 
 ### Accounts
 
@@ -439,6 +440,41 @@ deletion and compaction. Every route that edits takes them
 - **Restoring a backup** takes the journal back to the backup's time too:
   copies made after it may have numbers ahead of it, and miss changes made
   since the restore until their games change again. Make such copies again.
+
+### The desktop app's copy
+
+The app's **New from Lichess, Chess.com or server…** (and **Keep up to
+date…**) makes a local database a copy of a server database
+(`chess_net::server`, NET-14). Each of the copy's games keeps the server
+game's permanent id as its origin (`Database::origin`), and the source in
+the app's settings notes where it got to: the next number, the `idEpoch`
+and the journal's change (`seq`). An **Update**:
+
+1. **Sends the games edited here**: saving a game of the copy, or deleting
+   or restoring games, notes them (by their id there, with the change the
+   copy was at) before the change is written. Each is sent with
+   `PUT by-uid` and that `baseSeq`. One the server refuses (it changed there
+   too, the account may only read, or the game is gone there) is **kept as
+   a new game in the copy** (with no origin, so not on the server) and the
+   copy's game takes the server's version: nothing is lost, and nothing
+   overwrites another's edit unseen. One that couldn't be sent (no
+   connection) waits for the next update.
+2. **Takes the games changed there** since its change (`sync/changes`):
+   each into its game in the copy, found by its origin; a game still
+   waiting to be sent is left as it is (counted as kept).
+3. After a **compaction there**, finds where it got to (`sync/locate` with
+   its last 1,000 games' ids) and goes on; only a copy none of whose last
+   games is there any more is made again.
+4. **Takes the games added there** by number (`sync/games`, deleted ones
+   marked so), a part of 2,000 at a time, each part committed whole and
+   noted; a part taken again after a crash skips the games the copy has.
+
+Sending back works for a database that is a copy of one server database
+(not one with several server sources) made or updated since the journal
+existed; a copy from before follows the changes from its next update on,
+but its older games have no origin, so their edits stay local (make the
+copy again to have them). Tested against a running server in
+`server/tests/copies.rs`.
 
 ## Backups
 
@@ -714,15 +750,19 @@ must offer them its source) is an open question for the project.
 
 ## What's next
 
-- **Done in part (NET-14)**: the app signs in with an API token and keeps a local copy of a database up to date by game number (new games only; no edits or deletions yet).
-- **Phase 2**: the desktop app as a client (open a server database like a
-  local one, through an API token), with its DTOs and the server's shared
-  in one crate; sync of a user's own databases; an offline copy per
-  database.
-- Editing games on the server (write access beyond imports, deleting and
-  compaction).
-- Permanent game ids, so ids a client keeps survive a compaction (an
-  `idEpoch` only says they changed).
+- **Done (phase 2, 2026-11-16)**: editing and adding games by permanent id,
+  the journal of changed games, and the app's offline copy (NET-14) built
+  on them: it follows edits, deletions and restores made on the server,
+  goes on through compactions there, and sends back the games saved,
+  deleted or restored in the copy, an edit the server refuses (changed
+  there too, or read-only access) kept as a new game in the copy
+  ([The desktop app's copy](#the-desktop-apps-copy)).
+- **Still for phase 2**: opening a server database in the app without a
+  copy (the list, tree and search through the API, like a local one), and
+  the app's DTOs and the server's shared in one crate; sending back games
+  added in the copy (they stay local), and edits made other ways than
+  saving a game or deleting and restoring it (renaming a player for every
+  game, Find duplicates, moving games out); pruning the journal.
 - Parallel queries on one database (see Limits): several readers per
   database instead of one mutex.
 - A web UI for players (NET-09); the web UI is the admin's, plus each

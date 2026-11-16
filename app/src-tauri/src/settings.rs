@@ -181,6 +181,24 @@ pub struct SyncedDb {
     /// The database folder (canonical, as `AppState` keeps it).
     pub path: PathBuf,
     pub sync: DbSyncDto,
+    /// Games of a server copy edited here, to send back at the next update.
+    pub pending_edits: Vec<PendingEdit>,
+}
+
+/// A game of a copy of a server database (NET-03) edited here (saved,
+/// deleted or restored), waiting for the next update to send it there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingEdit {
+    /// The source: the server's address and the database's id there.
+    pub url: String,
+    pub database: String,
+    /// The game's permanent id there (its origin here).
+    pub uid: String,
+    /// The change of the server's journal the copy was at when the game was
+    /// first edited: the server refuses the edit if the game changed there
+    /// after it.
+    pub base_seq: u64,
 }
 
 /// Who is signed in to the self-hosted server (NET-03), while the token is
@@ -409,6 +427,66 @@ impl Settings {
         sync.auto = auto;
         sync.limit = limit;
         sync.limit_policy = policy;
+        // Edits for a server database that's no longer a source stay here.
+        if let Some(d) = self.synced_databases.iter_mut().find(|d| d.path == path) {
+            let sources = &d.sync.sources;
+            d.pending_edits.retain(|e| {
+                sources.iter().any(|s| {
+                    matches!(s, SyncSourceDto::Server { url, database, .. } if *url == e.url && *database == e.database)
+                })
+            });
+        }
+    }
+
+    /// The server database the database at `path` is a copy of, with the
+    /// journal's change it's at, when it's a copy of exactly one (edits
+    /// are sent back only then) that has followed the journal.
+    pub fn server_copy_of(&self, path: &Path) -> Option<(String, String, u64)> {
+        let sync = self.synced(path)?;
+        let mut servers = sync.sources.iter().filter_map(|s| match s {
+            SyncSourceDto::Server { url, database, seq, .. } => Some((url.clone(), database.clone(), *seq)),
+            _ => None,
+        });
+        let (url, database, seq) = servers.next()?;
+        if servers.next().is_some() {
+            return None;
+        }
+        Some((url, database, seq?))
+    }
+
+    /// Notes games of the copy at `path` edited here, by their permanent ids
+    /// on the server, to send back at the next update: each with the
+    /// change the copy is at now, unless it's waiting already (it keeps the
+    /// earlier one, which the server compares with).
+    pub fn note_local_edits(&mut self, path: &Path, uids: &[String]) {
+        let Some((url, database, seq)) = self.server_copy_of(path) else { return };
+        let Some(d) = self.synced_databases.iter_mut().find(|d| d.path == path) else { return };
+        for uid in uids {
+            let waiting =
+                d.pending_edits.iter().any(|e| e.url == url && e.database == database && e.uid == *uid);
+            if !waiting {
+                let (url, database, uid) = (url.clone(), database.clone(), uid.clone());
+                d.pending_edits.push(PendingEdit { url, database, uid, base_seq: seq });
+            }
+        }
+    }
+
+    /// The edits waiting to go to server database `database` at `url` from
+    /// the copy at `path`.
+    pub fn pending_edits(&self, path: &Path, url: &str, database: &str) -> Vec<&PendingEdit> {
+        self.synced_databases
+            .iter()
+            .filter(|d| d.path == path)
+            .flat_map(|d| &d.pending_edits)
+            .filter(|e| e.url == url && e.database == database)
+            .collect()
+    }
+
+    /// Forgets the edits sent (or kept as new games) of the copy at `path`.
+    pub fn drop_pending(&mut self, path: &Path, url: &str, database: &str, done: &[String]) {
+        if let Some(d) = self.synced_databases.iter_mut().find(|d| d.path == path) {
+            d.pending_edits.retain(|e| !(e.url == url && e.database == database && done.contains(&e.uid)));
+        }
     }
 
     /// Notes how far an update of `source` got in the database at `path`,
@@ -700,12 +778,57 @@ mod tests {
             name: "Games".into(),
             next,
             epoch: next.map(|_| 3),
+            seq: next.map(|_| 7),
         };
         let mut s = Settings::default();
         s.set_sources(path, vec![server("old", None)], false, None, LimitPolicyDto::Stop);
         s.note_source(path, &server("old", Some(40)));
         s.set_sources(path, vec![server("new", None)], false, None, LimitPolicyDto::Stop);
         assert_eq!(s.synced(path).unwrap().sources, [server("new", Some(40))]);
+    }
+
+    #[test]
+    fn edits_of_a_server_copy_wait_with_the_change_they_were_made_at() {
+        let path = Path::new("/a.chessdb");
+        let server = |database: &str, seq: Option<u64>| SyncSourceDto::Server {
+            url: "https://x.org".into(),
+            username: "me".into(),
+            database: database.into(),
+            name: "Games".into(),
+            next: seq.map(|_| 10),
+            epoch: seq.map(|_| 0),
+            seq,
+        };
+        let uids = |list: &[&str]| list.iter().map(|u| u.to_string()).collect::<Vec<_>>();
+        let mut s = Settings::default();
+        s.set_sources(path, vec![server("db1", None)], false, None, LimitPolicyDto::Stop);
+        // Not copied yet: nothing to send back to.
+        s.note_local_edits(path, &uids(&["a"]));
+        assert!(s.pending_edits(path, "https://x.org", "db1").is_empty());
+        s.note_source(path, &server("db1", Some(5)));
+        s.note_local_edits(path, &uids(&["a", "b"]));
+        s.note_source(path, &server("db1", Some(9)));
+        s.note_local_edits(path, &uids(&["a", "c"]));
+        let waiting: Vec<_> = s
+            .pending_edits(path, "https://x.org", "db1")
+            .iter()
+            .map(|e| (e.uid.clone(), e.base_seq))
+            .collect();
+        assert_eq!(waiting, [("a".into(), 5), ("b".into(), 5), ("c".into(), 9)], "a keeps its first change");
+        s.drop_pending(path, "https://x.org", "db1", &uids(&["a", "c"]));
+        assert_eq!(s.pending_edits(path, "https://x.org", "db1").len(), 1);
+        // Saved and read again.
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.pending_edits(path, "https://x.org", "db1")[0].uid, "b");
+        // A copy of two server databases sends nothing back.
+        let both = vec![server("db1", Some(9)), server("db2", Some(1))];
+        s.set_sources(path, both, false, None, LimitPolicyDto::Stop);
+        assert!(s.server_copy_of(path).is_none());
+        s.note_local_edits(path, &uids(&["d"]));
+        assert_eq!(s.pending_edits(path, "https://x.org", "db1").len(), 1);
+        // A source taken away takes its edits.
+        s.set_sources(path, vec![server("db2", Some(1))], false, None, LimitPolicyDto::Stop);
+        assert!(s.pending_edits(path, "https://x.org", "db1").is_empty());
     }
 
     #[test]

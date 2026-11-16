@@ -541,6 +541,7 @@ pub async fn set_deleted(
     deleted: bool,
 ) -> AppResult<()> {
     let db = state.db(handle)?;
+    crate::commands::sync::note_local_edits(&state, handle, &ids);
     db.lock().expect("db lock").set_deleted_many(&ids, deleted)?;
     Ok(())
 }
@@ -556,6 +557,7 @@ pub async fn set_deleted_rows(
 ) -> AppResult<u32> {
     let ids = selected_ids(&state, handle, &selection)?;
     let db = state.db(handle)?;
+    crate::commands::sync::note_local_edits(&state, handle, &ids);
     let changed = db.lock().expect("db lock").set_deleted_many(&ids, deleted)?;
     Ok(changed)
 }

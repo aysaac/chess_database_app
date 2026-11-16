@@ -5,9 +5,9 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use chess_db::Database;
+use chess_db::{Database, GameId};
 use chess_jobs::{JobContext, JobError};
-use chess_net::server::{self, CopyMark, CopySource};
+use chess_net::server::{self, CopyMark, CopySource, LocalEdit};
 use chess_net::study::{self, StudyRef};
 use chess_net::{NetError, Period, Request};
 use tauri::{AppHandle, Manager, State};
@@ -124,9 +124,15 @@ fn normalized(source: SyncSourceDto) -> AppResult<SyncSourceDto> {
             let chapter = chapter.or(r.chapter);
             SyncSourceDto::Study { study: r.study, chapter, name, last_modified }
         }
-        SyncSourceDto::Server { url, username, database, name, next, epoch } => {
-            SyncSourceDto::Server { url: server::server_url(&url)?, username, database, name, next, epoch }
-        }
+        SyncSourceDto::Server { url, username, database, name, next, epoch, seq } => SyncSourceDto::Server {
+            url: server::server_url(&url)?,
+            username,
+            database,
+            name,
+            next,
+            epoch,
+            seq,
+        },
     })
 }
 
@@ -287,37 +293,121 @@ fn update_study(
     Ok((next, imported))
 }
 
-/// Brings a server database's new games in.
+/// Notes games of a database edited here (saved, deleted or restored), if
+/// it's a copy of a server database: the next update sends them back.
+/// Called before the change is written, so an update running meanwhile
+/// leaves the game as it is here rather than overwrite the edit.
+pub(crate) fn note_local_edits(state: &AppState, handle: u32, ids: &[GameId]) {
+    let Some(path) = state.list_path(handle) else { return };
+    if state.settings.lock().expect("settings lock").server_copy_of(&path).is_none() {
+        return;
+    }
+    let Ok(db) = state.db(handle) else { return };
+    let uids: Vec<String> = {
+        let mut db = db.lock().expect("db lock");
+        ids.iter().filter_map(|&id| db.origin(id).ok().flatten()).map(|u| u.to_string()).collect()
+    };
+    if !uids.is_empty() {
+        state.update_settings(|s| s.note_local_edits(&path, &uids));
+    }
+}
+
+fn counted(n: u64, one: &str, many: &str) -> String {
+    if n == 1 { format!("1 {one}") } else { format!("{} {many}", thousands(n)) }
+}
+
+/// Sends the games edited here back to a server database, then brings the
+/// games changed and added there in. What else happened, besides the new
+/// games, goes in `notes`.
 fn update_server(
     state: &AppState,
     db: &Mutex<Database>,
     path: &Path,
     source: &SyncSourceDto,
     ctx: &JobContext,
+    notes: &mut Vec<String>,
 ) -> Result<(SyncSourceDto, u64), NetError> {
-    let SyncSourceDto::Server { url, username, database, next, epoch, .. } = source else {
+    let SyncSourceDto::Server { url, username, database, next, epoch, seq, .. } = source else {
         unreachable!("a server's source")
     };
     let login = crate::server_login::login(state)
         .map_err(|e| NetError::ServerBadData { server: url.clone(), reason: e.message })?
         .filter(|l| l.url == *url && l.username.eq_ignore_ascii_case(username))
         .ok_or(NetError::ServerSignInRejected)?;
-    let from = match (next, epoch) {
-        (Some(next), Some(epoch)) => Some(CopyMark { next: *next, epoch: *epoch }),
-        _ => None,
+    let rejected = |e: &NetError| {
+        if matches!(e, NetError::ServerSignInRejected) {
+            crate::server_login::forget_rejected(state, &login.token);
+        }
     };
     let src = CopySource { url, token: &login.token, id: database };
+
+    // The edits made here first: an update would otherwise leave them as
+    // they are (they wait) but go past the server's changes to them.
+    let edits: Vec<LocalEdit> = state
+        .settings
+        .lock()
+        .expect("settings lock")
+        .pending_edits(path, url, database)
+        .into_iter()
+        .filter_map(|e| Some(LocalEdit { uid: e.uid.parse().ok()?, base_seq: e.base_seq }))
+        .collect();
+    if !edits.is_empty() {
+        let pushed = server::push_edits(state.server.client(), src, db, &edits)?;
+        let done: Vec<String> = pushed.done.iter().map(|u| u.to_string()).collect();
+        state.update_settings(|s| s.drop_pending(path, url, database, &done));
+        if pushed.sent > 0 {
+            notes.push(format!("{} sent", counted(pushed.sent, "edited game", "edited games")));
+        }
+        if pushed.kept_as_new > 0 {
+            notes.push(format!(
+                "{} changed on the server too, or can't be changed there: each edit was kept as a new game here",
+                counted(pushed.kept_as_new, "edited game", "edited games")
+            ));
+        }
+        if let Some(e) = pushed.stopped {
+            rejected(&e);
+            if matches!(e, NetError::ServerSignInRejected | NetError::NoSuchServerDb) {
+                return Err(e);
+            }
+            let left = edits.len() - pushed.done.len();
+            notes.push(format!("{} not sent yet ({e})", counted(left as u64, "edited game", "edited games")));
+        }
+    }
+
+    let from = match (next, epoch) {
+        (Some(next), Some(epoch)) => Some(CopyMark { next: *next, epoch: *epoch, seq: *seq }),
+        _ => None,
+    };
     let mut latest = source.clone();
-    let result = server::copy_into(state.server.client(), src, from, db, ctx, &mut |m| {
-        if let SyncSourceDto::Server { next, epoch, .. } = &mut latest {
-            (*next, *epoch) = (Some(m.next), Some(m.epoch));
+    let waiting = |uid: chess_db::GameUid| {
+        let uid = uid.to_string();
+        state
+            .settings
+            .lock()
+            .expect("settings lock")
+            .pending_edits(path, url, database)
+            .iter()
+            .any(|e| e.uid == uid)
+    };
+    let result = server::copy_into(state.server.client(), src, from, db, ctx, &waiting, &mut |m| {
+        if let SyncSourceDto::Server { next, epoch, seq, .. } = &mut latest {
+            (*next, *epoch, *seq) = (Some(m.next), Some(m.epoch), m.seq);
         }
         state.update_settings(|st| st.note_source(path, &latest));
     });
-    if matches!(result, Err(NetError::ServerSignInRejected)) {
-        crate::server_login::forget_rejected(state, &login.token);
+    if let Err(e) = &result {
+        rejected(e);
     }
     let copy = result?;
+    if copy.changed > 0 {
+        notes.push(format!("{} on the server", counted(copy.changed, "game changed", "games changed")));
+    }
+    if copy.kept > 0 {
+        notes.push(format!(
+            "{} on the server kept as edited here, to send",
+            counted(copy.kept, "game changed", "games changed")
+        ));
+    }
     if let Some(e) = copy.stopped {
         return Err(e);
     }
@@ -362,17 +452,19 @@ fn run_update(
             }
             room = Some(u64::from(limit - live));
         }
+        let mut notes = Vec::new();
         let result = match source {
             SyncSourceDto::Player { .. } => update_player(state, db, path, source, room, newest, ctx),
             SyncSourceDto::Study { .. } => update_study(state, db, path, source, ctx),
-            SyncSourceDto::Server { .. } => update_server(state, db, path, source, ctx),
+            SyncSourceDto::Server { .. } => update_server(state, db, path, source, ctx, &mut notes),
         };
+        let notes: String = notes.iter().map(|n| format!(", {n}")).collect();
         out.push(match result {
-            Ok((_, 0)) => Outcome { text: format!("no new games from {what}"), failed: false },
-            Ok((_, n)) => Outcome { text: format!("{} from {what}", games(n)), failed: false },
+            Ok((_, 0)) => Outcome { text: format!("no new games from {what}{notes}"), failed: false },
+            Ok((_, n)) => Outcome { text: format!("{} from {what}{notes}", games(n)), failed: false },
             Err(NetError::Cancelled) => return Err(JobError::Cancelled),
             Err(NetError::Db(e)) => return Err(to_job_error(e)),
-            Err(e) => Outcome { text: format!("{what}: {e}"), failed: true },
+            Err(e) => Outcome { text: format!("{what}: {e}{notes}"), failed: true },
         });
     }
     if let Some(limit) = limit {
