@@ -5,7 +5,7 @@
 //! Compaction renumbers the games, as in the app: an id read before means
 //! another game after. Each database has an `idEpoch`, bumped by each
 //! compaction, that changes taking ids can name to be refused (409) when
-//! the ids are stale. Ids aren't permanent; that's a later feature. The
+//! the ids are stale (or name games by permanent id instead). The
 //! compaction bumps it holding the database's lock, before it renumbers
 //! anything, and changes taking ids check it holding the lock too: a
 //! compaction can't come between the check and the change.
@@ -41,6 +41,11 @@ const MAX_GAMES: usize = 100_000;
 /// Duplicate groups per page at most.
 const MAX_GROUPS: u32 = 1000;
 
+/// A permanent game id as text (`chess_db::GameUid`), from a request body.
+pub(crate) fn parse_uid(text: &str) -> ApiResult<chess_db::GameUid> {
+    text.parse().map_err(|_| ApiError::bad_request(format!("Not a game id: {text:?}")))
+}
+
 pub(crate) fn stale_ids() -> ApiError {
     ApiError::new(
         StatusCode::CONFLICT,
@@ -74,16 +79,33 @@ pub async fn mark_deleted(
         let (meta, _) = require(&state.store, &auth.user, &id, Access::Write)?;
         let req: MarkDeleted = json_body(&body)?;
         check_epoch(&meta, req.id_epoch)?;
-        if req.games.len() > MAX_GAMES {
+        if req.games.len() + req.uids.len() > MAX_GAMES {
             return Err(ApiError::bad_request(format!("Mark at most {MAX_GAMES} games at once")));
         }
+        let uids = req.uids.iter().map(|u| parse_uid(u)).collect::<ApiResult<Vec<_>>>()?;
         let open = state.open_db(&id)?;
         let mut db = open.lock();
         check_epoch_now(&state, &id, req.id_epoch)?;
-        let changed = db.set_deleted_many(&req.games, req.deleted).map_err(|e| match e {
-            chess_db::DbError::NotFound(g) => ApiError::bad_request(format!("There is no game {g}")),
-            other => other.into(),
-        })?;
+        let mut games = req.games.clone();
+        for uid in uids {
+            let slot = db
+                .game_by_uid(uid)?
+                .ok_or_else(|| ApiError::bad_request(format!("There is no game {uid}")))?;
+            games.push(slot);
+        }
+        if let Some(&bad) = games.iter().find(|&&g| g >= db.count()) {
+            return Err(ApiError::bad_request(format!("There is no game {bad}")));
+        }
+        // The journal first (copies elsewhere follow it), for the games
+        // that change.
+        let mut changing = Vec::new();
+        for &g in &games {
+            if db.record(g)?.is_deleted() != req.deleted {
+                changing.push(db.uid(g)?.to_bytes());
+            }
+        }
+        state.store.note_changes(&id, &changing)?;
+        let changed = db.set_deleted_many(&games, req.deleted)?;
         drop(db);
         log::info!(
             "{} {} {changed} games of database {}",
@@ -198,6 +220,15 @@ pub async fn delete_found(
                 "The database changed since the search: find the duplicates again",
             ));
         }
+        // The journal first: the copies marked, and the kept games, which
+        // may take fields of them.
+        let mut changing = Vec::new();
+        for g in &found.found.groups {
+            for &slot in std::iter::once(&g.keep).chain(&g.remove) {
+                changing.push(db.uid(slot)?.to_bytes());
+            }
+        }
+        state.store.note_changes(&id, &changing)?;
         let done = delete_copies(&mut db, &found.found.groups)?;
         drop(db);
         log::info!(

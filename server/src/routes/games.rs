@@ -72,24 +72,35 @@ pub async fn game(
         require(&state.store, &auth.user, &id, Access::Read)?;
         let game: GameId = game.parse().map_err(|_| ApiError::not_found())?;
         let open = state.open_db(&id)?;
-        let (g, row) = {
+        let (g, row, uid) = {
             let db = open.lock();
             if game >= db.count() {
                 return Err(ApiError::not_found());
             }
-            (db.read_game(game)?, db.row(game)?)
+            (db.read_game(game)?, db.row(game)?, db.uid(game)?)
         };
-        Ok(Json(GameDto {
-            id: game,
-            row: row.into(),
-            headers: HeadersDto::from(&g.headers),
-            start_fen: g.setup.as_ref().map(position::to_fen),
-            pgn: write_game(&g),
-            notation: notation_of(&g),
-            opening: chess_core::openings::classify(&g).map(OpeningDto::from),
-        }))
+        Ok(Json(game_dto(game, uid, &g, row)))
     })
     .await
+}
+
+/// A game as the one-game routes answer it.
+pub(crate) fn game_dto(
+    game: GameId,
+    uid: chess_db::GameUid,
+    g: &chess_core::game::Game,
+    row: chess_db::GameRow,
+) -> GameDto {
+    GameDto {
+        id: game,
+        uid: uid.to_string(),
+        row: row.into(),
+        headers: HeadersDto::from(&g.headers),
+        start_fen: g.setup.as_ref().map(position::to_fen),
+        pgn: write_game(g),
+        notation: notation_of(g),
+        opening: chess_core::openings::classify(g).map(OpeningDto::from),
+    }
 }
 
 fn fen_position(q: &FenQuery) -> ApiResult<Chess> {

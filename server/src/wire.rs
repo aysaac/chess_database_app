@@ -446,6 +446,10 @@ pub struct DatabaseDto {
     /// Only for one database's info (`GET /api/databases/{id}`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index: Option<IndexStatusDto>,
+    /// The number of the latest change in its journal of changed games
+    /// (`/sync/changes`); only in one database's info.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_change: Option<u64>,
 }
 
 /// State of a database's position index (SRCH-04), as the app's
@@ -498,7 +502,11 @@ pub struct SetShare {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MarkDeleted {
+    #[serde(default)]
     pub games: Vec<u32>,
+    /// Games by permanent id, besides (or instead of) `games`.
+    #[serde(default)]
+    pub uids: Vec<String>,
     pub deleted: bool,
     /// The database's `idEpoch` the ids were read at: refused (409) if a
     /// compaction renumbered the games since.
@@ -994,6 +1002,9 @@ pub fn notation_of(game: &Game) -> NotationDto {
 #[serde(rename_all = "camelCase")]
 pub struct GameDto {
     pub id: u32,
+    /// Its permanent id (`chess_db::GameUid`): kept through edits and
+    /// compactions, unlike `id`.
+    pub uid: String,
     pub row: GameRowDto,
     pub headers: HeadersDto,
     /// The set-up position it starts from, if any.
@@ -1589,4 +1600,108 @@ mod tests {
         let q = GamesQuery { limit: Some(10_000), ..GamesQuery::default() };
         assert_eq!(q.page_limit(), MAX_PAGE);
     }
+}
+
+// ---- editing games and keeping copies in step (NET-03) ----------------------
+
+/// `PUT /api/databases/{id}/by-uid/{uid}`: a game's new state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutGame {
+    /// The game, as PGN: exactly one.
+    pub pgn: String,
+    /// Marks it as deleted, or restores it; left as it is when not given.
+    #[serde(default)]
+    pub deleted: Option<bool>,
+    /// The journal's change the client's copy of the game is at: refused
+    /// (409 `changedOnServer`) if the game changed on the server after it.
+    #[serde(default)]
+    pub base_seq: Option<u64>,
+}
+
+/// `POST /api/databases/{id}/games`: a new game.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddGame {
+    pub pgn: String,
+}
+
+/// A game written: where it is now, its permanent id, and the journal's
+/// latest change after it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedGameDto {
+    pub id: u32,
+    pub uid: String,
+    pub seq: u64,
+}
+
+/// A game as a copy takes it: its number now, permanent id, whether it's
+/// marked as deleted, and its PGN.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncGameDto {
+    pub id: u32,
+    pub uid: String,
+    pub deleted: bool,
+    pub pgn: String,
+}
+
+/// `GET /api/databases/{id}/sync/games?idFrom=&idTo=&idEpoch=`: the games
+/// numbered in that range (deleted ones too), with `next` the first number
+/// not covered and `seq` the journal's latest change when they were read.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPartDto {
+    pub epoch: u64,
+    pub next: u32,
+    pub seq: u64,
+    pub games: Vec<SyncGameDto>,
+}
+
+/// `GET /api/databases/{id}/sync/changes?since=&limit=`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangesQuery {
+    pub since: u64,
+    pub limit: Option<u32>,
+}
+
+/// One game changed since: its state now, or `game: null` once a
+/// compaction removed it (it was deleted first).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncChangeDto {
+    pub uid: String,
+    /// Its latest change.
+    pub seq: u64,
+    pub game: Option<SyncGameDto>,
+}
+
+/// The games changed after `since`: each once, in the order of their
+/// latest change. `latest` is where the next request goes on from; `more`
+/// says there are more after it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangesDto {
+    pub latest: u64,
+    pub more: bool,
+    pub epoch: u64,
+    pub games: Vec<SyncChangeDto>,
+}
+
+/// `POST /api/databases/{id}/sync/locate`: where games are now, by
+/// permanent id.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocateRequest {
+    pub uids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocateDto {
+    pub epoch: u64,
+    /// Each one's number, or `null` when the database hasn't it (any more).
+    pub ids: Vec<Option<u32>>,
 }

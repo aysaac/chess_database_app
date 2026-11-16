@@ -18,7 +18,7 @@
     ["transfer", "Transfers"],
     ["import", "Imports"],
     ["export", "Exports"],
-    ["games", "Games deleted or restored"],
+    ["games", "Games edited, added, deleted or restored"],
     ["duplicates", "Duplicates deleted"],
     ["compact", "Compactions"],
     ["backup", "Backups"],

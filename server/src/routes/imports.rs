@@ -295,7 +295,7 @@ fn run(state: &AppState, import: &Import, ctx: &JobContext) -> Result<String, Jo
     Ok(msg)
 }
 
-fn quota_exceeded() -> ApiError {
+pub(crate) fn quota_exceeded() -> ApiError {
     ApiError::new(
         StatusCode::INSUFFICIENT_STORAGE,
         "quotaExceeded",

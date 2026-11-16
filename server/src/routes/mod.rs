@@ -9,6 +9,7 @@ pub(crate) mod imports;
 pub(crate) mod jobs;
 pub(crate) mod maintenance;
 mod search;
+mod sync;
 mod transfers;
 
 use std::sync::Arc;
@@ -50,8 +51,12 @@ pub fn api(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/databases/{db}/shares", get(databases::shares))
         .route("/databases/{db}/transfer", put(transfers::offer).delete(transfers::withdraw))
         .route("/databases/{db}/shares/{username}", put(databases::set_share).delete(databases::remove_share))
-        .route("/databases/{db}/games", get(games::page))
+        .route("/databases/{db}/games", get(games::page).post(sync::add))
         .route("/databases/{db}/games/{game}", get(games::game))
+        .route("/databases/{db}/by-uid/{uid}", get(sync::get).put(sync::put))
+        .route("/databases/{db}/sync/games", get(sync::games))
+        .route("/databases/{db}/sync/changes", get(sync::changes))
+        .route("/databases/{db}/sync/locate", post(sync::locate))
         .route("/databases/{db}/export.pgn", get(export::export))
         .route("/databases/{db}/deleted", post(maintenance::mark_deleted))
         .route("/databases/{db}/duplicates", post(maintenance::find))

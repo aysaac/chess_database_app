@@ -15,7 +15,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::wire::{Role, ShareAccess, Visibility};
 
 /// Schema version, in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// From version 1 to 2: game id epochs (compaction), e-mail addresses,
 /// ownership transfers, invites, password resets, jobs, the audit log,
@@ -93,6 +93,20 @@ CREATE TABLE twic_issues (
 );
 ";
 
+/// From version 2 to 3: the journal of games changed after they came in
+/// (NET-03 sync), by permanent id. `AUTOINCREMENT`, so a number is never
+/// used twice, even once the rows before it are gone.
+const MIGRATE_3: &str = "
+CREATE TABLE game_changes (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    database_id TEXT NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+    uid BLOB NOT NULL,
+    at INTEGER NOT NULL
+);
+CREATE INDEX game_changes_db ON game_changes(database_id, seq);
+CREATE INDEX game_changes_uid ON game_changes(database_id, uid, seq);
+";
+
 const SCHEMA: &str = "
 CREATE TABLE users (
     id INTEGER PRIMARY KEY,
@@ -136,6 +150,12 @@ CREATE TABLE shares (
 );
 CREATE INDEX shares_user ON shares(user_id);
 ";
+
+fn latest_change(conn: &Connection, db: &str) -> rusqlite::Result<u64> {
+    let n: Option<i64> =
+        conn.query_row("SELECT MAX(seq) FROM game_changes WHERE database_id = ?1", [db], |r| r.get(0))?;
+    Ok(n.unwrap_or(0).max(0) as u64)
+}
 
 /// Unix seconds now.
 pub fn now() -> i64 {
@@ -351,13 +371,19 @@ impl Store {
         match version {
             0 => {
                 conn.execute_batch(&format!(
-                    "BEGIN; {SCHEMA} {MIGRATE_2} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+                    "BEGIN; {SCHEMA} {MIGRATE_2} {MIGRATE_3} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
                 ))?;
             }
             1 => {
                 log::info!("updating the metadata store to schema version {SCHEMA_VERSION}");
                 conn.execute_batch(&format!(
-                    "BEGIN; {MIGRATE_2} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+                    "BEGIN; {MIGRATE_2} {MIGRATE_3} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+                ))?;
+            }
+            2 => {
+                log::info!("updating the metadata store to schema version {SCHEMA_VERSION}");
+                conn.execute_batch(&format!(
+                    "BEGIN; {MIGRATE_3} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
                 ))?;
             }
             SCHEMA_VERSION => {}
@@ -1212,6 +1238,67 @@ impl Store {
         Ok(rows)
     }
 
+    // ---- the journal of changed games (NET-03 sync) ------------------------------
+
+    /// Notes that games `uids` of database `db` are about to change (edited,
+    /// deleted or restored), in one transaction; the last number given, or
+    /// the latest when `uids` is empty. Called holding the database's lock,
+    /// before the change: a crash between the two leaves a note of a change
+    /// that didn't happen, which costs a client one game read again, never
+    /// a change it doesn't hear of.
+    pub fn note_changes(&self, db: &str, uids: &[[u8; 16]]) -> ApiResult<u64> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt =
+                tx.prepare("INSERT INTO game_changes (database_id, uid, at) VALUES (?1, ?2, ?3)")?;
+            let at = now();
+            for uid in uids {
+                stmt.execute(params![db, uid.as_slice(), at])?;
+            }
+        }
+        let latest = latest_change(&tx, db)?;
+        tx.commit()?;
+        Ok(latest)
+    }
+
+    /// The number of database `db`'s latest change; 0 when it has none.
+    pub fn latest_change(&self, db: &str) -> ApiResult<u64> {
+        Ok(latest_change(&self.conn(), db)?)
+    }
+
+    /// The games of `db` changed after change `since`, each once with the
+    /// number of its latest change, in that order: at most `limit`.
+    pub fn changes_since(&self, db: &str, since: u64, limit: u32) -> ApiResult<Vec<([u8; 16], u64)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT uid, MAX(seq) AS last FROM game_changes WHERE database_id = ?1 AND seq > ?2
+             GROUP BY uid ORDER BY last LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![db, since as i64, limit], |r| {
+                let uid: Vec<u8> = r.get(0)?;
+                let seq: i64 = r.get(1)?;
+                Ok((uid, seq))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(uid, seq)| Some((<[u8; 16]>::try_from(uid.as_slice()).ok()?, seq.max(0) as u64)))
+            .collect())
+    }
+
+    /// Whether game `uid` of `db` changed after change `since`.
+    pub fn changed_since(&self, db: &str, uid: &[u8; 16], since: u64) -> ApiResult<bool> {
+        let conn = self.conn();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM game_changes WHERE database_id = ?1 AND uid = ?2 AND seq > ?3",
+            params![db, uid.as_slice(), since as i64],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
     // ---- backups -----------------------------------------------------------------
 
     /// A consistent copy of the store at `path`, made with SQLite's online
@@ -1264,6 +1351,44 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("s.sqlite")).unwrap();
         (dir, store)
+    }
+
+    #[test]
+    fn a_version_2_store_gets_the_journal_of_changed_games() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!("{SCHEMA} {MIGRATE_2} PRAGMA user_version = 2;")).unwrap();
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role, created_at) VALUES ('a', 'h', 'admin', 0)",
+                [],
+            )
+            .unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        let a = s.user_by_name("a").unwrap().unwrap().0;
+        let db = s.create_database("d".repeat(32).as_str(), "D", a.id, Visibility::Private).unwrap();
+        assert_eq!(s.latest_change(&db.id).unwrap(), 0);
+        let (x, y) = ([1u8; 16], [2u8; 16]);
+        let first = s.note_changes(&db.id, &[x, y]).unwrap();
+        let last = s.note_changes(&db.id, &[x]).unwrap();
+        assert!(last > first);
+        assert_eq!(s.latest_change(&db.id).unwrap(), last);
+        // Each game once, by its latest change.
+        assert_eq!(s.changes_since(&db.id, 0, 10).unwrap(), [(y, first), (x, last)]);
+        assert_eq!(s.changes_since(&db.id, first, 10).unwrap(), [(x, last)]);
+        assert_eq!(s.changes_since(&db.id, 0, 1).unwrap(), [(y, first)]);
+        assert!(s.changed_since(&db.id, &x, first).unwrap());
+        assert!(!s.changed_since(&db.id, &y, first).unwrap());
+        // Nothing noted: the latest stays.
+        assert_eq!(s.note_changes(&db.id, &[]).unwrap(), last);
+        // They go with the database.
+        s.delete_database(&db.id).unwrap();
+        assert_eq!(s.latest_change(&db.id).unwrap(), 0);
+        drop(s);
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.user_by_name("a").unwrap().unwrap().0, a);
     }
 
     #[test]

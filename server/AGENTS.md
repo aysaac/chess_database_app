@@ -12,7 +12,7 @@ architecture, data directory, API, roles and what "private" guarantees.
 | `src/main.rs` | The CLI: `serve`, `admin create/password`, `healthcheck` |
 | `src/access.rs` | Who may do what with a database (`require`) |
 | `src/auth.rs` | Sessions (cookie + CSRF), bearer tokens, login throttling, the per-user rate limit |
-| `src/store.rs` | The SQLite metadata store (schema version 2) |
+| `src/store.rs` | The SQLite metadata store (schema version 3), the journal of changed games too |
 | `src/pool.rs` | Open databases, their caches, single-writer slot, idle closing |
 | `src/listing.rs` | What a game list shows (criteria, position, deleted), cached: the games route, the export and search share it |
 | `src/jobs.rs` | `chess-jobs` jobs with their database and user, kept in the store |
@@ -56,6 +56,12 @@ none).
   `listing::compacted_since` holding the lock that reads them (make the
   list again, or stop). Changing games by ids a client sent: check the
   store's `idEpoch` holding the database's lock (`maintenance.rs`).
+- **Every change to existing games goes in the journal of changed games
+  first** (`store.note_changes`, by permanent id), holding the database's
+  lock, before chess-db writes it: edits, deleting and restoring, what
+  duplicates' kept games take. Copies on other computers follow only the
+  journal (`routes/sync.rs`); a change left out never reaches them. Games
+  appended need no note (copies take them by number).
 - Routes anyone may call without logging in go in the `anonymous` router
   (`routes/mod.rs`): they count against the client's address whatever
   credentials come with them.

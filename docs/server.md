@@ -11,12 +11,14 @@ Besides reading and imports it has: the games reaching a position (SRCH-03),
 PGN export, searches across databases (SRCH-13), deleting games, duplicates
 (DB-08) and compaction, deleting users, ownership transfers, invites and
 reset links, jobs that survive a restart, online backups, rate limits, an
-audit log, metrics and TWIC updates (NET-06).
+audit log, metrics and TWIC updates (NET-06). Since phase 2: **editing and
+adding games**, by their permanent ids, and a **journal of changed games**
+that the desktop app's offline copies follow, edits and deletions included,
+and through compactions ([Editing games, and copies kept in step](#editing-games-and-copies-kept-in-step)).
 
-Not in phase 1 (see [What's next](#whats-next)): editing games, sync with the
-desktop app, the desktop client, an offline copy of a database, parallel
-queries on one database, a web UI for players (NET-09), encrypted
-("sealed") databases.
+Not yet (see [What's next](#whats-next)): opening a server database in the
+app without a copy, parallel queries on one database, a web UI for players
+(NET-09), encrypted ("sealed") databases.
 
 ## Architecture
 
@@ -59,7 +61,7 @@ queries on one database, a web UI for players (NET-09), encrypted
 
 | Path | What |
 |---|---|
-| `server.sqlite` (+ `-wal`, `-shm`) | Users (Argon2id password hashes, e-mail addresses), sessions, API tokens, invites and reset links (their SHA-256 only), databases (name, owner, visibility, quota, id epoch), shares and transfers, jobs, the audit log, settings and the TWIC issues taken. Schema version 2 (from 1, migrated at start) |
+| `server.sqlite` (+ `-wal`, `-shm`) | Users (Argon2id password hashes, e-mail addresses), sessions, API tokens, invites and reset links (their SHA-256 only), databases (name, owner, visibility, quota, id epoch), shares and transfers, jobs, the audit log, settings, the TWIC issues taken and the journal of changed games (permanent ids and numbers only, never content). Schema version 3 (from 1 or 2, migrated at start) |
 | `dbs/<id>.chessdb/` | The databases. `<id>` is 32 random hex digits; the API never takes a path, only an id, checked to be exactly that before a path is built |
 | `import/` | Files the admin imports from: PGN, or ChessBase databases (the `.cbh` with its `.cbg`, `.cbp`, `.cbt`, `.cbc`) |
 | `tmp/` | Uploads being received or imported; one stays until its import ends, also across a restart (the import goes on), and the others are deleted at start |
@@ -312,7 +314,7 @@ desktop client can share the types later.
 |---|---|---|
 | `GET /api/databases` | | The databases one can read, with one's `access` (`read`, `write`, `owner`) |
 | `POST /api/databases` | | `{name, visibility?}`: a new empty database, private unless asked |
-| `GET /api/databases/{id}` | read | Its info and position index status |
+| `GET /api/databases/{id}` | read | Its info, position index status and `latestChange` (its journal's latest change) |
 | `PATCH /api/databases/{id}` | owner | `{name?, visibility?}` |
 | `DELETE /api/databases/{id}?confirm=NAME` | owner | Deletes it for good |
 | `GET /api/databases/{id}/shares` | owner | `[{username, access}]` |
@@ -321,13 +323,19 @@ desktop client can share the types later.
 | `PUT /api/databases/{id}/transfer` | owner | `{username}`: offers the database to that user (replacing an earlier offer) |
 | `DELETE /api/databases/{id}/transfer` | owner | Withdraws the offer |
 | `GET /api/databases/{id}/games` | read | A page of the game list (below) |
-| `GET /api/databases/{id}/games/{n}` | read | One game: `row`, `headers`, `pgn`, `startFen`, `notation` (the move tree with comments, NAGs, clocks and evals), `opening` |
+| `GET /api/databases/{id}/games/{n}` | read | One game: `uid` (its permanent id), `row`, `headers`, `pgn`, `startFen`, `notation` (the move tree with comments, NAGs, clocks and evals), `opening` |
+| `POST /api/databases/{id}/games` | write | `{pgn}`: adds one game at the end → `201 {id, uid, seq}`. 409 while an import or index build writes to it, 507 at the quota |
+| `GET /api/databases/{id}/by-uid/{uid}` | read | One game by permanent id, as above (`id` its number now); 404 `noSuchGame` once a compaction removed it |
+| `PUT /api/databases/{id}/by-uid/{uid}` | write | `{pgn, deleted?, baseSeq?}`: replaces the game (one game's PGN) and, if given, its deleted flag → `{id, uid, seq}`. With `baseSeq`, refused (409 `changedOnServer`) when the game changed after that change of the journal |
 | `GET /api/databases/{id}/export.pgn` | read | The games the game list shows for the same criteria (all but the deleted ones by default; `fen=`, `sort=`… as below), in its order, as one PGN file (`Content-Disposition: attachment`). Streamed as it's written, never held in memory; `202 {"kind":"job"}` like the list while the position index is far behind. `X-Id-Epoch` says the numbering it used. For a copy kept on another computer (the app's "From my server"): `idFrom=`, `idTo=` take only the games numbered in that range (in id order: no `sort`), and `X-Next-Id` says the first number it didn't cover; `idEpoch=` is refused (409 `staleIds`) once a compaction numbered the games again |
 | `GET /api/databases/{id}/tree?fen=` | read | The position tree with Hot, best players and top games (`chess_db::reference_overview`); the start when no FEN |
 | `GET /api/databases/{id}/lines?fen=` | read | The main line and lines (`reference_lines`): `{"kind":"ready","lines":…}`, or from 50,000 games `{"kind":"job","job":N,"games":…}`: ask again when the job is done |
 | `POST /api/databases/{id}/import?filename=` | write | The request body is a PGN file (at most `CHESS_SERVER_MAX_UPLOAD_MB`) → `202 {"job": N}` |
 | `POST /api/databases/{id}/import-file` | write, admin | `{path}`: a `.pgn` or `.cbh` under `import/` → `202 {"job": N}` |
-| `POST /api/databases/{id}/deleted` | write | `{games: [ids], deleted: true\|false, idEpoch?}`: marks games as deleted or restores them (DB-06), at most 100,000 at once → `{changed}` |
+| `POST /api/databases/{id}/deleted` | write | `{games: [ids], uids: [permanent ids], deleted: true\|false, idEpoch?}`: marks games as deleted or restores them (DB-06), at most 100,000 at once → `{changed}` |
+| `GET /api/databases/{id}/sync/games` | read | `?idFrom=&idTo=&idEpoch=`: a part of a copy, the games numbered in that range (2,000 at most, deleted ones too) → `{epoch, next, seq, games: [{id, uid, deleted, pgn}]}`; `idEpoch` refused (409 `staleIds`) after a compaction |
+| `GET /api/databases/{id}/sync/changes` | read | `?since=&limit=`: the games changed (edited, deleted, restored) after the journal's change `since`, each once in its state now (`game: null` once compacted away), 500 (at most 2,000) at a time → `{latest, more, epoch, games: [{uid, seq, game}]}` |
+| `POST /api/databases/{id}/sync/locate` | read | `{uids}` (at most 1,000) → `{epoch, ids}`: where those games are numbered now (`null`: not there) |
 | `POST /api/databases/{id}/duplicates` | read | `{fuzzy?}`: looks for duplicate games (DB-08) in a job; its `duplicates` report (for who started it and the owner) counts the groups and copies |
 | `GET /api/databases/{id}/duplicates/{job}` | read, the report's | `?offset=&limit=`: the groups found, `{keep, remove: [ids], exact}` each |
 | `POST /api/databases/{id}/duplicates/{job}/delete` | write, the report's | Marks the copies as deleted, after giving each kept game what it lacked of them (as the app's Find duplicates does) → `{marked, filled, left}`. Refused (409) once the database changed since the search |
@@ -390,6 +398,47 @@ curl -H "Authorization: Bearer $TOKEN" --data-binary @twic1600.pgn \
 | `POST /api/admin/twic/check` | Checks for new TWIC issues now, as a job |
 | `GET /api/admin/backups`, `POST /api/admin/backups` | The backups (names, dates, sizes; never their content), and making one now as a job |
 | `GET /api/admin/audit` | The audit log, newest first: `?action=` (an action, or a group such as `login`), `who=` (a username, as who did it or to whom), `from=`, `to=` (Unix seconds), `offset=`, `limit=` (100, at most 500) |
+
+## Editing games, and copies kept in step
+
+Games have **permanent ids** (`chess_db::GameUid`, `docs/file-format.md` ›
+Permanent game ids): unlike their numbers, they stay through edits,
+deletion and compaction. Every route that edits takes them
+(`server/src/routes/sync.rs`).
+
+- **Editing** (write access): `PUT …/by-uid/{uid}` replaces a game from one
+  game's PGN (moves, variations, comments, headers), and its deleted flag if
+  asked; `POST …/games` adds one. A replace can say which change of the
+  journal the client's copy of the game is at (`baseSeq`): if the game
+  changed on the server after it, it's refused (409 `changedOnServer`), so
+  nobody's edit is overwritten unseen. Adding is refused while an import
+  or index build writes (an import going on after a restart counts its
+  games); both are refused at the quota (507). The audit log says a game
+  was edited or added, never which or what.
+- **The journal of changed games** (`game_changes` in the store): each game
+  edited, marked as deleted or restored (the `deleted` route, deleting
+  duplicates' copies and what their kept games took of them) gets a number
+  there, noted **holding the database's lock, before the change**. A crash
+  between the two leaves a note of a change that didn't happen (a client
+  reads that game again), never a change without a note. Games added
+  (imports, TWIC, `POST games`) aren't noted: they come at the end of the
+  numbering, and copies take them by number. Numbers are never reused
+  (SQLite `AUTOINCREMENT`); the journal goes with its database, and isn't
+  pruned yet (it grows with edits only, 40 bytes or so each).
+- **A copy** on another computer (the app's offline copy, NET-14) takes the
+  games by number a part at a time with their permanent ids
+  (`sync/games`), noting the journal's `seq` of its first part; then each
+  update takes the games changed since (`sync/changes`, each once in its
+  state now) and the games added since (by number again). Both routes read
+  the journal and the games holding the database's lock, so any change is
+  either in their answer or after the number they give: none is missed.
+  A compaction renumbers the games (the old `idEpoch` is refused): the
+  copy asks where the last games it took are now (`sync/locate`) and goes
+  on from there, and the games the compaction removed (deleted ones) come
+  as `game: null` in the journal.
+- **Restoring a backup** takes the journal back to the backup's time too:
+  copies made after it may have numbers ahead of it, and miss changes made
+  since the restore until their games change again. Make such copies again.
 
 ## Backups
 
@@ -472,7 +521,7 @@ given a quota, deleted; passwords changed, set by the admin, reset links
 made, used or e-mailed; invites made and withdrawn; API tokens made and
 deleted; databases made, renamed, deleted, made private, shared or
 server-wide, given a quota; shares; transfers offered, withdrawn,
-accepted, declined; imports started, exports, games deleted or restored,
+accepted, declined; imports started, exports, games edited, added, deleted or restored,
 duplicates deleted, compactions, backups, TWIC updates; jobs cancelled.
 The admin's Audit log page shows them, with filters. Entries are kept
 `CHESS_SERVER_AUDIT_DAYS` (365 by default).
@@ -518,9 +567,9 @@ format is a few lines of text, not worth a crate.
   (409, `staleIds`) after a compaction. The compaction bumps it holding
   the database, before it renumbers anything (one that fails or is
   cancelled bumps it too), and those requests check it holding the
-  database, so one waiting for a compaction is refused after it. Nothing
-  syncs with the server yet, so nothing else holds ids; permanent game ids
-  are a later feature. While a compaction runs,
+  database, so one waiting for a compaction is refused after it. Routes
+  can name games by permanent id instead, which a compaction keeps
+  ([Editing games, and copies kept in step](#editing-games-and-copies-kept-in-step)). While a compaction runs,
   the database answers `503 busy` with `Retry-After` (it holds the
   database for the whole run); its search, sort and lines caches go with
   the generation, and the position index is built again after it.

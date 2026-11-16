@@ -34,6 +34,7 @@ pub fn dto(state: &AppState, meta: DbMeta, access: Access) -> DatabaseDto {
         created_at: meta.created_at,
         id_epoch: meta.id_epoch,
         index: None,
+        latest_change: None,
     }
 }
 
@@ -108,7 +109,8 @@ pub async fn info(
             }
         };
         drop(open);
-        Ok(Json(DatabaseDto { index: Some(index), ..dto(&state, meta, access) }))
+        let latest_change = Some(state.store.latest_change(&meta.id)?);
+        Ok(Json(DatabaseDto { index: Some(index), latest_change, ..dto(&state, meta, access) }))
     })
     .await
 }
