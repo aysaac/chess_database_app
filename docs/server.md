@@ -144,7 +144,21 @@ docker compose -f compose.example.yaml exec chess-server chess-server admin crea
 ```
 
 The server itself speaks plain HTTP: don't expose port 8080 to the
-internet, only Caddy (or another proxy doing TLS). To give the admin files
+internet, only Caddy (or another proxy doing TLS).
+
+**Checked behind Caddy** (`server/deploy/check-behind-caddy.sh`, Caddy
+2.6.2, Nov 16 2026): the server and Caddy on this machine, with the
+example Caddyfile's directives and Caddy's local CA in place of Let's
+Encrypt. HTTPS, HSTS, the server's own headers passing through, Secure
+HttpOnly SameSite=Strict cookies, the Origin check against the public URL,
+an upload of 4,000 games and its import, the export compressed (the example's
+`encode` lists PGN and JSON: Caddy's defaults leave `application/x-chess-pgn`
+uncompressed), the app's own client (`chess-net`, rustls) making and
+updating a copy over HTTPS, and the client's address: a client claiming
+other addresses in `X-Forwarded-For` is still throttled as the one Caddy
+saw, and the audit log has that one. **Not checked**: a real certificate
+from Let's Encrypt for a public domain, and the container (`Dockerfile`,
+the compose example) running, which needs a Docker daemon. To give the admin files
 to import, copy them into the volume's `import/` folder
 (`docker compose cp Mega.cbh chess-server:/data/import/`, with its sibling
 files) or bind-mount a host folder there read-only (commented out in the
@@ -702,7 +716,13 @@ format is a few lines of text, not worth a crate.
 ## Limits, and what changes for many users
 
 Phase 1 is sized for a club or a team: a handful of concurrent users, a few
-million games.
+million games. `server/tests/load.rs` checks correctness with 16 users at
+once on the test server: the same reads answer the same, sixteen edits of
+one game from the same base let exactly one through each round (the others
+get `changedOnServer`), and four copies updated while twelve users edit,
+delete and add end up game for game the server's database. It measures
+nothing: how many users one database serves before they wait for each
+other is the mutex below, and hasn't been measured with many clients.
 
 - **Queries on one database run one at a time.** Each open database is one
   `Mutex<Database>`, as in the app. chess-db's long scans (header search,

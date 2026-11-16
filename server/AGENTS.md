@@ -35,6 +35,8 @@ cd server/admin && npm ci && npm run check && npm run build && npm test
 cargo run -p chess-server -- serve --data target/server-data   # 127.0.0.1:8080
 cd server/admin && npm run dev                   # the UI on 5175, /api passed to 8080
 docker build -f server/Dockerfile -t chess-server .   # from the repository root
+server/deploy/check-behind-caddy.sh              # the server behind Caddy (needs caddy): HTTPS, headers, cookies, X-Forwarded-For
+CHESS_SERVER_PASSWORD=… cargo run -p chess-net --example server_copy -- URL USER DB_ID copy.chessdb   # the app's copy, by hand
 ```
 
 Rebuild the UI before the server when the UI changed: `build.rs` embeds

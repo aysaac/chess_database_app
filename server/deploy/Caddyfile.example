@@ -3,7 +3,17 @@
 # network. Caddy sets X-Forwarded-For and X-Forwarded-Proto itself.
 
 chess.example.com {
-	encode zstd gzip
+	# Caddy compresses only some types unless told: PGN (exports) and JSON
+	# (a copy's parts of 2,000 games) are most of what this server sends.
+	encode zstd gzip {
+		match {
+			header Content-Type text/*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type application/x-chess-pgn*
+			header Content-Type image/svg+xml*
+		}
+	}
 
 	# At least the server's CHESS_SERVER_MAX_UPLOAD_MB, so the server is the
 	# one that refuses an upload too big, with its own message.
