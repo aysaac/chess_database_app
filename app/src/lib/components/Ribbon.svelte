@@ -6,7 +6,7 @@
   // one button that opens the group as a dropdown. Widths come from a hidden
   // copy of every group in each form, so choosing a form never moves the
   // live buttons around (no flicker, no ResizeObserver loop).
-  import { onMount, type Snippet } from "svelte";
+  import { onMount, untrack, type Snippet } from "svelte";
   import type { IconName } from "../icons/lucide";
   import { pasteGame, pastePosition } from "../paste";
   import { analysis } from "../stores/analysis.svelte";
@@ -15,6 +15,8 @@
   import { lichess } from "../stores/lichess.svelte";
   import { online } from "../stores/online.svelte";
   import { panels } from "../stores/panels.svelte";
+  import { studySync } from "../stores/studySync.svelte";
+  import { buttonTitle } from "../studySync";
   import { tree } from "../stores/tree.svelte";
   import BlunderCheckDialog from "./BlunderCheckDialog.svelte";
   import BoardImageMenu from "./BoardImageMenu.svelte";
@@ -33,6 +35,7 @@
   import SetupEditor from "./SetupEditor.svelte";
   import StudyExportDialog from "./StudyExportDialog.svelte";
   import StudyImportDialog from "./StudyImportDialog.svelte";
+  import StudySyncDialog from "./StudySyncDialog.svelte";
 
   let setup = $state(false);
   let libraryView = $state(false);
@@ -98,6 +101,12 @@
     observer.observe(bar);
     observer.observe(measure.firstElementChild as Element);
     return () => observer.disconnect();
+  });
+
+  // The open database's study links (NET-13), for the Sync button.
+  $effect(() => {
+    const handle = db.info?.handle ?? null;
+    untrack(() => void studySync.load(handle));
   });
 
   /** Find games in the reference database, or the open one when none is set. */
@@ -344,6 +353,16 @@
       disabled={!db.info || db.info.games === 0}
       onclick={() => (lichess.exportDialog = { ranges: null })}
     />
+    <!-- NET-13: the database kept in step with a study. -->
+    <RibbonButton
+      icon="arrow-left-right"
+      label={studySync.linked ? (studySync.pending > 0 ? `Sync (${studySync.pending})` : "Sync") : "Link to a study…"}
+      title={buttonTitle(studySync.linked, studySync.pending)}
+      {compact}
+      primary={studySync.pending > 0}
+      disabled={!db.info}
+      onclick={() => (studySync.dialog = true)}
+    />
   </div>
 {/snippet}
 
@@ -456,6 +475,10 @@
 
 {#if lichess.importDialog}
   <StudyImportDialog onClose={() => (lichess.importDialog = false)} />
+{/if}
+
+{#if studySync.dialog}
+  <StudySyncDialog onClose={() => (studySync.dialog = false)} />
 {/if}
 
 {#if lichess.exportDialog}

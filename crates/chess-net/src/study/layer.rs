@@ -573,6 +573,8 @@ pub fn normalize_for_compare(game: &Game) -> Game {
 const LAYER_VERSION: u8 = 1;
 const HAS_SETUP: u8 = 1;
 const OWN_RESULT_COMMENT: u8 = 2;
+/// A merge waits for the user: its bytes ([`super::sync`]'s) follow the nodes.
+const HAS_PENDING: u8 = 4;
 
 const F_BEFORE: u8 = 1;
 const F_AFTER: u8 = 2;
@@ -627,6 +629,13 @@ impl Layer {
     /// paths must be legal from the start (those [`local_only_layer`] makes
     /// are).
     pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_bytes_with(None)
+    }
+
+    /// The same, with the bytes of a merge waiting for the user (NET-13's
+    /// sync keeps it with the link, so that it's there exactly as long as
+    /// the link is) after the nodes.
+    pub fn to_bytes_with(&self, pending: Option<&[u8]>) -> Vec<u8> {
         let mut b = vec![LAYER_VERSION];
         let mut flags = 0;
         if self.setup.is_some() {
@@ -634,6 +643,9 @@ impl Layer {
         }
         if self.own_result_comment {
             flags |= OWN_RESULT_COMMENT;
+        }
+        if pending.is_some() {
+            flags |= HAS_PENDING;
         }
         b.push(flags);
         if let Some(fen) = &self.setup {
@@ -695,6 +707,9 @@ impl Layer {
                 }
             }
         }
+        if let Some(p) = pending {
+            put_bytes(&mut b, p);
+        }
         b
     }
 
@@ -702,13 +717,19 @@ impl Layer {
     /// newer version is refused as such; one that can't be read is
     /// `Corrupt`.
     pub fn from_bytes(bytes: &[u8]) -> Result<Layer, NetError> {
+        Ok(Layer::from_bytes_with(bytes)?.0)
+    }
+
+    /// The same, with the bytes of a merge waiting for the user if there
+    /// are ([`to_bytes_with`](Self::to_bytes_with)).
+    pub fn from_bytes_with(bytes: &[u8]) -> Result<(Layer, Option<Vec<u8>>), NetError> {
         let mut r = ByteReader::new(bytes);
         let version = r.u8()?;
         if version != LAYER_VERSION {
             return Err(NetError::Db(DbError::UnsupportedVersion(u32::from(version))));
         }
         let flags = r.u8()?;
-        if flags & !(HAS_SETUP | OWN_RESULT_COMMENT) != 0 {
+        if flags & !(HAS_SETUP | OWN_RESULT_COMMENT | HAS_PENDING) != 0 {
             return Err(bad("unknown flags"));
         }
         let setup = if flags & HAS_SETUP != 0 { Some(r.str()?) } else { None };
@@ -777,11 +798,12 @@ impl Layer {
             }
             nodes.push((MovePath(moves.clone()), x));
         }
+        let pending = if flags & HAS_PENDING != 0 { Some(r.len_bytes()?.to_vec()) } else { None };
         if !r.is_empty() {
             return Err(bad("bytes after its end"));
         }
         let own_result_comment = flags & OWN_RESULT_COMMENT != 0;
-        Ok(Layer { setup, tags: TagExtras { eco, annotator, extra }, nodes, own_result_comment })
+        Ok((Layer { setup, tags: TagExtras { eco, annotator, extra }, nodes, own_result_comment }, pending))
     }
 }
 
