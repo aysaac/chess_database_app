@@ -17,6 +17,13 @@ test("the preview in one line", () => {
   );
   assert.equal(summary([{ step: "newHere", count: 1 }]), "1 new game here to send");
   assert.equal(summary([{ step: "conflict", count: 2 }]), "2 for you to decide");
+  assert.equal(
+    summary([
+      { step: "pending", count: 1 },
+      { step: "unchanged", count: 3 },
+    ]),
+    "1 waiting for you",
+  );
   assert.equal(countOf([{ step: "pull", count: 3 }], "pull"), 3);
   assert.equal(countOf([], "pull"), 0);
 });

@@ -21,6 +21,10 @@ const SUMMARY: [SyncStepDto, (n: number) => string][] = [
   ["conflict", (n) => `${n.toLocaleString("en-US")} for you to decide`],
   ["removedThere", (n) => `${games(n, "chapter", "chapters")} removed on Lichess`],
   ["deleteChapter", (n) => `${games(n, "chapter", "chapters")} to remove on Lichess`],
+  ["pending", (n) => `${n.toLocaleString("en-US")} waiting for you`],
+  ["keptHere", (n) => `${n.toLocaleString("en-US")} changed here, kept here (following only)`],
+  ["open", (n) => `${games(n)} open in a tab, left until closed`],
+  ["noRoom", (n) => `${games(n)} that don't fit in the study`],
 ];
 
 /**

@@ -167,8 +167,21 @@ fn preview_of(state: &AppState, plan: &Plan) -> SyncPreviewDto {
         .take(MOST_ITEMS)
         .map(|i| SyncItemDto { name: i.name.clone(), step: i.step.into(), note: i.note.clone() })
         .collect();
-    let nothing =
-        plan.items.iter().all(|i| matches!(i.step, Step::Unchanged | Step::NotSent | Step::DeletedHere));
+    // Nothing a confirm would do: what's left waits for the user, a tab,
+    // room in the study, or stays here.
+    let idle = |s: Step| {
+        matches!(
+            s,
+            Step::Unchanged
+                | Step::NotSent
+                | Step::DeletedHere
+                | Step::Pending
+                | Step::KeptHere
+                | Step::Open
+                | Step::NoRoom
+        )
+    };
+    let nothing = plan.items.iter().all(|i| idle(i.step));
     SyncPreviewDto {
         study: plan.study.clone(),
         name: plan.name.clone(),
@@ -252,7 +265,15 @@ fn describe(o: &Outcome) -> String {
         msg.push_str(&format!(". {} left as they were (the dialog says why)", games(o.skipped.len())));
     }
     if let Some(e) = &o.stopped {
-        msg = format!("The sync stopped: {e}. {msg}");
+        msg = match (parts.is_empty() && waiting == 0, o.made) {
+            // Nothing done but the study: say where it is.
+            (true, true) => format!(
+                "The sync stopped: {e}. The study {} was made on Lichess: link to it with One of your studies",
+                o.name
+            ),
+            (true, false) => format!("The sync stopped: {e}. Nothing changed; Sync again"),
+            (false, _) => format!("The sync stopped: {e}. Before that: {msg}"),
+        };
     }
     msg
 }
@@ -470,8 +491,19 @@ mod tests {
         let msg = describe(&o);
         assert!(msg.starts_with("The sync stopped: Lichess has had too many requests"), "{msg}");
         assert!(
-            msg.ends_with("Synced with Openings, a new study on Lichess: 1 game sent as new chapter"),
+            msg.ends_with(
+                "Before that: Synced with Openings, a new study on Lichess: 1 game sent as new chapter"
+            ),
             "{msg}"
         );
+        // Stopped with only the study made: where it is.
+        o.done.clear();
+        let msg = describe(&o);
+        assert!(
+            msg.ends_with("The study Openings was made on Lichess: link to it with One of your studies"),
+            "{msg}"
+        );
+        o.made = false;
+        assert!(describe(&o).ends_with("Nothing changed; Sync again"));
     }
 }
