@@ -13,9 +13,16 @@
 //! [`roundtrip`] is the check NET-13 needs first: what Lichess keeps of
 //! annotated games sent to a study and fetched back, and of a chapter's
 //! moves replaced in place ([`replace_chapter_moves`]).
+//! [`layer`] splits a linked game (NET-13) into what Lichess holds of it and
+//! what only the database does, from what that check found; [`merge`] is
+//! the three-way merge of a game changed on both sides, and [`sync`] keeps
+//! a database in step with a study (the Sync button).
 
 mod export;
+pub mod layer;
+pub mod merge;
 pub mod roundtrip;
+pub mod sync;
 
 pub use export::*;
 

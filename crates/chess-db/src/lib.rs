@@ -3,7 +3,9 @@
 //! databases and sorted game lists.
 
 pub mod blob;
-mod bytes;
+/// The little-endian, varint and string encoding of the stored files, for
+/// other crates' blobs kept in a database (NET-13's local-only layer).
+pub mod bytes;
 pub mod cb;
 mod copy;
 pub mod cross;

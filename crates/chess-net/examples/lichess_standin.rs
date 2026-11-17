@@ -23,6 +23,13 @@
 //! ```
 //!
 //! It makes a study too, so a stand-in it ran against is at the daily limit.
+//!
+//! For the Sync button's smoke run (NET-13, `scripts/smoke/study-sync.js`),
+//! edits made on Lichess by a collaborator: the page can't reach the
+//! stand-in (the app's CSP), so it asks the app for the studies of a user
+//! named for the edit, and the stand-in makes it in SmokeUser's newest
+//! study: `SmokeEditFirst` changes its first chapter's first comment,
+//! `SmokeEditSecond` its second chapter's.
 
 #[path = "../tests/standin/mod.rs"]
 mod standin;
@@ -51,7 +58,28 @@ fn main() {
         let requests = server.requests();
         for r in &requests[seen..] {
             println!("{r}");
+            for (user, nth) in [("SmokeEditFirst", 0), ("SmokeEditSecond", 1)] {
+                if r.contains(&format!("/api/study/by/{user}")) {
+                    edit_newest(&server, nth);
+                }
+            }
         }
         seen = requests.len();
     }
+}
+
+/// A collaborator's edit on Lichess: the first comment of chapter `nth` of
+/// SmokeUser's newest study gets " (edited on Lichess)".
+fn edit_newest(server: &standin::Lichess, nth: usize) {
+    let Some(study) = server.studies_of("SmokeUser").last().cloned() else { return };
+    let Some((chapter, _)) = study.chapters.get(nth) else { return };
+    server.edit_chapter(&study.id, chapter, |pgn| {
+        let (tags, moves) = pgn.split_once("\n\n").unwrap_or((pgn, ""));
+        let moves = match moves.find('}') {
+            Some(at) => format!("{} (edited on Lichess){}", &moves[..at], &moves[at..]),
+            None => format!("{{ Edited on Lichess }} {moves}"),
+        };
+        format!("{tags}\n\n{moves}")
+    });
+    println!("edited chapter {chapter} of {}", study.id);
 }

@@ -3,6 +3,8 @@
 
 /// Lichess: the login, studies in and out (NET-11, IO-10, NET-12).
 pub mod lichess;
+/// A database kept in step with a Lichess study (NET-13, the Sync button).
+pub mod study_sync;
 /// Databases kept up to date, and the server sign-in (NET-01, IO-10, NET-03).
 pub mod sync;
 

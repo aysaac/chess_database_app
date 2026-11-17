@@ -17,7 +17,18 @@
 //!   Bodies over 512 KiB get a 413.
 //! - `POST /api/study/{id}/{chapter}/moves` (NET-13) replaces a chapter's
 //!   moves with those of the `pgn` field and answers 204; the chapter keeps
-//!   its id and tags, whatever tags the PGN has.
+//!   its id and tags, whatever tags the PGN has. `…/{chapter}/tags` sets the
+//!   tags of its `pgn` field (an empty value removes one, but a Date, which
+//!   stays as Lichess's does), and `DELETE …/{chapter}` removes a chapter
+//!   (the last one makes way for an empty one), both 204.
+//! - With `fills`, a chapter gets what lichess.org fills in (seen there,
+//!   2026-11-16): an Event of "{study}: Chapter {n}" where it has none (or
+//!   `?`), a Date where it has none, no `?` Site, Round, White or Black, and
+//!   its own Annotator.
+//! - `stale` serves the next whole-study exports from a copy made when it
+//!   was set ([`Lichess::serve_stale`]), as lichess.org's cache of a public
+//!   study's export does for about 10 seconds. A failed request
+//!   ([`State::fail`]) with a 429 says `Retry-After: retry_after` if set.
 //! - It keeps what it's sent as it is, unless `rewrite` says otherwise: a
 //!   function every game's PGN goes through on its way in (`import-pgn`,
 //!   `moves`), to stand for Lichess changing or dropping things. A game it
@@ -88,6 +99,12 @@ pub struct State {
     /// `import-pgn` with `initial=true` leaves a new study's empty first
     /// chapter where it is.
     pub keep_empty_first: bool,
+    /// Chapters get what lichess.org fills in (see the module's comment).
+    pub fills: bool,
+    /// (study, its copy, how many more exports serve it).
+    pub stale: Option<(String, Study, usize)>,
+    /// The `Retry-After` of a 429 from `fail`.
+    pub retry_after: Option<u64>,
     codes: HashMap<String, Grant>,
     next: u64,
     clock: i64,
@@ -157,7 +174,7 @@ impl Lichess {
         };
         for pgn in chapters {
             let ch = st.next_id("ch");
-            study.chapters.push((ch.clone(), tagged(pgn, &self.url, &study, &ch)));
+            study.chapters.push((ch.clone(), tagged(pgn, &self.url, &study, &ch, st.fills)));
         }
         st.studies.push(study);
     }
@@ -173,6 +190,34 @@ impl Lichess {
     /// The studies of `owner`, oldest first.
     pub fn studies_of(&self, owner: &str) -> Vec<Study> {
         self.state.lock().unwrap().studies.iter().filter(|s| s.owner == owner).cloned().collect()
+    }
+
+    /// An edit made on Lichess (by a collaborator, say): chapter `chapter`'s
+    /// PGN becomes what `f` makes of it.
+    pub fn edit_chapter(&self, study: &str, chapter: &str, f: impl FnOnce(&str) -> String) {
+        let mut st = self.state.lock().unwrap();
+        let version = st.tick();
+        let s = st.studies.iter_mut().find(|s| s.id == study).expect("the study");
+        let (_, pgn) = s.chapters.iter_mut().find(|(c, _)| c == chapter).expect("the chapter");
+        *pgn = f(pgn);
+        s.version = version;
+    }
+
+    /// A chapter removed on Lichess.
+    pub fn remove_chapter(&self, study: &str, chapter: &str) {
+        let mut st = self.state.lock().unwrap();
+        let version = st.tick();
+        let s = st.studies.iter_mut().find(|s| s.id == study).expect("the study");
+        s.chapters.retain(|(c, _)| c != chapter);
+        s.version = version;
+    }
+
+    /// The next `n` exports of `study` show it as it is now, whatever
+    /// changes meanwhile.
+    pub fn serve_stale(&self, study: &str, n: usize) {
+        let mut st = self.state.lock().unwrap();
+        let copy = st.study(study).cloned().expect("the study");
+        st.stale = Some((study.to_owned(), copy, n));
     }
 }
 
@@ -192,21 +237,39 @@ fn split_tags(pgn: &str) -> (Vec<String>, String) {
     (tags, moves)
 }
 
+/// A tag line's value, if it's `name`'s.
+fn tag_line_value(line: &str, name: &str) -> Option<String> {
+    let rest = line.strip_prefix('[')?.strip_prefix(name)?;
+    let rest = rest.strip_prefix(' ')?.trim_start().strip_prefix('"')?;
+    Some(rest.trim_end_matches(']').trim_end_matches('"').to_owned())
+}
+
 /// A chapter's PGN as the export writes it: the game's tags without the
-/// study ones, then the study's.
-fn tagged(pgn: &str, base: &str, study: &Study, chapter: &str) -> String {
+/// study ones, then the study's. With `fills`, what lichess.org fills in.
+fn tagged(pgn: &str, base: &str, study: &Study, chapter: &str, fills: bool) -> String {
     let (mut tags, moves) = split_tags(pgn);
-    let value = |name: &str| {
-        tags.iter().find_map(|t| {
-            let rest = t.strip_prefix('[')?.strip_prefix(name)?.trim_start().strip_prefix('"')?;
-            Some(rest.trim_end_matches(']').trim_end_matches('"').to_owned())
-        })
-    };
-    let name = match (value("White"), value("Black")) {
+    let value = |tags: &[String], name: &str| tags.iter().find_map(|t| tag_line_value(t, name));
+    if fills {
+        let n = study.chapters.len() + 1 + usize::from(study.empty_first);
+        let unknown = |v: Option<String>| v.is_none_or(|v| v.trim().is_empty() || v == "?");
+        if unknown(value(&tags, "Event")) {
+            tags.retain(|t| tag_line_value(t, "Event").is_none());
+            tags.insert(0, format!("[Event \"{}: Chapter {n}\"]", study.name));
+        }
+        if value(&tags, "Date").is_none() {
+            tags.insert(1, "[Date \"2026.11.17\"]".into());
+        }
+        for name in ["Site", "Round", "White", "Black"] {
+            tags.retain(|t| tag_line_value(t, name).is_none_or(|v| v != "?"));
+        }
+        tags.retain(|t| tag_line_value(t, "Annotator").is_none());
+        tags.push(format!("[Annotator \"https://lichess.org/@/{}\"]", study.owner.to_lowercase()));
+    }
+    let name = match (value(&tags, "White"), value(&tags, "Black")) {
         (Some(w), Some(b)) => format!("{w} - {b}"),
-        _ => value("Event").unwrap_or_else(|| "Chapter".into()),
+        _ => value(&tags, "Event").unwrap_or_else(|| "Chapter".into()),
     };
-    let orientation = value("Orientation").unwrap_or_else(|| "white".into());
+    let orientation = value(&tags, "Orientation").unwrap_or_else(|| "white".into());
     tags.retain(|t| {
         !["[StudyName ", "[ChapterName ", "[ChapterURL ", "[Orientation "].iter().any(|p| t.starts_with(p))
     });
@@ -322,7 +385,13 @@ fn serve(stream: TcpStream, state: &Mutex<State>, base: &str) {
     };
     let r = match failed {
         _ if len > 512 << 10 => reply(413, "Request Entity Too Large"),
-        Some(status) => json_reply(status, json!({ "error": "the stand-in failed this request" })),
+        Some(status) => {
+            let mut r = json_reply(status, json!({ "error": "the stand-in failed this request" }));
+            if let Some(secs) = state.lock().unwrap().retry_after.filter(|_| status == 429) {
+                r.headers.push(("Retry-After".into(), secs.to_string()));
+            }
+            r
+        }
         None => route(&req, state, base),
     };
     {
@@ -465,6 +534,14 @@ fn route(req: &Request, state: &Mutex<State>, base: &str) -> Reply {
                     r
                 }
                 None => {
+                    // The cache's copy, while it lasts.
+                    let study = match &mut st.stale {
+                        Some((sid, copy, n)) if sid == id && *n > 0 => {
+                            *n -= 1;
+                            copy.clone()
+                        }
+                        _ => study,
+                    };
                     let modified = http_date(study.version);
                     if req.headers.get("if-modified-since") == Some(&modified) {
                         return Reply { status: 304, headers: Vec::new(), body: String::new() };
@@ -543,6 +620,7 @@ fn route(req: &Request, state: &Mutex<State>, base: &str) -> Reply {
             };
             let initial = f.get("initial").map(String::as_str) == Some("true") && !st.keep_empty_first;
             let version = st.tick();
+            let fills = st.fills;
             let mut ids = Vec::new();
             for g in split_games(pgn).into_iter().take(64) {
                 let g = st.rewrite.map_or_else(|| g.to_owned(), |r| r(g));
@@ -569,7 +647,7 @@ fn route(req: &Request, state: &Mutex<State>, base: &str) -> Reply {
                     error = Some("Too many chapters".to_owned());
                     break;
                 }
-                let text = tagged(&g, base, study, &ch);
+                let text = tagged(&g, base, study, &ch, fills);
                 made.push(json!({ "id": ch, "name": "chapter", "players": [], "status": "*" }));
                 study.chapters.push((ch, text));
             }
@@ -602,6 +680,70 @@ fn route(req: &Request, state: &Mutex<State>, base: &str) -> Reply {
             let (tags, _) = split_tags(text);
             let (_, moves) = split_tags(&pgn);
             *text = format!("{}\n\n{}", tags.join("\n"), moves.trim());
+            study.version = version;
+            reply(204, "")
+        }
+        ("POST", ["api", "study", id, chapter, "tags"]) => {
+            let Some((user, _)) = who.clone() else {
+                return json_reply(401, json!({ "error": "No such token" }));
+            };
+            if !can("study:write") {
+                return json_reply(403, json!({ "error": "Missing scope" }));
+            }
+            let f = req.form();
+            let Some(pgn) = f.get("pgn").filter(|p| !p.trim().is_empty()) else {
+                return json_reply(400, json!({ "error": { "pgn": ["This field is required"] } }));
+            };
+            let (sent, _) = split_tags(pgn);
+            let version = st.tick();
+            let Some(study) = st.studies.iter_mut().find(|s| s.id == *id && s.owner == user) else {
+                return reply(404, "<html>");
+            };
+            let Some((_, text)) = study.chapters.iter_mut().find(|(c, _)| c == chapter) else {
+                return reply(404, "<html>");
+            };
+            let (mut tags, moves) = split_tags(text);
+            for line in sent {
+                let Some(name) = line.strip_prefix('[').and_then(|l| l.split(' ').next()).map(str::to_owned)
+                else {
+                    continue;
+                };
+                let value = tag_line_value(&line, &name).unwrap_or_default();
+                let at = tags.iter().position(|t| tag_line_value(t, &name).is_some());
+                match (at, value.is_empty()) {
+                    // Lichess keeps a Date.
+                    (Some(_), true) if name == "Date" => {}
+                    (Some(i), true) => {
+                        tags.remove(i);
+                    }
+                    (Some(i), false) => tags[i] = line.clone(),
+                    (None, false) => tags.insert(tags.len().saturating_sub(4), line.clone()),
+                    (None, true) => {}
+                }
+            }
+            *text = format!("{}\n\n{}", tags.join("\n"), moves.trim());
+            study.version = version;
+            reply(204, "")
+        }
+        ("DELETE", ["api", "study", id, chapter]) => {
+            let Some((user, _)) = who.clone() else {
+                return json_reply(401, json!({ "error": "No such token" }));
+            };
+            if !can("study:write") {
+                return json_reply(403, json!({ "error": "Missing scope" }));
+            }
+            let version = st.tick();
+            let Some(study) = st.studies.iter_mut().find(|s| s.id == *id && s.owner == user) else {
+                return reply(404, "<html>");
+            };
+            let before = study.chapters.len();
+            study.chapters.retain(|(c, _)| c != chapter);
+            if study.chapters.len() == before {
+                return reply(404, "<html>");
+            }
+            if study.chapters.is_empty() {
+                study.empty_first = true;
+            }
             study.version = version;
             reply(204, "")
         }

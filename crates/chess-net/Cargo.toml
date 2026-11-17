@@ -27,3 +27,5 @@ getrandom = "0.3"
 
 [dev-dependencies]
 tempfile.workspace = true
+# NET-13's local-only layer: its round trips.
+proptest.workspace = true

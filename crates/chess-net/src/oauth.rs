@@ -338,6 +338,24 @@ pub fn account(client: &Client, token: &Token, stop: &dyn Fn() -> bool) -> Resul
 /// A personal access token pasted in: whether Lichess knows it, that it can
 /// read and write studies, and who it's for.
 pub fn check_token(client: &Client, token: &Token, stop: &dyn Fn() -> bool) -> Result<Login, NetError> {
+    let (has, expires) = token_info(client, token)?;
+    let missing: Vec<&str> = SCOPES.iter().copied().filter(|s| !has.iter().any(|h| h == s)).collect();
+    if !missing.is_empty() {
+        return Err(NetError::MissingScopes(missing.join(" and ")));
+    }
+    let username = account(client, token, stop)?;
+    Ok(Login { token: token.clone(), username, expires })
+}
+
+/// The scopes Lichess says a token has (`study:read`, `study:write`…), as
+/// NET-13's sync checks them before it changes anything.
+/// [`NetError::TokenRejected`] for one it doesn't know (revoked, expired).
+pub fn token_scopes(client: &Client, token: &Token) -> Result<Vec<String>, NetError> {
+    Ok(token_info(client, token)?.0)
+}
+
+/// A token's scopes and when it expires, from `/api/token/test`.
+fn token_info(client: &Client, token: &Token) -> Result<(Vec<String>, Option<i64>), NetError> {
     #[derive(Deserialize)]
     struct Info {
         scopes: Option<String>,
@@ -358,13 +376,8 @@ pub fn check_token(client: &Client, token: &Token, stop: &dyn Fn() -> bool) -> R
         read_json(Site::Lichess, &mut resp, 1 << 16)?;
     let Some(info) = answer.remove(&token.0).flatten() else { return Err(NetError::TokenRejected) };
     let has = info.scopes.unwrap_or_default();
-    let has: Vec<&str> = has.split(',').map(str::trim).collect();
-    let missing: Vec<&str> = SCOPES.iter().copied().filter(|s| !has.contains(s)).collect();
-    if !missing.is_empty() {
-        return Err(NetError::MissingScopes(missing.join(" and ")));
-    }
-    let username = account(client, token, stop)?;
-    Ok(Login { token: token.clone(), username, expires: info.expires })
+    let has = has.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect();
+    Ok((has, info.expires))
 }
 
 /// Revokes the token: it no longer works anywhere. One Lichess doesn't know

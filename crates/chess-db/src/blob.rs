@@ -69,6 +69,13 @@ fn decode_move(pos: &Chess, index: u8) -> Result<Move, DbError> {
         .ok_or_else(|| DbError::Corrupt(format!("move index {index} out of range")))
 }
 
+/// The index a blob stores for `m`, a legal move of `pos` (see the module
+/// docs; [`move_at`] reads it back). For another crate's blob that names
+/// moves as a game blob does (NET-13's local-only layer).
+pub fn move_index(pos: &Chess, m: Move) -> u8 {
+    encode_move(pos, m)
+}
+
 /// The legal move of `pos` with this index (see the module docs), or `None`
 /// if there are fewer moves.
 pub fn move_at(pos: &Chess, index: u8) -> Option<Move> {

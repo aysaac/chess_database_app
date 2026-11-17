@@ -14,6 +14,7 @@ pub mod onboarding;
 pub mod online;
 pub mod reference;
 pub mod settings;
+pub mod study_sync;
 pub mod sync;
 pub mod tree;
 pub mod window;

@@ -19,6 +19,7 @@
 //! `chess_net::oauth::approve_in_background` does), `none` opens nothing.
 //! A smoke run (`CHESSDB_SMOKE`) never opens a real browser.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -28,6 +29,7 @@ use chess_net::{Client, Login, Token};
 use keyring_core::{CredentialStore, Entry};
 
 use crate::dto::lichess::{LichessAccountDto, StudyExportReportDto};
+use crate::dto::study_sync::SyncReportDto;
 use crate::error::{AppError, ErrorCode};
 use crate::settings::LichessUser;
 use crate::state::AppState;
@@ -65,6 +67,11 @@ pub struct Lichess {
     pub looked_up: Mutex<Option<LookedUp>>,
     /// What the last export to studies (NET-12) did.
     pub export_report: Mutex<Option<StudyExportReportDto>>,
+    /// The sync each database's Sync dialog previewed last (NET-13), to
+    /// apply on its confirm, by handle.
+    pub sync_plans: Mutex<HashMap<u32, chess_net::study::sync::Plan>>,
+    /// What the last sync of each database did, by handle.
+    pub sync_reports: Mutex<HashMap<u32, SyncReportDto>>,
 }
 
 impl Lichess {

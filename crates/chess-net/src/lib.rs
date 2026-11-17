@@ -12,7 +12,8 @@
 //! Lichess studies too: logging in (NET-11, [`oauth`]), a study's chapters
 //! into a database and games out to studies (IO-10, NET-12, [`study`]), and
 //! the check NET-13 needs first: what Lichess keeps of annotated games
-//! ([`study::roundtrip`], run by `examples/study_roundtrip.rs`).
+//! ([`study::roundtrip`], run by `examples/study_roundtrip.rs`), and from it
+//! what a linked game holds on each side ([`study::layer`]).
 //! And the self-hosted server (NET-03, [`server`]): signing in, its
 //! databases, and a local copy of one kept up to date.
 
@@ -176,6 +177,15 @@ pub enum NetError {
     StudyFull { name: String, room: usize },
     #[error("Lichess refused the games: {0}")]
     Refused(String),
+    /// NET-13: a database kept in step with a study.
+    #[error(
+        "log in to Lichess first: keeping a study in step both ways sends your changes to it with your login"
+    )]
+    SyncNeedsLogin,
+    #[error(
+        "this database has {games} games that aren't in the study, and a study holds 64 chapters. Sync a database of the study's games (Import study… makes one), or send these with Send to study…"
+    )]
+    TooManyForStudy { games: usize },
     /// NET-03: the self-hosted server.
     #[error(
         "\"{0}\" isn't a server's address. Type one like chess.example.com, or http://192.168.1.20:8080 for one without HTTPS"
