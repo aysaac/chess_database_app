@@ -236,10 +236,11 @@
       const done = await jobs.waitFor(id);
       if (done.state === "done") {
         resolving = null;
-        outcome = { ok: true, message: done.message };
         await Promise.all([studySync.reload(), db.refresh()]);
+        // What's left to sync, with what the answer did.
         const l = studySync.linked;
-        if (l && phase !== "applying") void look({ kind: "study", study: l.study, mode: l.mode });
+        if (l && phase !== "applying") await look({ kind: "study", study: l.study, mode: l.mode });
+        outcome = { ok: true, message: done.message };
       } else {
         resolveError = done.state === "cancelled" ? "Stopped." : (done.error ?? "");
         // It may have learnt Lichess's newer version: show it.

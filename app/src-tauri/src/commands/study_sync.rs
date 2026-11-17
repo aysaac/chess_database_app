@@ -234,12 +234,12 @@ fn describe(o: &Outcome) -> String {
         parts.push(format!("{} removed on Lichess", chapters(n(Step::DeleteChapter))));
     }
     let what = if o.made { format!("{}, a new study on Lichess", o.name) } else { o.name.clone() };
-    let mut msg = if parts.is_empty() {
-        format!("{what} and this database were in step already")
-    } else {
-        format!("Synced with {what}: {}", parts.join(", "))
-    };
     let waiting = n(Step::Conflict);
+    let mut msg = match (parts.is_empty(), waiting) {
+        (true, 0) => format!("{what} and this database were in step already"),
+        (true, _) => format!("Synced with {what}"),
+        (false, _) => format!("Synced with {what}: {}", parts.join(", ")),
+    };
     if waiting > 0 {
         let verb = if waiting == 1 { "waits" } else { "wait" };
         msg.push_str(&format!(
@@ -449,6 +449,12 @@ mod tests {
     fn describes_a_sync() {
         let mut o = Outcome { name: "Openings".into(), ..Outcome::default() };
         assert_eq!(describe(&o), "Openings and this database were in step already");
+        o.done.insert(Step::Conflict, 2);
+        assert_eq!(
+            describe(&o),
+            "Synced with Openings. 2 games wait for you: both sides changed (Sync shows them)"
+        );
+        o.done.clear();
         o.done.insert(Step::NewHere, 2);
         o.done.insert(Step::Pull, 1);
         o.done.insert(Step::Conflict, 1);
