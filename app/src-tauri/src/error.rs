@@ -104,14 +104,16 @@ impl From<chess_net::NetError> for AppError {
             NetError::Login(_)
             | NetError::TokenRejected
             | NetError::MissingScopes(_)
-            | NetError::StudyNeedsLogin => ErrorCode::Login,
+            | NetError::StudyNeedsLogin
+            | NetError::SyncNeedsLogin => ErrorCode::Login,
             NetError::NoSuchStudy => ErrorCode::NotFound,
             NetError::NotAStudyLink(_)
             | NetError::StudyForbidden
             | NetError::NotContributor
             | NetError::BadStudyName
             | NetError::TooManyStudies { .. }
-            | NetError::StudyFull { .. } => ErrorCode::InvalidInput,
+            | NetError::StudyFull { .. }
+            | NetError::TooManyForStudy { .. } => ErrorCode::InvalidInput,
             // NET-03: the self-hosted server.
             NetError::NotAServerAddress(_) | NetError::NotAChessServer(_) | NetError::ServerCompacted => {
                 ErrorCode::InvalidInput

@@ -30,7 +30,11 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> AppResult<T> + Send 
 }
 
 /// `result`, forgetting the login when Lichess says it no longer takes it.
-fn checked<T>(state: &AppState, login: Option<&Login>, result: Result<T, NetError>) -> Result<T, NetError> {
+pub(crate) fn checked<T>(
+    state: &AppState,
+    login: Option<&Login>,
+    result: Result<T, NetError>,
+) -> Result<T, NetError> {
     if let (Some(login), Err(NetError::TokenRejected)) = (login, &result) {
         lichess::forget_rejected(state, &login.token);
     }

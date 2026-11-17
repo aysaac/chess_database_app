@@ -4,6 +4,13 @@ import type { LimitPolicyDto } from "./bindings/LimitPolicyDto";
 import type { ServerAccountDto } from "./bindings/ServerAccountDto";
 import type { ServerDbDto } from "./bindings/ServerDbDto";
 import type { SyncSourceDto } from "./bindings/SyncSourceDto";
+import type { StudySyncStatusDto } from "./bindings/StudySyncStatusDto";
+import type { SyncChoiceDto } from "./bindings/SyncChoiceDto";
+import type { SyncConflictDto } from "./bindings/SyncConflictDto";
+import type { SyncModeDto } from "./bindings/SyncModeDto";
+import type { SyncPreviewDto } from "./bindings/SyncPreviewDto";
+import type { SyncReportDto } from "./bindings/SyncReportDto";
+import type { SyncTargetDto } from "./bindings/SyncTargetDto";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AnalysisDto } from "./bindings/AnalysisDto";
@@ -277,6 +284,32 @@ export const api = {
   ) => invoke<number>("send_to_study", { handle, selection, sort, target }),
   /** What the last export to studies did. */
   studyExportReport: () => invoke<StudyExportReportDto | null>("study_export_report"),
+
+  // The Sync button (NET-13): a database kept in step with a Lichess study.
+  /** The open database's links to studies (and the study a static copy came from). */
+  studySyncStatus: (handle: number) => invoke<StudySyncStatusDto>("study_sync_status", { handle }),
+  /** Works out what a sync would do, as a job; `studySyncPreview` returns it. Changes nothing. */
+  studySyncPlan: (handle: number, target: SyncTargetDto) =>
+    invoke<number>("study_sync_plan", { handle, target }),
+  /** The last plan's preview, once its job ended (null if it failed). */
+  studySyncPreview: (handle: number) => invoke<SyncPreviewDto | null>("study_sync_preview", { handle }),
+  /** Does what the preview showed, as a job; `studySyncReport` says what it did. */
+  studySyncApply: (handle: number, deleteChapters: boolean) =>
+    invoke<number>("study_sync_apply", { handle, deleteChapters }),
+  /** What the last sync of the database did. */
+  studySyncReport: (handle: number) => invoke<SyncReportDto | null>("study_sync_report", { handle }),
+  /** How the database follows a study from now on. */
+  studySyncSetMode: (handle: number, study: string, mode: SyncModeDto) =>
+    invoke<StudySyncStatusDto>("study_sync_set_mode", { handle, study, mode }),
+  /** Unlinks the database from a study: its games stay, a static copy. */
+  studySyncUnlink: (handle: number, study: string) =>
+    invoke<StudySyncStatusDto>("study_sync_unlink", { handle, study }),
+  /** A game waiting for the user: what's in conflict. */
+  studySyncConflict: (handle: number, uid: string) =>
+    invoke<SyncConflictDto | null>("study_sync_conflict", { handle, uid }),
+  /** Settles a game waiting for the user, as a job. */
+  studySyncResolve: (handle: number, uid: string, choice: SyncChoiceDto) =>
+    invoke<number>("study_sync_resolve", { handle, uid, choice }),
 
   // Databases kept up to date, and the sign-in to the self-hosted server (NET-01, IO-10, NET-03).
   /** Who is signed in to the server, or the address to offer (doesn't read the credential store). */
