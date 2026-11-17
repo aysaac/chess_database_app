@@ -403,7 +403,21 @@ fn name_of(g: &Game) -> String {
 /// What the sync sends of a game: its projection, without its study tags
 /// (they're the study's).
 fn send_pgn(g: &Game) -> String {
-    write_game(&lichess_projection(g))
+    pgn_to_send(&lichess_projection(g))
+}
+
+/// A projection's PGN as the sync sends it: its movetext on one line.
+/// Lichess's `…/moves` keeps the line breaks inside a comment that our
+/// writer's wrapping at 80 columns puts there (seen on lichess.org,
+/// 2026-11-16: "{ The⏎Italian. }"); a projection's comments have none of
+/// their own (every run of spaces and line breaks is one space), so every
+/// line break in its movetext is the writer's.
+pub fn pgn_to_send(projection: &Game) -> String {
+    let pgn = write_game(projection);
+    match pgn.split_once("\n\n") {
+        Some((tags, moves)) => format!("{tags}\n\n{}\n", moves.trim().replace('\n', " ")),
+        None => pgn,
+    }
 }
 
 fn item(uid: Option<GameUid>, chapter: Option<&str>, name: String, step: Step) -> Item {
@@ -1087,7 +1101,7 @@ pub fn apply(
                     }
                     None => ours.clone(),
                 };
-                let pgn = write_game(send);
+                let pgn = pgn_to_send(send);
                 let pushed = push_moves(client, token, &study, &chapter, &pgn, &stop)
                     .and_then(|()| push_tags(client, token, &study, &chapter, tags, &stop));
                 match pushed {
@@ -1159,7 +1173,7 @@ pub fn apply(
                                 uid: *uid,
                                 chapter: id,
                                 game: game.clone(),
-                                sent_pgn: write_game(&projection),
+                                sent_pgn: pgn_to_send(&projection),
                                 sent: projection,
                                 link: None,
                                 step: Step::NewHere,
@@ -1290,7 +1304,7 @@ fn fresh_export(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkedStudy {
     pub study: String,
-    /// Its name, from a linked game's `StudyName` (none if no game has one).
+    /// Its name, from a base snapshot's `StudyName` (none if no base has one).
     pub name: Option<String>,
     pub mode: SyncMode,
     /// Its linked games.
@@ -1319,12 +1333,12 @@ pub fn linked_studies(db: &mut Database) -> Result<Vec<LinkedStudy>, NetError> {
         let game = db.read_game(l.game)?;
         let s = &mut out[at];
         s.games += 1;
+        let Some(link) = db.link(l.uid)? else { continue };
+        // The base is Lichess's export: its StudyName is the study's name.
         if s.name.is_none() {
-            s.name = game.headers.get_extra("StudyName").filter(|n| !n.trim().is_empty()).map(str::to_owned);
+            s.name = tag_value(&link.base, "StudyName").filter(|n| !n.trim().is_empty());
         }
-        if let Some(link) = db.link(l.uid)?
-            && let Ok((_, Some(p))) = link_state(&link)
-        {
+        if let Ok((_, Some(p))) = link_state(&link) {
             s.pending.push((l.uid, l.game, name_of(&game), p.kind));
         }
     }
@@ -1539,7 +1553,7 @@ pub fn resolve(
                 uid,
                 chapter: id.clone(),
                 game: ours.clone(),
-                sent_pgn: write_game(&projection),
+                sent_pgn: pgn_to_send(&projection),
                 sent: projection,
                 link: None,
                 step: Step::NewHere,
@@ -1580,7 +1594,7 @@ pub fn resolve(
                 ));
             }
             let send = lichess_projection(&ours);
-            let pgn = write_game(&send);
+            let pgn = pgn_to_send(&send);
             push_moves(client, token, &link.study, &link.chapter, &pgn, &stop)?;
             push_tags(client, token, &link.study, &link.chapter, &tag_changes(&ours, &now_game), &stop)?;
             let s = Sent {
@@ -1663,6 +1677,21 @@ mod tests {
         let mut bad = Pending { kind: PendingKind::Both, theirs: String::new(), found: 0 }.to_bytes();
         bad[1] = 9;
         assert!(Pending::from_bytes(&bad).is_err());
+    }
+
+    #[test]
+    fn what_is_sent_has_its_movetext_on_one_line() {
+        let long =
+            "A comment long enough for our writer to wrap it at eighty columns, which Lichess would keep.";
+        let g =
+            read_pgn_str(&format!("[White \"A\"]\n\n1. e4 {{ {long} }} e5 2. Nf3 {{ {long} }} *")).remove(0);
+        let p = lichess_projection(&g);
+        assert!(write_game(&p).trim().lines().count() > 4, "wrapped by the writer");
+        let sent = pgn_to_send(&p);
+        let (tags, moves) = sent.split_once("\n\n").unwrap();
+        assert!(tags.contains("[White \"A\"]"));
+        assert_eq!(moves.trim().lines().count(), 1, "{sent}");
+        assert_eq!(read_pgn_str(&sent).remove(0), p, "the same game");
     }
 
     #[test]
