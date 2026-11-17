@@ -27,7 +27,7 @@ pub const MAX_CHAPTERS: usize = 64;
 pub const DAILY_STUDIES: usize = 30;
 /// The most PGN one request sends, percent-encoded: Lichess takes bodies of
 /// up to 512 KiB.
-const MAX_BODY: usize = 400 << 10;
+pub(crate) const MAX_BODY: usize = 400 << 10;
 
 /// Who can see a study.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,7 +298,7 @@ fn batches(games: &[String], too_long: &mut usize) -> Vec<Batch> {
 
 /// Makes a study (Lichess adds an empty first chapter), with the settings
 /// that keep a private study to its owner.
-fn create_study(
+pub(crate) fn create_study(
     client: &Client,
     token: &Token,
     name: &str,

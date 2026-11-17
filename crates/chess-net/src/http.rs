@@ -41,6 +41,10 @@ pub struct Client {
     write_timeout: Duration,
     /// How long a login waits for the browser to come back (NET-11).
     pub(crate) login_wait: Duration,
+    /// How long NET-13's sync waits before asking again for a chapter that
+    /// doesn't show what it sent yet (Lichess caches a public study's
+    /// export for about 10 seconds).
+    pub(crate) fresh_wait: Duration,
     /// The Lichess user logged in, and their token: a download of their own
     /// games sends it, which makes Lichess send them 3 times as fast.
     pub(crate) lichess_login: Option<OwnLogin>,
@@ -90,8 +94,17 @@ impl Client {
             stall: Duration::from_secs(300),
             write_timeout: Duration::from_secs(120),
             login_wait: Duration::from_secs(600),
+            fresh_wait: Duration::from_secs(4),
             lichess_login: None,
         }
+    }
+
+    /// The same, NET-13's sync waiting `wait` before asking again for a
+    /// chapter that doesn't show what it sent yet (tests; 4 seconds
+    /// otherwise).
+    pub fn with_fresh_wait(mut self, wait: Duration) -> Client {
+        self.fresh_wait = wait;
+        self
     }
 
     /// The same, sending `token` when downloading the games of `username`
@@ -247,6 +260,47 @@ impl Client {
         let req = req.config().timeout_global(Some(self.write_timeout)).build();
         req.call().map_err(|e| unreachable(site, &e))
     }
+
+    /// Sends a write with `send`, and again after a 429 (Lichess did nothing
+    /// with it: too many requests): after the wait its `Retry-After` asks
+    /// for (at most 10 minutes), or a minute where it says nothing, up to 3
+    /// times, until `stop` says to give up. NET-13's sync, whose writes are
+    /// each safe to send again after a refusal; NET-12's are sent once. The
+    /// last answer comes back, a 429 too, for the caller to judge.
+    pub(crate) fn write_retrying(
+        &self,
+        site: Site,
+        stop: &dyn Fn() -> bool,
+        send: &dyn Fn() -> Result<Response<Body>, NetError>,
+    ) -> Result<Response<Body>, NetError> {
+        let mut attempt = 0;
+        loop {
+            let resp = send()?;
+            if resp.status().as_u16() != 429 || attempt == self.retries {
+                return Ok(resp);
+            }
+            attempt += 1;
+            let wait = retry_after(&resp).unwrap_or(match site {
+                Site::Lichess => self.lichess_wait,
+                Site::ChessCom => self.chess_com_wait,
+            });
+            log::info!("{}: 429 for a write, waiting {} s", site.name(), wait.as_secs());
+            let until = Instant::now() + wait;
+            while Instant::now() < until {
+                if stop() {
+                    return Err(NetError::Cancelled);
+                }
+                std::thread::sleep(Duration::from_millis(100).min(wait));
+            }
+        }
+    }
+}
+
+/// How long a 429 asks to wait (`Retry-After` in seconds), at most 10
+/// minutes.
+fn retry_after(resp: &Response<Body>) -> Option<Duration> {
+    let secs: u64 = resp.headers().get("Retry-After")?.to_str().ok()?.trim().parse().ok()?;
+    Some(Duration::from_secs(secs.min(600)))
 }
 
 fn unreserved(b: u8) -> bool {
